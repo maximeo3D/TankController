@@ -1,12 +1,8 @@
 import { Vector3, Quaternion, Matrix } from "@babylonjs/core/Maths/math.vector";
 import { Plane } from "@babylonjs/core/Maths/math.plane";
 import { Axis, Space } from "@babylonjs/core/Maths/math.axis";
-import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
-import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
-import { Color3 } from "@babylonjs/core/Maths/math.color";
 import "@babylonjs/core/Culling/ray";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
-import type { LinesMesh } from "@babylonjs/core/Meshes/linesMesh";
 import type { Camera } from "@babylonjs/core/Cameras/camera";
 import type { AssetContainer } from "@babylonjs/core/assetContainer";
 import type { Bone } from "@babylonjs/core/Bones/bone";
@@ -49,6 +45,7 @@ export interface TankGameplayControllerOptions {
   };
   tankBody: PhysicsBody;
   tankCamera: Camera | null;
+  reticleMesh: Mesh | null;
 }
 
 export class TankGameplayController {
@@ -62,6 +59,7 @@ export class TankGameplayController {
   private readonly input: TankInput;
   private readonly turretControl: BoneControl;
   private readonly cannonControl: BoneControl;
+  private readonly reticleMesh: Mesh | null;
   private readonly movementForwardAxis: Vector3;
   private readonly movementInputSign: 1 | -1;
   private readonly turretYawAxis: Vector3;
@@ -86,12 +84,6 @@ export class TankGameplayController {
   private readonly planarVelocity = Vector3.Zero();
   private readonly smoothedGroundNormal = Axis.Y.clone();
 
-  private debugTargetSphere: Mesh | null = null;
-  private debugRayLine: LinesMesh | null = null;
-  private debugTurretLine: LinesMesh | null = null;
-  private debugCannonLine: LinesMesh | null = null;
-  private debugFrameCount = 0;
-
   public constructor(options: TankGameplayControllerOptions) {
     this.scene = options.scene;
     this.config = options.config;
@@ -100,6 +92,7 @@ export class TankGameplayController {
     this.groundingInfo = options.groundingInfo;
     this.tankBody = options.tankBody;
     this.tankCamera = options.tankCamera;
+    this.reticleMesh = options.reticleMesh;
     this.input = new TankInput(options.canvas);
     this.turretControl = resolveBoneControl(options.tankContainer, "tourelle");
     this.cannonControl = resolveBoneControl(options.tankContainer, "canon");
@@ -195,35 +188,36 @@ export class TankGameplayController {
       // Intersect with horizontal plane at tank's height
       const plane = Plane.FromPositionAndNormal(this.tankAnchor.position, Axis.Y);
       const distance = ray.intersectsPlane(plane);
-      if (distance !== null) {
+      if (distance !== null && distance > 0) {
         targetPoint = ray.origin.add(ray.direction.scale(distance));
+      } else {
+        // Looking at the sky or parallel to the ground
+        targetPoint = ray.origin.add(ray.direction.scale(1000));
       }
-    }
-
-    this.debugFrameCount++;
-    if (this.debugFrameCount % 60 === 0) {
-      console.log(`[Aim Debug] Pointer: (${pointerX}, ${pointerY}) | TargetPoint:`, targetPoint?.asArray(), `| HitMesh:`, pickResult?.hit ? pickResult.pickedMesh?.name : "None");
     }
 
     if (targetPoint) {
-      // Create or update debug sphere
-      if (!this.debugTargetSphere) {
-        this.debugTargetSphere = MeshBuilder.CreateSphere("debugTarget", { diameter: 0.025 }, this.scene);
-        const mat = new StandardMaterial("debugMat", this.scene);
-        mat.emissiveColor = Color3.Red();
-        this.debugTargetSphere.material = mat;
+      // Limit the distance of the target point from the tank to 1 meter
+      // (Note: The game uses a x10 scale, you can increase this value if 1.0 feels too short)
+      const tankPos = this.tankAnchor.getAbsolutePosition();
+      const offset = targetPoint.subtract(tankPos);
+      const maxDistance = 10.0;
+      if (offset.length() > maxDistance) {
+        offset.normalize().scaleInPlace(maxDistance);
+        targetPoint = tankPos.add(offset);
       }
-      this.debugTargetSphere.position.copyFrom(targetPoint);
 
-      // Update debug ray line
-      if (this.debugRayLine) {
-        this.debugRayLine.dispose();
+      if (this.reticleMesh) {
+        this.reticleMesh.position.copyFrom(targetPoint);
+        this.reticleMesh.isVisible = true;
+
+        // Scale the reticle based on its distance from the camera to keep it the same size on screen
+        const distToCamera = Vector3.Distance(camera.globalPosition, targetPoint);
+        // Base scale factor - adjust this to make the reticle globally bigger or smaller
+        const baseScale = 1; 
+        const newScale = distToCamera * baseScale;
+        this.reticleMesh.scaling.set(newScale, newScale, newScale);
       }
-      this.debugRayLine = MeshBuilder.CreateLines("debugRay", {
-        points: [ray.origin, targetPoint],
-        updatable: true
-      }, this.scene);
-      this.debugRayLine.color = Color3.Yellow();
 
       // Transform target point to tank's local space
       const invHullMatrix = this.tankAnchor.getWorldMatrix().clone().invert();
@@ -282,33 +276,6 @@ export class TankGameplayController {
 
     if (Math.abs(cannonStepRad) > 0) {
       rotateControl(this.cannonControl, this.cannonPitchAxis, cannonStepRad, this.tankAnchor);
-    }
-
-    // Update debug lines for turret and cannon forward directions
-    this.updateDebugLines();
-  }
-
-  private updateDebugLines(): void {
-    if (this.turretControl.transformNode) {
-      const turretWorldPos = this.turretControl.transformNode.getAbsolutePosition();
-      const turretForward = this.turretControl.transformNode.getDirection(this.movementForwardAxis);
-      if (this.debugTurretLine) this.debugTurretLine.dispose();
-      this.debugTurretLine = MeshBuilder.CreateLines("debugTurret", {
-        points: [turretWorldPos, turretWorldPos.add(turretForward.scale(5))],
-        updatable: true
-      }, this.scene);
-      this.debugTurretLine.color = Color3.Green();
-    }
-
-    if (this.cannonControl.transformNode) {
-      const cannonWorldPos = this.cannonControl.transformNode.getAbsolutePosition();
-      const cannonForward = this.cannonControl.transformNode.getDirection(this.movementForwardAxis);
-      if (this.debugCannonLine) this.debugCannonLine.dispose();
-      this.debugCannonLine = MeshBuilder.CreateLines("debugCannon", {
-        points: [cannonWorldPos, cannonWorldPos.add(cannonForward.scale(10))],
-        updatable: true
-      }, this.scene);
-      this.debugCannonLine.color = Color3.Blue();
     }
   }
 

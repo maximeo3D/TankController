@@ -76,6 +76,10 @@ export async function createGameplayScene(
   const scene = new Scene(engine);
   scene.useRightHandedSystem = true;
   scene.clearColor = new Color4(0.05, 0.06, 0.08, 1);
+  
+  // Hide the default cursor in Babylon.js
+  scene.defaultCursor = "none";
+  scene.hoverCursor = "none";
 
   const fallbackCamera = new ArcRotateCamera(
     "fallback_camera",
@@ -138,6 +142,16 @@ export async function createGameplayScene(
     scene.activeCamera = tankCamera;
   }
 
+  const reticleMesh = findMeshByName(tankContainer, "UI_tank_reticle");
+  if (reticleMesh) {
+    // Make sure it's rendered on top of everything
+    reticleMesh.renderingGroupId = 1;
+    // Unparent so we can move it freely in world space
+    reticleMesh.setParent(null);
+    // Always face the camera
+    reticleMesh.billboardMode = Mesh.BILLBOARDMODE_ALL;
+  }
+
   fallbackCamera.dispose();
   const controller = new TankGameplayController({
     scene,
@@ -148,7 +162,8 @@ export async function createGameplayScene(
     tankVisualRoot,
     groundingInfo: groundingInfo,
     tankBody: tankPhysics.body,
-    tankCamera
+    tankCamera,
+    reticleMesh
   });
 
   return {
