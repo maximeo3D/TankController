@@ -12,7 +12,7 @@
   "movement": {
     "moveSpeed": 0.5,
     "boostMultiplier": 1.5,
-    "hullTurnSpeedDeg": 135.0,
+    "hullTurnSpeedDeg": 45.0,
     "acceleration": 6.0,
     "brakeDeceleration": 3.8,
     "inputRiseRate": 1.8,
@@ -67,13 +67,13 @@
       "startsChambered": true,
       "reloadSeconds": 4.0,
       "damage": 100.0,
-      "muzzleVelocity": 18.0,
-      "gravityMultiplier": 1.2
+      "muzzleVelocity": 1.0,
+      "gravityMultiplier": 5
     },
     "bullet": {
       "shotsPerSecond": 4.0,
       "damage": 10.0,
-      "muzzleVelocity": 30.0,
+      "muzzleVelocity": 15.0,
       "gravityMultiplier": 1.0
     }
   }

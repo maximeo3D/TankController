@@ -3,11 +3,14 @@ import { Plane } from "@babylonjs/core/Maths/math.plane";
 import { Axis, Space } from "@babylonjs/core/Maths/math.axis";
 import "@babylonjs/core/Culling/ray";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
+import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
+import { PhysicsBody } from "@babylonjs/core/Physics/v2/physicsBody";
+import { PhysicsShapeSphere, type PhysicsShape } from "@babylonjs/core/Physics/v2/physicsShape";
+import { PhysicsMotionType } from "@babylonjs/core/Physics/v2/IPhysicsEnginePlugin";
 import type { Camera } from "@babylonjs/core/Cameras/camera";
 import type { AssetContainer } from "@babylonjs/core/assetContainer";
 import type { Bone } from "@babylonjs/core/Bones/bone";
 import type { TransformNode } from "@babylonjs/core/Meshes/transformNode";
-import type { PhysicsBody } from "@babylonjs/core/Physics/v2/physicsBody";
 import type { Scene } from "@babylonjs/core/scene";
 import type { TankControllerConfig } from "../config/tankController";
 import { TankInput, type WeaponType } from "./TankInput";
@@ -29,6 +32,8 @@ export interface TankGameplayDebugState {
   position: Vector3;
 }
 
+import type { PhysicsViewer } from "@babylonjs/core/Debug/physicsViewer";
+
 export interface TankGameplayControllerOptions {
   scene: Scene;
   canvas: HTMLCanvasElement;
@@ -46,6 +51,10 @@ export interface TankGameplayControllerOptions {
   tankBody: PhysicsBody;
   tankCamera: Camera | null;
   reticleMesh: Mesh | null;
+  muzzleNode: TransformNode | AbstractMesh | null;
+  ammoShellMesh: Mesh | null;
+  ammoBulletMesh: Mesh | null;
+  physicsViewer?: PhysicsViewer;
 }
 
 export class TankGameplayController {
@@ -60,6 +69,9 @@ export class TankGameplayController {
   private readonly turretControl: BoneControl;
   private readonly cannonControl: BoneControl;
   private readonly reticleMesh: Mesh | null;
+  private readonly muzzleNode: TransformNode | AbstractMesh | null;
+  private readonly ammoShellMesh: Mesh | null;
+  private readonly ammoBulletMesh: Mesh | null;
   private readonly movementForwardAxis: Vector3;
   private readonly movementInputSign: 1 | -1;
   private readonly turretYawAxis: Vector3;
@@ -84,6 +96,11 @@ export class TankGameplayController {
   private readonly planarVelocity = Vector3.Zero();
   private readonly smoothedGroundNormal = Axis.Y.clone();
 
+  private shellReloadTimer = 0;
+  private bulletCooldownTimer = 0;
+  private activeProjectiles: { mesh: Mesh; body: PhysicsBody; shape: PhysicsShape; age: number; debugMesh?: AbstractMesh | null }[] = [];
+  private physicsViewer?: PhysicsViewer;
+
   public constructor(options: TankGameplayControllerOptions) {
     this.scene = options.scene;
     this.config = options.config;
@@ -93,6 +110,10 @@ export class TankGameplayController {
     this.tankBody = options.tankBody;
     this.tankCamera = options.tankCamera;
     this.reticleMesh = options.reticleMesh;
+    this.muzzleNode = options.muzzleNode;
+    this.ammoShellMesh = options.ammoShellMesh;
+    this.ammoBulletMesh = options.ammoBulletMesh;
+    this.physicsViewer = options.physicsViewer;
     this.input = new TankInput(options.canvas);
     this.turretControl = resolveBoneControl(options.tankContainer, "tourelle");
     this.cannonControl = resolveBoneControl(options.tankContainer, "canon");
@@ -150,6 +171,12 @@ export class TankGameplayController {
   public dispose(): void {
     this.scene.onBeforeRenderObservable.removeCallback(this.update);
     this.input.dispose();
+
+    for (const proj of this.activeProjectiles) {
+      proj.body.dispose();
+      proj.shape.dispose();
+      proj.mesh.dispose();
+    }
   }
 
   private readonly update = (): void => {
@@ -166,7 +193,126 @@ export class TankGameplayController {
     this.applyMovement(frame.moveAxis, frame.turnAxis, frame.boostHeld, dt);
     this.applyVisualSmoothing(dt);
     this.applyCamera(frame.zoomHeld);
+    this.updateWeapons(dt);
+    this.updateProjectiles(dt);
   };
+
+  private updateWeapons(dt: number): void {
+    // Bullet cooldown
+    if (this.bulletCooldownTimer > 0) {
+      this.bulletCooldownTimer -= dt;
+    }
+
+    // Shell reload
+    if (!this.shellChambered && this.shellReserveAmmo > 0) {
+      this.shellReloadTimer -= dt;
+      if (this.shellReloadTimer <= 0) {
+        this.shellChambered = true;
+        this.shellReserveAmmo--;
+      }
+    }
+
+    // Firing
+    if (this.fireHeld && this.battery > 0) {
+      if (this.activeWeapon === "shell" && this.shellChambered) {
+        this.fireShell();
+      } else if (this.activeWeapon === "bullet" && this.bulletCooldownTimer <= 0) {
+        this.fireBullet();
+      }
+    }
+  }
+
+  private fireShell(): void {
+    this.shellChambered = false;
+    this.shellReloadTimer = this.config.weapons.shell.reloadSeconds;
+    this.spawnProjectile(this.ammoShellMesh, this.config.weapons.shell, 0.4);
+  }
+
+  private fireBullet(): void {
+    this.bulletCooldownTimer = 1.0 / this.config.weapons.bullet.shotsPerSecond;
+    this.spawnProjectile(this.ammoBulletMesh, this.config.weapons.bullet, 0.1);
+  }
+
+  private spawnProjectile(
+    baseMesh: Mesh | null,
+    weaponConfig: { muzzleVelocity: number; gravityMultiplier: number },
+    radius: number
+  ): void {
+    if (!baseMesh || !this.muzzleNode) {
+      return;
+    }
+
+    const mesh = baseMesh.clone("projectile", null);
+    if (!mesh) return;
+
+    mesh.isVisible = true;
+    mesh.position.copyFrom(this.muzzleNode.getAbsolutePosition());
+
+    // Calculate forward direction towards the reticle
+    let forward = Vector3.Zero();
+    if (this.reticleMesh) {
+      forward = this.reticleMesh.position.subtract(mesh.position);
+    }
+    
+    // Fallback if reticle is too close or missing
+    if (forward.lengthSquared() < 1e-6) {
+      forward = this.muzzleNode.getDirection(this.movementForwardAxis).scale(this.config.rig.movementForwardSign);
+    } else {
+      forward.normalize();
+    }
+
+    // Rotate the projectile to face its flight direction
+    mesh.rotationQuaternion = Quaternion.FromLookDirectionRH(forward, Axis.Y);
+
+    const velocity = forward.scale(weaponConfig.muzzleVelocity);
+
+    const body = new PhysicsBody(mesh, PhysicsMotionType.DYNAMIC, false, this.scene);
+    
+    // Adjust radius based on the mesh's scaling (in case the GLB is scaled x10)
+    const scale = mesh.absoluteScaling.x || 1;
+    const shape = new PhysicsShapeSphere(Vector3.Zero(), radius / scale, this.scene);
+    
+    // Projectiles belong to group 4, and collide with everything EXCEPT the tank (group 2) and other projectiles (group 4)
+    shape.filterMembershipMask = 4;
+    shape.filterCollideMask = ~(2 | 4);
+
+    body.shape = shape;
+    body.setMassProperties({ mass: 1 });
+    body.setGravityFactor(weaponConfig.gravityMultiplier);
+    body.setLinearVelocity(velocity);
+
+    let debugMesh: AbstractMesh | null | undefined = null;
+    if (this.physicsViewer) {
+      debugMesh = this.physicsViewer.showBody(body);
+      if (debugMesh) {
+        const redWireframeMat = this.scene.getMaterialByName("debug_red_wireframe");
+        if (redWireframeMat) {
+          debugMesh.material = redWireframeMat;
+        }
+      }
+    }
+
+    this.activeProjectiles.push({ mesh, body, shape, age: 0, debugMesh });
+  }
+
+  private updateProjectiles(dt: number): void {
+    for (let i = this.activeProjectiles.length - 1; i >= 0; i--) {
+      const proj = this.activeProjectiles[i];
+      proj.age += dt;
+
+      // Despawn after 5 seconds
+      if (proj.age > 5.0) {
+        if (this.physicsViewer && proj.debugMesh) {
+          // PhysicsViewer automatically cleans up debug meshes when the body is disposed,
+          // but we can also hide it explicitly if needed.
+        }
+        proj.body.dispose();
+        proj.shape.dispose();
+        proj.mesh.dispose();
+        this.activeProjectiles.splice(i, 1);
+      }
+    }
+  }
 
   private applyTurretAndCannon(pointerX: number, pointerY: number, dt: number): void {
     const camera = this.tankCamera ?? this.scene.activeCamera;
@@ -561,7 +707,8 @@ function sampleGroundPoint(
   const rayTo = rayFrom.add(Axis.Y.scale(-rayLength));
   const hit = physicsEngine.raycast(rayFrom, rayTo, {
     ignoreBody: tankBody,
-    shouldHitTriggers: false
+    shouldHitTriggers: false,
+    collideWith: ~4 // Ignore projectiles (group 4)
   });
   if (!hit.hasHit || hit.hitNormalWorld.y < minNormalY) {
     return null;

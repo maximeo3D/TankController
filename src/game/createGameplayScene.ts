@@ -5,7 +5,7 @@ import { ArcRotateCamera } from "@babylonjs/core/Cameras/arcRotateCamera";
 import { Engine } from "@babylonjs/core/Engines/engine";
 import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight";
 import { SceneLoader } from "@babylonjs/core/Loading/sceneLoader";
-import { Color4 } from "@babylonjs/core/Maths/math.color";
+import { Color4, Color3 } from "@babylonjs/core/Maths/math.color";
 import { Quaternion, Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { Axis } from "@babylonjs/core/Maths/math.axis";
 import { Mesh } from "@babylonjs/core/Meshes/mesh";
@@ -19,7 +19,9 @@ import {
 } from "@babylonjs/core/Physics/v2/physicsShape";
 import { PhysicsMotionType } from "@babylonjs/core/Physics/v2/IPhysicsEnginePlugin";
 import { HavokPlugin } from "@babylonjs/core/Physics/v2/Plugins/havokPlugin";
+import { PhysicsViewer } from "@babylonjs/core/Debug/physicsViewer";
 import { Scene } from "@babylonjs/core/scene";
+import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import type { AssetContainer } from "@babylonjs/core/assetContainer";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import type { TankControllerConfig } from "../config/tankController";
@@ -101,14 +103,14 @@ export async function createGameplayScene(
 
   const terrainContainer = await SceneLoader.LoadAssetContainerAsync("", terrainAssetUrl, scene);
   terrainContainer.addAllToScene();
-  hideColliderMeshes(terrainContainer);
+  hideColliderMeshes(terrainContainer, scene);
   const worldPhysics = createWorldPhysics(terrainContainer, scene);
 
   const spawnNode = findTransformNode(terrainContainer, "SPAWN_tank");
 
   const tankContainer = await SceneLoader.LoadAssetContainerAsync("", tankAssetUrl, scene);
   tankContainer.addAllToScene();
-  hideColliderMeshes(tankContainer);
+  hideColliderMeshes(tankContainer, scene);
 
   const tankAnchor = new TransformNode("tank_anchor", scene);
   const tankVisualRoot = new TransformNode("tank_visual_root", scene);
@@ -152,6 +154,20 @@ export async function createGameplayScene(
     reticleMesh.billboardMode = Mesh.BILLBOARDMODE_ALL;
   }
 
+  const ammoShellMesh = findMeshByName(tankContainer, "AMMO_obus");
+  if (ammoShellMesh) {
+    ammoShellMesh.isVisible = false;
+    ammoShellMesh.setParent(null);
+  }
+
+  const ammoBulletMesh = findMeshByName(tankContainer, "AMMO_balle");
+  if (ammoBulletMesh) {
+    ammoBulletMesh.isVisible = false;
+    ammoBulletMesh.setParent(null);
+  }
+
+  const muzzleNode = findTransformNode(tankContainer, "MUZZLE_tank");
+
   fallbackCamera.dispose();
   const controller = new TankGameplayController({
     scene,
@@ -163,8 +179,20 @@ export async function createGameplayScene(
     groundingInfo: groundingInfo,
     tankBody: tankPhysics.body,
     tankCamera,
-    reticleMesh
+    reticleMesh,
+    muzzleNode,
+    ammoShellMesh,
+    ammoBulletMesh
   });
+
+  const physicsViewer = new PhysicsViewer(scene);
+  const redWireframeMat = scene.getMaterialByName("debug_red_wireframe") as StandardMaterial;
+  for (const body of worldPhysics.bodies) {
+    const debugMesh = physicsViewer.showBody(body);
+    if (debugMesh) debugMesh.material = redWireframeMat;
+  }
+  const tankDebugMesh = physicsViewer.showBody(tankPhysics.body);
+  if (tankDebugMesh) tankDebugMesh.material = redWireframeMat;
 
   return {
     scene,
@@ -219,14 +247,24 @@ function findTransformNode(
   );
 }
 
-function hideColliderMeshes(container: AssetContainer): void {
+function hideColliderMeshes(container: AssetContainer, scene: Scene): void {
+  let redWireframeMat = scene.getMaterialByName("debug_red_wireframe") as StandardMaterial;
+  if (!redWireframeMat) {
+    redWireframeMat = new StandardMaterial("debug_red_wireframe", scene);
+    redWireframeMat.emissiveColor = new Color3(1, 0, 0);
+    redWireframeMat.wireframe = true;
+    redWireframeMat.disableLighting = true;
+  }
+
   for (const mesh of container.meshes) {
     if (!mesh.name.startsWith("COL_")) {
       continue;
     }
 
-    mesh.isVisible = false;
+    // Instead of hiding them, we show them as red wireframes for debugging
+    mesh.isVisible = true;
     mesh.isPickable = false;
+    mesh.material = redWireframeMat;
   }
 }
 
@@ -273,9 +311,26 @@ function createWorldPhysics(container: AssetContainer, scene: Scene): PhysicsRes
 
     if (mesh.name.startsWith("DM_")) {
       const body = new PhysicsBody(mesh, PhysicsMotionType.DYNAMIC, false, scene);
+      
+      // Use a ConvexHull shape for dynamic meshes as it wraps the mesh geometry tightly
       const shape = new PhysicsShapeConvexHull(mesh, scene);
+      
       body.shape = shape;
-      body.setMassProperties({ mass: 5 });
+      
+      // Calculate mass properties based on the mesh bounding box to ensure stable physics
+      // even if the mesh origin is not perfectly centered
+      const boundingInfo = mesh.getBoundingInfo();
+      const extents = boundingInfo.boundingBox.extendSizeWorld;
+      const volume = extents.x * extents.y * extents.z * 8; // 2*x * 2*y * 2*z
+      
+      // Use the center of the bounding box as the center of mass
+      const centerOfMass = boundingInfo.boundingBox.centerWorld.subtract(mesh.getAbsolutePosition());
+      
+      body.setMassProperties({ 
+        mass: Math.max(volume * 5, 1), // Base mass on volume, minimum 1kg
+        centerOfMass: centerOfMass
+      });
+      
       body.setLinearDamping(0.6);
       body.setAngularDamping(0.8);
       bodies.push(body);
@@ -304,8 +359,11 @@ function createTankPhysics(
 ): TankPhysicsResource {
   const body = new PhysicsBody(tankAnchor, PhysicsMotionType.ANIMATED, false, scene);
   const shape = tankColliderMesh
-    ? PhysicsShapeBox.FromMesh(tankColliderMesh)
+    ? new PhysicsShapeConvexHull(tankColliderMesh, scene)
     : new PhysicsShapeBox(Vector3.Zero(), Quaternion.Identity(), new Vector3(1, 0.5, 1.6), scene);
+
+  // Assign the tank to collision group 2 so projectiles can ignore it
+  shape.filterMembershipMask = 2;
 
   body.shape = shape;
   shape.material = {
