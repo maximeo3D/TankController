@@ -5,7 +5,7 @@ import { ArcRotateCamera } from "@babylonjs/core/Cameras/arcRotateCamera";
 import { Engine } from "@babylonjs/core/Engines/engine";
 import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight";
 import { SceneLoader } from "@babylonjs/core/Loading/sceneLoader";
-import { Color4, Color3 } from "@babylonjs/core/Maths/math.color";
+import { Color4 } from "@babylonjs/core/Maths/math.color";
 import { Quaternion, Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { Axis } from "@babylonjs/core/Maths/math.axis";
 import { Mesh } from "@babylonjs/core/Meshes/mesh";
@@ -19,9 +19,7 @@ import {
 } from "@babylonjs/core/Physics/v2/physicsShape";
 import { PhysicsMotionType } from "@babylonjs/core/Physics/v2/IPhysicsEnginePlugin";
 import { HavokPlugin } from "@babylonjs/core/Physics/v2/Plugins/havokPlugin";
-import { PhysicsViewer } from "@babylonjs/core/Debug/physicsViewer";
 import { Scene } from "@babylonjs/core/scene";
-import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import type { AssetContainer } from "@babylonjs/core/assetContainer";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import type { TankControllerConfig } from "../config/tankController";
@@ -185,15 +183,6 @@ export async function createGameplayScene(
     ammoBulletMesh
   });
 
-  const physicsViewer = new PhysicsViewer(scene);
-  const redWireframeMat = scene.getMaterialByName("debug_red_wireframe") as StandardMaterial;
-  for (const body of worldPhysics.bodies) {
-    const debugMesh = physicsViewer.showBody(body);
-    if (debugMesh) debugMesh.material = redWireframeMat;
-  }
-  const tankDebugMesh = physicsViewer.showBody(tankPhysics.body);
-  if (tankDebugMesh) tankDebugMesh.material = redWireframeMat;
-
   return {
     scene,
     summary: {
@@ -247,24 +236,13 @@ function findTransformNode(
   );
 }
 
-function hideColliderMeshes(container: AssetContainer, scene: Scene): void {
-  let redWireframeMat = scene.getMaterialByName("debug_red_wireframe") as StandardMaterial;
-  if (!redWireframeMat) {
-    redWireframeMat = new StandardMaterial("debug_red_wireframe", scene);
-    redWireframeMat.emissiveColor = new Color3(1, 0, 0);
-    redWireframeMat.wireframe = true;
-    redWireframeMat.disableLighting = true;
-  }
-
+function hideColliderMeshes(container: AssetContainer, _scene: Scene): void {
   for (const mesh of container.meshes) {
     if (!mesh.name.startsWith("COL_")) {
       continue;
     }
-
-    // Instead of hiding them, we show them as red wireframes for debugging
-    mesh.isVisible = true;
+    mesh.isVisible = false;
     mesh.isPickable = false;
-    mesh.material = redWireframeMat;
   }
 }
 

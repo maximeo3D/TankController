@@ -284,12 +284,6 @@ export class TankGameplayController {
     let debugMesh: AbstractMesh | null | undefined = null;
     if (this.physicsViewer) {
       debugMesh = this.physicsViewer.showBody(body);
-      if (debugMesh) {
-        const redWireframeMat = this.scene.getMaterialByName("debug_red_wireframe");
-        if (redWireframeMat) {
-          debugMesh.material = redWireframeMat;
-        }
-      }
     }
 
     this.activeProjectiles.push({ mesh, body, shape, age: 0, debugMesh });
