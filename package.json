@@ -1,0 +1,32 @@
+{
+  "name": "tankcontroller",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Toy tank prototype powered by Babylon.js and Havok",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/maximeo3D/TankController.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/maximeo3D/TankController/issues"
+  },
+  "homepage": "https://github.com/maximeo3D/TankController#readme",
+  "dependencies": {
+    "@babylonjs/core": "^9.1.0",
+    "@babylonjs/havok": "^1.3.12",
+    "@babylonjs/loaders": "^9.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.2",
+    "vite": "^8.0.7"
+  }
+}

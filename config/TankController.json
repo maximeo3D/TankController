@@ -1,0 +1,57 @@
+{
+  "rig": {
+    "spawnYawOffsetDeg": 0.0,
+    "movementForwardAxis": "z",
+    "movementForwardSign": -1,
+    "turretYawAxis": "z",
+    "turretYawSign": -1,
+    "cannonPitchAxis": "x",
+    "cannonPitchSign": 1
+  },
+  "movement": {
+    "moveSpeed": 1.5,
+    "boostMultiplier": 1.5,
+    "hullTurnSpeedDeg": 90.0
+  },
+  "turret": {
+    "yawSpeedDeg": 30.0,
+    "mouseSensitivityDegPerPixel": 0.35
+  },
+  "cannon": {
+    "pitchSpeedDeg": 30.0,
+    "mouseSensitivityDegPerPixel": 0.2,
+    "minPitchDeg": -10.0,
+    "maxPitchDeg": 80.0
+  },
+  "camera": {
+    "defaultFovDeg": 60.0,
+    "zoomFovMultiplier": 0.5,
+    "boostFovMultiplier": 1.1
+  },
+  "energy": {
+    "batteryMax": 100.0,
+    "overchargeMax": 100.0,
+    "startingBattery": 100.0,
+    "startingOvercharge": 50.0,
+    "batteryDrainMovingPerSecond": 1.0,
+    "overchargeDrainBoostPerSecond": 5.0
+  },
+  "weapons": {
+    "powerUpBonusPerStack": 0.25,
+    "maxStacks": 2,
+    "shell": {
+      "startingReserveAmmo": 14,
+      "startsChambered": true,
+      "reloadSeconds": 4.0,
+      "damage": 100.0,
+      "muzzleVelocity": 18.0,
+      "gravityMultiplier": 1.2
+    },
+    "bullet": {
+      "shotsPerSecond": 4.0,
+      "damage": 10.0,
+      "muzzleVelocity": 30.0,
+      "gravityMultiplier": 1.0
+    }
+  }
+}
