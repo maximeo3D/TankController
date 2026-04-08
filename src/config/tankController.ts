@@ -5,6 +5,7 @@ export interface TankControllerConfig {
     spawnYawOffsetDeg: number;
     movementForwardAxis: "x" | "y" | "z";
     movementForwardSign: 1 | -1;
+    movementInputSign: 1 | -1;
     turretYawAxis: "x" | "y" | "z";
     turretYawSign: 1 | -1;
     cannonPitchAxis: "x" | "y" | "z";

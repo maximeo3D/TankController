@@ -56,6 +56,7 @@ export class TankGameplayController {
   private readonly turretControl: BoneControl;
   private readonly cannonControl: BoneControl;
   private readonly movementForwardAxis: Vector3;
+  private readonly movementInputSign: 1 | -1;
   private readonly turretYawAxis: Vector3;
   private readonly cannonPitchAxis: Vector3;
 
@@ -93,6 +94,7 @@ export class TankGameplayController {
       options.config.rig.movementForwardAxis,
       options.config.rig.movementForwardSign
     );
+    this.movementInputSign = options.config.rig.movementInputSign;
     this.turretYawAxis = axisFromConfig(
       options.config.rig.turretYawAxis,
       options.config.rig.turretYawSign
@@ -195,7 +197,7 @@ export class TankGameplayController {
 
   private applyMovement(moveAxis: number, turnAxis: number, boostHeld: boolean, dt: number): void {
     const canMove = this.battery > 0;
-    const desiredMoveAxis = canMove ? moveAxis : 0;
+    const desiredMoveAxis = canMove ? moveAxis * this.movementInputSign : 0;
     const inputRate =
       Math.abs(desiredMoveAxis) > Math.abs(this.smoothedMoveAxis)
         ? this.config.movement.inputRiseRate

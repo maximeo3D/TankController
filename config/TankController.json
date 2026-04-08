@@ -3,6 +3,7 @@
     "spawnYawOffsetDeg": 0.0,
     "movementForwardAxis": "z",
     "movementForwardSign": 1,
+    "movementInputSign": -1,
     "turretYawAxis": "z",
     "turretYawSign": -1,
     "cannonPitchAxis": "x",
