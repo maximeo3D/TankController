@@ -53,6 +53,20 @@ interface PhysicsResourceGroup {
   shapes: PhysicsShape[];
 }
 
+interface TankGroundingInfo {
+  baseClearance: number;
+  frontLeft: Vector3;
+  frontRight: Vector3;
+  rearLeft: Vector3;
+  rearRight: Vector3;
+}
+
+interface TankPhysicsResource {
+  body: PhysicsBody;
+  shape: PhysicsShape;
+  grounding: TankGroundingInfo;
+}
+
 export async function createGameplayScene(
   engine: Engine,
   _level: LevelDefinition,
@@ -93,6 +107,8 @@ export async function createGameplayScene(
   hideColliderMeshes(tankContainer);
 
   const tankAnchor = new TransformNode("tank_anchor", scene);
+  const tankVisualRoot = new TransformNode("tank_visual_root", scene);
+  tankVisualRoot.parent = tankAnchor;
   if (spawnNode) {
     tankAnchor.position.copyFrom(spawnNode.getAbsolutePosition());
     tankAnchor.rotationQuaternion = extractHorizontalSpawnRotation(
@@ -105,9 +121,15 @@ export async function createGameplayScene(
   }
   tankAnchor.rotate(Axis.Y, toRadians(config.rig.spawnYawOffsetDeg));
 
-  parentTopLevelNodesToAnchor(tankContainer, tankAnchor);
+  parentTankNodes(tankContainer, tankAnchor, tankVisualRoot);
   const tankColliderMesh = findMeshByName(tankContainer, "COL_tank");
-  const tankPhysics = createTankPhysics(tankAnchor, tankColliderMesh, scene);
+  const groundingInfo = createTankGroundingInfo(
+    tankContainer,
+    tankAnchor,
+    tankColliderMesh,
+    config.rig.movementForwardAxis
+  );
+  const tankPhysics = createTankPhysics(tankAnchor, tankColliderMesh, groundingInfo, scene, config);
 
   const tankCamera = tankContainer.cameras.find((camera) => camera.name === "CAM_tank") ?? null;
   if (tankCamera) {
@@ -123,6 +145,8 @@ export async function createGameplayScene(
     config,
     tankContainer,
     tankAnchor,
+    tankVisualRoot,
+    groundingInfo: groundingInfo,
     tankBody: tankPhysics.body,
     tankCamera
   });
@@ -147,19 +171,25 @@ export async function createGameplayScene(
   };
 }
 
-function parentTopLevelNodesToAnchor(container: AssetContainer, anchor: TransformNode): void {
-  const topLevelNodes = [
-    ...container.meshes.filter((mesh) => !mesh.parent),
-    ...container.transformNodes.filter((node) => !node.parent),
-    ...container.cameras.filter((camera) => !camera.parent)
-  ];
+function parentTankNodes(
+  container: AssetContainer,
+  physicsAnchor: TransformNode,
+  visualRoot: TransformNode
+): void {
+  for (const mesh of container.meshes.filter((candidate) => !candidate.parent)) {
+    mesh.parent = mesh.name === "COL_tank" ? physicsAnchor : visualRoot;
+  }
 
-  for (const node of topLevelNodes) {
-    if (node === anchor) {
+  for (const node of container.transformNodes.filter((candidate) => !candidate.parent)) {
+    if (node === physicsAnchor || node === visualRoot) {
       continue;
     }
 
-    node.parent = anchor;
+    node.parent = visualRoot;
+  }
+
+  for (const camera of container.cameras.filter((candidate) => !candidate.parent)) {
+    camera.parent = visualRoot;
   }
 }
 
@@ -253,22 +283,30 @@ function createWorldPhysics(container: AssetContainer, scene: Scene): PhysicsRes
 function createTankPhysics(
   tankAnchor: TransformNode,
   tankColliderMesh: Mesh | null,
-  scene: Scene
-): { body: PhysicsBody; shape: PhysicsShape } {
-  const body = new PhysicsBody(tankAnchor, PhysicsMotionType.DYNAMIC, false, scene);
+  grounding: TankGroundingInfo,
+  scene: Scene,
+  config: TankControllerConfig
+): TankPhysicsResource {
+  const body = new PhysicsBody(tankAnchor, PhysicsMotionType.ANIMATED, false, scene);
   const shape = tankColliderMesh
-    ? new PhysicsShapeConvexHull(tankColliderMesh, scene)
+    ? PhysicsShapeBox.FromMesh(tankColliderMesh)
     : new PhysicsShapeBox(Vector3.Zero(), Quaternion.Identity(), new Vector3(1, 0.5, 1.6), scene);
 
   body.shape = shape;
+  shape.material = {
+    friction: config.physics.tankFriction,
+    staticFriction: config.physics.tankFriction,
+    restitution: config.physics.tankRestitution
+  };
   body.setMassProperties({
-    mass: 40,
-    inertia: new Vector3(0, 1, 0)
+    mass: config.physics.tankMass,
+    centerOfMass: new Vector3(0, config.physics.tankCenterOfMassYOffset, 0)
   });
-  body.setLinearDamping(2.5);
-  body.setAngularDamping(6);
+  body.setLinearDamping(config.physics.tankLinearDamping);
+  body.setAngularDamping(config.physics.tankAngularDamping);
+  body.setGravityFactor(0);
 
-  return { body, shape };
+  return { body, shape, grounding };
 }
 
 function disposePhysicsGroup(group: PhysicsResourceGroup): void {
@@ -284,4 +322,75 @@ function disposePhysicsGroup(group: PhysicsResourceGroup): void {
 function findMeshByName(container: AssetContainer, name: string): Mesh | null {
   const mesh = container.meshes.find((candidate) => candidate.name === name);
   return mesh instanceof Mesh ? mesh : null;
+}
+
+function createTankGroundingInfo(
+  tankContainer: AssetContainer,
+  tankAnchor: TransformNode,
+  tankColliderMesh: Mesh | null,
+  movementForwardAxis: "x" | "y" | "z"
+): TankGroundingInfo {
+  const probeNames = ["GROUND_FL", "GROUND_FR", "GROUND_RL", "GROUND_RR"] as const;
+  const probeNodes = probeNames.map((name) => findTransformNode(tankContainer, name));
+  if (probeNodes.every((node) => node)) {
+    const [frontLeft, frontRight, rearLeft, rearRight] = probeNodes as Array<TransformNode | AbstractMesh>;
+    const frontLeftLocal = toAnchorLocalPosition(frontLeft, tankAnchor);
+    const frontRightLocal = toAnchorLocalPosition(frontRight, tankAnchor);
+    const rearLeftLocal = toAnchorLocalPosition(rearLeft, tankAnchor);
+    const rearRightLocal = toAnchorLocalPosition(rearRight, tankAnchor);
+    return {
+      baseClearance: Math.max(
+        -((frontLeftLocal.y + frontRightLocal.y + rearLeftLocal.y + rearRightLocal.y) / 4),
+        0.02
+      ),
+      frontLeft: frontLeftLocal,
+      frontRight: frontRightLocal,
+      rearLeft: rearLeftLocal,
+      rearRight: rearRightLocal
+    };
+  }
+
+  if (!tankColliderMesh) {
+    return {
+      baseClearance: 0.5,
+      frontLeft: new Vector3(-0.45, 0, 0.75),
+      frontRight: new Vector3(0.45, 0, 0.75),
+      rearLeft: new Vector3(-0.45, 0, -0.75),
+      rearRight: new Vector3(0.45, 0, -0.75)
+    };
+  }
+
+  const bounds = tankColliderMesh.getBoundingInfo().boundingBox;
+  const bottomFromAnchor = tankColliderMesh.position.y + bounds.minimum.y;
+  const forwardExtent =
+    movementForwardAxis === "x"
+      ? bounds.extendSize.x
+      : movementForwardAxis === "y"
+        ? bounds.extendSize.y
+        : bounds.extendSize.z;
+  const sideExtent =
+    movementForwardAxis === "x"
+      ? bounds.extendSize.z
+      : movementForwardAxis === "z"
+        ? bounds.extendSize.x
+        : bounds.extendSize.x;
+
+  return {
+    baseClearance: Math.max(-bottomFromAnchor, 0.02),
+    frontLeft: new Vector3(-sideExtent * 0.7, 0, forwardExtent * 0.7),
+    frontRight: new Vector3(sideExtent * 0.7, 0, forwardExtent * 0.7),
+    rearLeft: new Vector3(-sideExtent * 0.7, 0, -forwardExtent * 0.7),
+    rearRight: new Vector3(sideExtent * 0.7, 0, -forwardExtent * 0.7)
+  };
+}
+
+function toAnchorLocalPosition(
+  node: TransformNode | AbstractMesh,
+  anchor: TransformNode
+): Vector3 {
+  const anchorRotation = anchor.absoluteRotationQuaternion ?? Quaternion.Identity();
+  const anchorPosition = anchor.getAbsolutePosition();
+  const worldPosition = node.getAbsolutePosition();
+  const localOffset = worldPosition.subtract(anchorPosition);
+  return localOffset.applyRotationQuaternion(Quaternion.Inverse(anchorRotation));
 }

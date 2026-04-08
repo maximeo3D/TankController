@@ -14,6 +14,28 @@ export interface TankControllerConfig {
     moveSpeed: number;
     boostMultiplier: number;
     hullTurnSpeedDeg: number;
+    acceleration: number;
+    brakeDeceleration: number;
+    inputRiseRate: number;
+    inputFallRate: number;
+    lateralGrip: number;
+  };
+  physics: {
+    tankMass: number;
+    tankLinearDamping: number;
+    tankAngularDamping: number;
+    tankCenterOfMassYOffset: number;
+    tankFriction: number;
+    tankRestitution: number;
+  };
+  grounding: {
+    probeStartHeight: number;
+    probeLength: number;
+    groundClearance: number;
+    groundSnapSpeed: number;
+    maxGroundSlopeDeg: number;
+    visualTiltSharpness: number;
+    positionSharpness: number;
   };
   turret: {
     yawSpeedDeg: number;

@@ -2,7 +2,7 @@
   "rig": {
     "spawnYawOffsetDeg": 0.0,
     "movementForwardAxis": "z",
-    "movementForwardSign": -1,
+    "movementForwardSign": 1,
     "turretYawAxis": "z",
     "turretYawSign": -1,
     "cannonPitchAxis": "x",
@@ -11,7 +11,29 @@
   "movement": {
     "moveSpeed": 0.5,
     "boostMultiplier": 1.5,
-    "hullTurnSpeedDeg": 90.0
+    "hullTurnSpeedDeg": 135.0,
+    "acceleration": 6.0,
+    "brakeDeceleration": 3.8,
+    "inputRiseRate": 1.8,
+    "inputFallRate": 2.8,
+    "lateralGrip": 0.8
+  },
+  "physics": {
+    "tankMass": 55.0,
+    "tankLinearDamping": 2.0,
+    "tankAngularDamping": 2.2,
+    "tankCenterOfMassYOffset": -0.12,
+    "tankFriction": 0.95,
+    "tankRestitution": 0.015
+  },
+  "grounding": {
+    "probeStartHeight": 1.0,
+    "probeLength": 3.0,
+    "groundClearance": 0.02,
+    "groundSnapSpeed": 18.0,
+    "maxGroundSlopeDeg": 60.0,
+    "visualTiltSharpness": 10.0,
+    "positionSharpness": 14.0
   },
   "turret": {
     "yawSpeedDeg": 30.0,
