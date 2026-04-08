@@ -9,7 +9,7 @@
     "cannonPitchSign": 1
   },
   "movement": {
-    "moveSpeed": 1.5,
+    "moveSpeed": 0.5,
     "boostMultiplier": 1.5,
     "hullTurnSpeedDeg": 90.0
   },
