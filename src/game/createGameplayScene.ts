@@ -8,7 +8,16 @@ import { SceneLoader } from "@babylonjs/core/Loading/sceneLoader";
 import { Color4 } from "@babylonjs/core/Maths/math.color";
 import { Quaternion, Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { Axis } from "@babylonjs/core/Maths/math.axis";
+import { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
+import { PhysicsBody } from "@babylonjs/core/Physics/v2/physicsBody";
+import {
+  PhysicsShapeBox,
+  PhysicsShapeConvexHull,
+  PhysicsShapeMesh,
+  type PhysicsShape
+} from "@babylonjs/core/Physics/v2/physicsShape";
+import { PhysicsMotionType } from "@babylonjs/core/Physics/v2/IPhysicsEnginePlugin";
 import { HavokPlugin } from "@babylonjs/core/Physics/v2/Plugins/havokPlugin";
 import { Scene } from "@babylonjs/core/scene";
 import type { AssetContainer } from "@babylonjs/core/assetContainer";
@@ -38,6 +47,11 @@ export interface GameplaySceneBundle {
 }
 
 const REQUIRED_BONES = ["main", "caisse", "tourelle", "canon"] as const;
+
+interface PhysicsResourceGroup {
+  bodies: PhysicsBody[];
+  shapes: PhysicsShape[];
+}
 
 export async function createGameplayScene(
   engine: Engine,
@@ -70,6 +84,7 @@ export async function createGameplayScene(
   const terrainContainer = await SceneLoader.LoadAssetContainerAsync("", terrainAssetUrl, scene);
   terrainContainer.addAllToScene();
   hideColliderMeshes(terrainContainer);
+  const worldPhysics = createWorldPhysics(terrainContainer, scene);
 
   const spawnNode = findTransformNode(terrainContainer, "SPAWN_tank");
 
@@ -91,6 +106,8 @@ export async function createGameplayScene(
   tankAnchor.rotate(Axis.Y, toRadians(config.rig.spawnYawOffsetDeg));
 
   parentTopLevelNodesToAnchor(tankContainer, tankAnchor);
+  const tankColliderMesh = findMeshByName(tankContainer, "COL_tank");
+  const tankPhysics = createTankPhysics(tankAnchor, tankColliderMesh, scene);
 
   const tankCamera = tankContainer.cameras.find((camera) => camera.name === "CAM_tank") ?? null;
   if (tankCamera) {
@@ -106,6 +123,7 @@ export async function createGameplayScene(
     config,
     tankContainer,
     tankAnchor,
+    tankBody: tankPhysics.body,
     tankCamera
   });
 
@@ -120,7 +138,12 @@ export async function createGameplayScene(
       tankBones: collectBoneMatches(tankContainer)
     },
     getDebugState: () => controller.getDebugState(),
-    dispose: () => controller.dispose()
+    dispose: () => {
+      controller.dispose();
+      disposePhysicsGroup(worldPhysics);
+      tankPhysics.body.dispose();
+      tankPhysics.shape.dispose();
+    }
   };
 }
 
@@ -158,7 +181,7 @@ function hideColliderMeshes(container: AssetContainer): void {
     }
 
     mesh.isVisible = false;
-    mesh.setEnabled(false);
+    mesh.isPickable = false;
   }
 }
 
@@ -192,4 +215,73 @@ function extractHorizontalSpawnRotation(
 
   forward.normalize();
   return Quaternion.FromLookDirectionRH(forward, Axis.Y);
+}
+
+function createWorldPhysics(container: AssetContainer, scene: Scene): PhysicsResourceGroup {
+  const bodies: PhysicsBody[] = [];
+  const shapes: PhysicsShape[] = [];
+
+  for (const mesh of container.meshes) {
+    if (!(mesh instanceof Mesh) || mesh.getTotalVertices() === 0) {
+      continue;
+    }
+
+    if (mesh.name.startsWith("DM_")) {
+      const body = new PhysicsBody(mesh, PhysicsMotionType.DYNAMIC, false, scene);
+      const shape = new PhysicsShapeConvexHull(mesh, scene);
+      body.shape = shape;
+      body.setMassProperties({ mass: 5 });
+      body.setLinearDamping(0.6);
+      body.setAngularDamping(0.8);
+      bodies.push(body);
+      shapes.push(shape);
+      continue;
+    }
+
+    if (mesh.name.startsWith("SM_") || mesh.name.startsWith("COL_")) {
+      const body = new PhysicsBody(mesh, PhysicsMotionType.STATIC, false, scene);
+      const shape = new PhysicsShapeMesh(mesh, scene);
+      body.shape = shape;
+      bodies.push(body);
+      shapes.push(shape);
+    }
+  }
+
+  return { bodies, shapes };
+}
+
+function createTankPhysics(
+  tankAnchor: TransformNode,
+  tankColliderMesh: Mesh | null,
+  scene: Scene
+): { body: PhysicsBody; shape: PhysicsShape } {
+  const body = new PhysicsBody(tankAnchor, PhysicsMotionType.DYNAMIC, false, scene);
+  const shape = tankColliderMesh
+    ? new PhysicsShapeConvexHull(tankColliderMesh, scene)
+    : new PhysicsShapeBox(Vector3.Zero(), Quaternion.Identity(), new Vector3(1, 0.5, 1.6), scene);
+
+  body.shape = shape;
+  body.setMassProperties({
+    mass: 40,
+    inertia: new Vector3(0, 1, 0)
+  });
+  body.setLinearDamping(2.5);
+  body.setAngularDamping(6);
+
+  return { body, shape };
+}
+
+function disposePhysicsGroup(group: PhysicsResourceGroup): void {
+  for (const body of group.bodies) {
+    body.dispose();
+  }
+
+  for (const shape of group.shapes) {
+    shape.dispose();
+  }
+}
+
+function findMeshByName(container: AssetContainer, name: string): Mesh | null {
+  const mesh = container.meshes.find((candidate) => candidate.name === name);
+  return mesh instanceof Mesh ? mesh : null;
 }

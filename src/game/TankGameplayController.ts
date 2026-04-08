@@ -4,6 +4,7 @@ import type { Camera } from "@babylonjs/core/Cameras/camera";
 import type { AssetContainer } from "@babylonjs/core/assetContainer";
 import type { Bone } from "@babylonjs/core/Bones/bone";
 import type { TransformNode } from "@babylonjs/core/Meshes/transformNode";
+import type { PhysicsBody } from "@babylonjs/core/Physics/v2/physicsBody";
 import type { Scene } from "@babylonjs/core/scene";
 import type { TankControllerConfig } from "../config/tankController";
 import { TankInput, type WeaponType } from "./TankInput";
@@ -31,6 +32,7 @@ export interface TankGameplayControllerOptions {
   config: TankControllerConfig;
   tankContainer: AssetContainer;
   tankAnchor: TransformNode;
+  tankBody: PhysicsBody;
   tankCamera: Camera | null;
 }
 
@@ -38,6 +40,7 @@ export class TankGameplayController {
   private readonly scene: Scene;
   private readonly config: TankControllerConfig;
   private readonly tankAnchor: TransformNode;
+  private readonly tankBody: PhysicsBody;
   private readonly tankCamera: Camera | null;
   private readonly input: TankInput;
   private readonly turretControl: BoneControl;
@@ -64,6 +67,7 @@ export class TankGameplayController {
     this.scene = options.scene;
     this.config = options.config;
     this.tankAnchor = options.tankAnchor;
+    this.tankBody = options.tankBody;
     this.tankCamera = options.tankCamera;
     this.input = new TankInput(options.canvas);
     this.turretControl = resolveBoneControl(options.tankContainer, "tourelle");
@@ -103,7 +107,7 @@ export class TankGameplayController {
       shellReserveAmmo: this.shellReserveAmmo,
       shellChambered: this.shellChambered,
       fireHeld: this.fireHeld,
-      position: this.tankAnchor.position.clone()
+      position: this.tankBody.getObjectCenterWorld()
     };
   }
 
@@ -163,18 +167,23 @@ export class TankGameplayController {
   private applyMovement(moveAxis: number, turnAxis: number, boostHeld: boolean, dt: number): void {
     const canMove = this.battery > 0;
     const isMoving = canMove && moveAxis !== 0;
-
-    if (canMove && turnAxis !== 0) {
-      this.tankAnchor.rotate(Axis.Y, toRadians(turnAxis * this.config.movement.hullTurnSpeedDeg * dt), Space.LOCAL);
-    }
+    const currentLinearVelocity = this.tankBody.getLinearVelocity();
+    const targetAngularVelocity = canMove
+      ? new Vector3(0, toRadians(turnAxis * this.config.movement.hullTurnSpeedDeg), 0)
+      : Vector3.Zero();
+    this.tankBody.setAngularVelocity(targetAngularVelocity);
 
     this.boostActive = false;
+    let horizontalVelocity = Vector3.Zero();
     if (isMoving) {
       const canBoost = boostHeld && this.overcharge > 0;
       const speedMultiplier = canBoost ? this.config.movement.boostMultiplier : 1;
       const forward = this.tankAnchor.getDirection(this.movementForwardAxis);
-      const distance = moveAxis * this.config.movement.moveSpeed * speedMultiplier * dt;
-      this.tankAnchor.position.addInPlace(forward.scale(distance));
+      forward.y = 0;
+      if (forward.lengthSquared() > 1e-6) {
+        forward.normalize();
+      }
+      horizontalVelocity = forward.scale(moveAxis * this.config.movement.moveSpeed * speedMultiplier);
 
       this.battery = clamp(
         this.battery - this.config.energy.batteryDrainMovingPerSecond * dt,
@@ -191,6 +200,10 @@ export class TankGameplayController {
         this.boostActive = this.overcharge > 0;
       }
     }
+
+    this.tankBody.setLinearVelocity(
+      new Vector3(horizontalVelocity.x, currentLinearVelocity.y, horizontalVelocity.z)
+    );
   }
 
   private applyCamera(zoomHeld: boolean): void {
