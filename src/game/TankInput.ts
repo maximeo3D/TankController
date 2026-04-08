@@ -5,6 +5,8 @@ export interface TankInputFrame {
   turnAxis: number;
   lookDeltaX: number;
   lookDeltaY: number;
+  pointerX: number;
+  pointerY: number;
   boostHeld: boolean;
   zoomHeld: boolean;
   fireHeld: boolean;
@@ -16,6 +18,8 @@ export class TankInput {
   private readonly pressedKeys = new Set<string>();
   private lookDeltaX = 0;
   private lookDeltaY = 0;
+  private pointerX = 0;
+  private pointerY = 0;
   private isPrimaryFireHeld = false;
   private isZoomHeld = false;
   private selectedWeapon: WeaponType = "shell";
@@ -40,6 +44,8 @@ export class TankInput {
       turnAxis: this.readAxis("q", "d"),
       lookDeltaX: this.lookDeltaX,
       lookDeltaY: this.lookDeltaY,
+      pointerX: this.pointerX,
+      pointerY: this.pointerY,
       boostHeld: this.pressedKeys.has("shift"),
       zoomHeld: this.isZoomHeld,
       fireHeld: this.isPrimaryFireHeld,
@@ -97,6 +103,8 @@ export class TankInput {
   private readonly handlePointerMove = (event: PointerEvent): void => {
     this.lookDeltaX += event.movementX;
     this.lookDeltaY += event.movementY;
+    this.pointerX = event.offsetX;
+    this.pointerY = event.offsetY;
   };
 
   private readonly handlePointerDown = (event: PointerEvent): void => {

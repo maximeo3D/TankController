@@ -1,5 +1,12 @@
-import { Vector3, Quaternion } from "@babylonjs/core/Maths/math.vector";
+import { Vector3, Quaternion, Matrix } from "@babylonjs/core/Maths/math.vector";
+import { Plane } from "@babylonjs/core/Maths/math.plane";
 import { Axis, Space } from "@babylonjs/core/Maths/math.axis";
+import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
+import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
+import { Color3 } from "@babylonjs/core/Maths/math.color";
+import "@babylonjs/core/Culling/ray";
+import type { Mesh } from "@babylonjs/core/Meshes/mesh";
+import type { LinesMesh } from "@babylonjs/core/Meshes/linesMesh";
 import type { Camera } from "@babylonjs/core/Cameras/camera";
 import type { AssetContainer } from "@babylonjs/core/assetContainer";
 import type { Bone } from "@babylonjs/core/Bones/bone";
@@ -79,6 +86,12 @@ export class TankGameplayController {
   private readonly planarVelocity = Vector3.Zero();
   private readonly smoothedGroundNormal = Axis.Y.clone();
 
+  private debugTargetSphere: Mesh | null = null;
+  private debugRayLine: LinesMesh | null = null;
+  private debugTurretLine: LinesMesh | null = null;
+  private debugCannonLine: LinesMesh | null = null;
+  private debugFrameCount = 0;
+
   public constructor(options: TankGameplayControllerOptions) {
     this.scene = options.scene;
     this.config = options.config;
@@ -156,19 +169,96 @@ export class TankGameplayController {
     this.activeWeapon = frame.selectedWeapon;
     this.fireHeld = frame.fireHeld;
 
-    this.applyTurretAndCannon(frame.lookDeltaX, frame.lookDeltaY, dt);
+    this.applyTurretAndCannon(frame.pointerX, frame.pointerY, dt);
     this.applyMovement(frame.moveAxis, frame.turnAxis, frame.boostHeld, dt);
     this.applyVisualSmoothing(dt);
     this.applyCamera(frame.zoomHeld);
   };
 
-  private applyTurretAndCannon(lookDeltaX: number, lookDeltaY: number, dt: number): void {
-    this.targetTurretYawDeg += lookDeltaX * this.config.turret.mouseSensitivityDegPerPixel;
-    this.targetCannonPitchDeg = clamp(
-      this.targetCannonPitchDeg - lookDeltaY * this.config.cannon.mouseSensitivityDegPerPixel,
-      this.config.cannon.minPitchDeg,
-      this.config.cannon.maxPitchDeg
-    );
+  private applyTurretAndCannon(pointerX: number, pointerY: number, dt: number): void {
+    const camera = this.tankCamera ?? this.scene.activeCamera;
+    if (!camera) {
+      return;
+    }
+
+    const ray = this.scene.createPickingRay(pointerX, pointerY, Matrix.Identity(), camera);
+    let targetPoint: Vector3 | null = null;
+
+    const pickResult = this.scene.pickWithRay(ray, (mesh) => {
+      // Only hit terrain meshes or ground
+      return mesh.name.startsWith("SM_") || mesh.name.startsWith("DM_") || mesh.name.toLowerCase().includes("ground");
+    });
+
+    if (pickResult?.hit && pickResult.pickedPoint) {
+      targetPoint = pickResult.pickedPoint;
+    } else {
+      // Intersect with horizontal plane at tank's height
+      const plane = Plane.FromPositionAndNormal(this.tankAnchor.position, Axis.Y);
+      const distance = ray.intersectsPlane(plane);
+      if (distance !== null) {
+        targetPoint = ray.origin.add(ray.direction.scale(distance));
+      }
+    }
+
+    this.debugFrameCount++;
+    if (this.debugFrameCount % 60 === 0) {
+      console.log(`[Aim Debug] Pointer: (${pointerX}, ${pointerY}) | TargetPoint:`, targetPoint?.asArray(), `| HitMesh:`, pickResult?.hit ? pickResult.pickedMesh?.name : "None");
+    }
+
+    if (targetPoint) {
+      // Create or update debug sphere
+      if (!this.debugTargetSphere) {
+        this.debugTargetSphere = MeshBuilder.CreateSphere("debugTarget", { diameter: 0.025 }, this.scene);
+        const mat = new StandardMaterial("debugMat", this.scene);
+        mat.emissiveColor = Color3.Red();
+        this.debugTargetSphere.material = mat;
+      }
+      this.debugTargetSphere.position.copyFrom(targetPoint);
+
+      // Update debug ray line
+      if (this.debugRayLine) {
+        this.debugRayLine.dispose();
+      }
+      this.debugRayLine = MeshBuilder.CreateLines("debugRay", {
+        points: [ray.origin, targetPoint],
+        updatable: true
+      }, this.scene);
+      this.debugRayLine.color = Color3.Yellow();
+
+      // Transform target point to tank's local space
+      const invHullMatrix = this.tankAnchor.getWorldMatrix().clone().invert();
+      const localTarget = Vector3.TransformCoordinates(targetPoint, invHullMatrix);
+
+      // Calculate desired yaw in tank space (XZ plane)
+      // Math.atan2(x, z) means 0 is forward (+z), PI/2 is right (+x)
+      // Negating x and z to flip the turret 180 degrees
+      let desiredYawRad = Math.atan2(-localTarget.x, -localTarget.z);
+      this.targetTurretYawDeg = (desiredYawRad * 180) / Math.PI * this.config.rig.turretYawSign;
+
+      // For pitch, calculate distance from cannon pivot to target
+      let cannonLocalPos = Vector3.Zero();
+      if (this.cannonControl.transformNode) {
+        const cannonWorldPos = this.cannonControl.transformNode.getAbsolutePosition();
+        cannonLocalPos = Vector3.TransformCoordinates(cannonWorldPos, invHullMatrix);
+      } else if (this.cannonControl.bone) {
+        const cannonWorldPos = this.cannonControl.bone.getAbsolutePosition(this.tankAnchor);
+        cannonLocalPos = Vector3.TransformCoordinates(cannonWorldPos, invHullMatrix);
+      }
+
+      const dx = localTarget.x - cannonLocalPos.x;
+      const dz = localTarget.z - cannonLocalPos.z;
+      const distHorizFromCannon = Math.sqrt(dx * dx + dz * dz);
+      const heightFromCannon = localTarget.y - cannonLocalPos.y;
+
+      let desiredPitchRad = Math.atan2(heightFromCannon, distHorizFromCannon);
+      
+      // Apply sign and clamp
+      this.targetCannonPitchDeg = clamp(
+        ((desiredPitchRad * 180) / Math.PI) * this.config.rig.cannonPitchSign,
+        this.config.cannon.minPitchDeg,
+        this.config.cannon.maxPitchDeg
+      );
+    }
 
     const turretNextYawDeg = moveTowardsAngle(
       this.currentTurretYawDeg,
@@ -192,6 +282,33 @@ export class TankGameplayController {
 
     if (Math.abs(cannonStepRad) > 0) {
       rotateControl(this.cannonControl, this.cannonPitchAxis, cannonStepRad, this.tankAnchor);
+    }
+
+    // Update debug lines for turret and cannon forward directions
+    this.updateDebugLines();
+  }
+
+  private updateDebugLines(): void {
+    if (this.turretControl.transformNode) {
+      const turretWorldPos = this.turretControl.transformNode.getAbsolutePosition();
+      const turretForward = this.turretControl.transformNode.getDirection(this.movementForwardAxis);
+      if (this.debugTurretLine) this.debugTurretLine.dispose();
+      this.debugTurretLine = MeshBuilder.CreateLines("debugTurret", {
+        points: [turretWorldPos, turretWorldPos.add(turretForward.scale(5))],
+        updatable: true
+      }, this.scene);
+      this.debugTurretLine.color = Color3.Green();
+    }
+
+    if (this.cannonControl.transformNode) {
+      const cannonWorldPos = this.cannonControl.transformNode.getAbsolutePosition();
+      const cannonForward = this.cannonControl.transformNode.getDirection(this.movementForwardAxis);
+      if (this.debugCannonLine) this.debugCannonLine.dispose();
+      this.debugCannonLine = MeshBuilder.CreateLines("debugCannon", {
+        points: [cannonWorldPos, cannonWorldPos.add(cannonForward.scale(10))],
+        updatable: true
+      }, this.scene);
+      this.debugCannonLine.color = Color3.Blue();
     }
   }
 
