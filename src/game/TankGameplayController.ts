@@ -355,7 +355,7 @@ export class TankGameplayController {
         // Scale the reticle based on its distance from the camera to keep it the same size on screen
         const distToCamera = Vector3.Distance(camera.globalPosition, targetPoint);
         // Base scale factor - adjust this to make the reticle globally bigger or smaller
-        const baseScale = 1; 
+        const baseScale = 0.01; 
         const newScale = distToCamera * baseScale;
         this.reticleMesh.scaling.set(newScale, newScale, newScale);
       }

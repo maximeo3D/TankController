@@ -78,8 +78,8 @@
       "startsChambered": true,
       "reloadSeconds": 4.0,
       "damage": 100.0,
-      "muzzleVelocity": 1.0,
-      "gravityMultiplier": 5
+      "muzzleVelocity": 40.0,
+      "gravityMultiplier": 1
     },
     "bullet": {
       "shotsPerSecond": 4.0,

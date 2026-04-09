@@ -312,7 +312,7 @@ function snapTankAnchorYToTerrain(
 }
 
 function hideColliderMeshes(container: AssetContainer, scene: Scene): void {
-  const debugShowColliders = true;
+  const debugShowColliders = false;
 
   let redWireframeMat = scene.getMaterialByName("debug_red_wireframe") as StandardMaterial | null;
   if (!redWireframeMat) {
@@ -334,14 +334,15 @@ function hideColliderMeshes(container: AssetContainer, scene: Scene): void {
     // Keep gameplay picking for SM_/DM_ (reticle raycast), but never pick colliders.
     if (isCollider) {
       mesh.isPickable = false;
-    }
-
-    if (debugShowColliders) {
+      mesh.isVisible = debugShowColliders;
+      if (debugShowColliders && mesh instanceof Mesh) {
+        mesh.material = redWireframeMat;
+      }
+    } else if (debugShowColliders) {
       mesh.isVisible = true;
-    }
-
-    if (debugShowColliders && mesh instanceof Mesh) {
-      mesh.material = redWireframeMat;
+      if (mesh instanceof Mesh) {
+        mesh.material = redWireframeMat;
+      }
     }
   }
 }
