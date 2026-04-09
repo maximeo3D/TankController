@@ -109,6 +109,8 @@ export class TankInput {
 
   private readonly handlePointerDown = (event: PointerEvent): void => {
     this.canvas.focus();
+    this.pointerX = event.offsetX;
+    this.pointerY = event.offsetY;
 
     if (event.button === 0) {
       this.isPrimaryFireHeld = true;

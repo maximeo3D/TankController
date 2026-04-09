@@ -31,12 +31,23 @@ export interface TankControllerConfig {
   };
   grounding: {
     probeStartHeight: number;
+    maxHitAboveProbeBaseY: number;
     probeLength: number;
     groundClearance: number;
     groundSnapSpeed: number;
     maxGroundSlopeDeg: number;
     visualTiltSharpness: number;
     positionSharpness: number;
+  };
+  suspension: {
+    rayStartHeight: number;
+    rayLength: number;
+    restLength: number;
+    springStrength: number;
+    damperStrength: number;
+    maxForce: number;
+    tractionForce: number;
+    lateralFriction: number;
   };
   turret: {
     yawSpeedDeg: number;
