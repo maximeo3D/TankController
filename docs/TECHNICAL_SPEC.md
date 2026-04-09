@@ -1,4 +1,4 @@
-# TankController - Technical Specification v0
+# TankController - Technical Specification
 
 ## Goal
 
@@ -9,7 +9,7 @@ The player controls a toy tank on a terrain loaded from `GLB` assets. The first 
 - front-end menu flow
 - tank movement and aiming
 - ballistic weapons
-- camera and zoom
+- camera orbit and zoom
 - battery and overcharge resources
 - asset loading conventions stable enough to support later content
 
@@ -18,19 +18,19 @@ The player controls a toy tank on a terrain loaded from `GLB` assets. The first 
 - Rendering: `Babylon.js 9.1.0`
 - Physics: `Havok Physics` plugin for Babylon.js
 - Assets: `GLB`
-- Parameters: external JSON config file
+- Parameters: external JSON config file (`config/TankController.json`)
 
 ## Scale
 
 The project uses an intentionally enlarged scale compared to the original toy concept.
 
-- Assets are exported from Blender with `x10` scale
-- Terrain and gameplay values should be tuned in this enlarged space
-- If physics become unstable, gameplay values should be adjusted before changing the asset contract
+- Assets are exported from Blender with **`×10` scale** (or equivalent); gameplay and physics are tuned in that space.
+- Reticle screen size is compensated in code (`baseScale` on `UI_tank_reticle`) so HUD stays readable at large world units.
+- If physics become unstable, prefer tuning JSON values before changing the asset contract.
 
 ## Application States
 
-The game should be built as a single application with UI states, not as a multi-page website.
+The game is built as a single application with UI states, not as a multi-page website.
 
 ### States
 
@@ -44,8 +44,8 @@ The game should be built as a single application with UI states, not as a multi-
 
 `MainMenu`
 
-- `Play` -> `LevelSelect`
-- `Controls` -> `Controls`
+- `Play` → `LevelSelect`
+- `Controls` → `Controls`
 
 `Controls`
 
@@ -82,28 +82,35 @@ The tank file contains:
 - armature `tank_armature`
 - bone hierarchy `main > caisse > tourelle > canon`
 - empty `MUZZLE_tank` parented to `canon`
-- camera `CAM_tank` parented to `caisse`
-- invisible mesh `COL_tank` used as the tank collider
+- camera `CAM_tank` (gameplay view; see **Camera** below)
+- empty **`CAM_pivot`**: orbit center above the turret (used at runtime)
+- six empties **`SUS_FL`**, **`SUS_FR`**, **`SUS_ML`**, **`SUS_MR`**, **`SUS_RL`**, **`SUS_RR`**: suspension raycast origins (wheel / contact probes)
+- optional legacy **`GROUND_*`** four-corner names (fallback only if `SUS_*` are incomplete)
+- mesh **`UI_tank_reticle`**: world-space reticle (unparented in code, billboard)
+- meshes **`AMMO_obus`** / **`AMMO_balle`**: projectile templates (hidden, cloned on fire)
+- invisible mesh **`COL_tank`**: convex hull physics collider for the tank
 
 ## Visibility Rules
 
-- All meshes are visible by default except `COL_*`
-- `COL_tank` must never be rendered in gameplay
-- `COL_*` from terrain must never be rendered in gameplay
+- In normal gameplay, **`COL_*` are not rendered** (`hideColliderMeshes` in `createGameplayScene.ts`; debug wireframe can be toggled via `debugShowColliders` in that function).
+- `COL_*` must not participate in gameplay picking (reticle uses `SM_*` / `DM_*` only).
+- `SM_*` / `DM_*` stay visible as authored.
 
 ## Physics Rules
 
 ### Terrain and Decor
 
-- `SM_*` receive static physics behavior
-- `DM_*` receive dynamic physics behavior
-- `COL_*` are used to define blocking geometry where needed
+- `SM_*` receive static physics behavior (mesh colliders).
+- `DM_*` receive dynamic physics behavior (convex hull, mass from volume heuristic).
+- `COL_*` define blocking geometry where needed.
 
 ### Tank
 
-- `COL_tank` is the collision source for the tank
-- the visible tank mesh follows the physical controller
-- the tank body uses simplified collision, not the visible mesh
+- **`COL_tank`** is the collision shape for the tank (convex hull); it is parented to the physics anchor, not driven by suspension alone.
+- The rigid body is attached to a **`tank_anchor`** transform node; visuals hang under **`tank_visual_root`** for optional smoothing.
+- **Suspension**: each frame, Havok **raycasts** are cast downward from the six `SUS_*` points (positions in anchor space). Spring-damper forces are applied at hit points so the hull stays supported; parameters live under `suspension` in `TankController.json` (e.g. `rayLength`, `restLength`, `springStrength`).
+- **Spawn snap**: once per scene load, the tank anchor may be lowered so probe rays match a nominal contact distance (`snapTankAnchorYToTerrain`), reducing float at spawn.
+- **Grounding metadata** (`grounding` in JSON): used for legacy / helper data; primary behavior is the dynamic suspension + collider.
 
 ### Power-Ups
 
@@ -120,19 +127,20 @@ The tank file contains:
 If battery is `0%`:
 
 - tank movement is disabled
-- turret aiming remains available
+- turret aiming remains available (subject to camera / reticle)
 - firing remains available
 
 If overcharge is `0%`:
 
 - boost input has no effect
 
-### Aiming
+### Aiming (current implementation)
 
-- mouse horizontal movement rotates the turret on yaw only
-- mouse vertical movement rotates the cannon on pitch only
-- turret roll and pitch are locked
-- cannon yaw and roll are locked
+- **Not** raw “mouse X = turret only, mouse Y = cannon only” on its own.
+- Each frame, a **picking ray** is built from the **active gameplay camera** through the pointer (`createPickingRay`); it intersects terrain (`SM_*` / `DM_*`) or a fallback horizontal plane.
+- The **reticle** (`UI_tank_reticle`) is placed at the hit point (with a max distance from the tank).
+- **Turret yaw** and **cannon pitch** targets are derived from that world target in hull space, then rotated toward limits at configured speeds (`turret` / `cannon` in JSON).
+- With **`CAM_pivot`** present and a **`TargetCamera`**-compatible `CAM_tank`, **mouse movement applies an orbit** (yaw/pitch around the pivot in hull space, distance clamped) before the ray is cast, so the view rotates around the tank like a third-person tank game.
 
 ### Weapons
 
@@ -145,43 +153,53 @@ If overcharge is `0%`:
 ### Zoom
 
 - right mouse button held
-- zoom reduces camera FOV by `50%`
-- while boost is active, camera FOV increases by `10%` to reinforce speed sensation
+- zoom reduces camera FOV using `camera.zoomFovMultiplier` in JSON
+- while boost is active, camera FOV can increase using `camera.boostFovMultiplier`
+
+## Camera configuration (`config/TankController.json`)
+
+Under `camera`, besides FOV:
+
+- **`orbitYawDegPerPixel`** / **`orbitPitchDegPerPixel`**: mouse orbit sensitivity when `CAM_pivot` + orbit path is active
+- **`orbitMinPitchDeg`** / **`orbitMaxPitchDeg`**: vertical orbit limits
+- **`orbitMinRadius`** / **`orbitMaxRadius`**: distance clamp
+- **`orbitDefaultRadius`**: fallback if initial camera–pivot distance is too small to infer
+
+At runtime, if `CAM_pivot` exists, **`CAM_tank` is detached** from the rig (world position preserved), default Babylon camera inputs on `FreeCamera` are cleared, and position/target are driven in code.
 
 ## Weapon Rules
 
 ### Shells
 
 - finite reserve
-- starting ammo: `14`
-- one shell available in chamber at start
-- chamber reload time: `4` seconds
+- starting ammo: `14` (configurable)
+- one shell available in chamber at start (configurable)
+- chamber reload time: `4` seconds (configurable)
 - shell pickups refill ammo reserve
 - ballistic projectile
 - high damage
-- lower velocity
+- lower velocity (configurable)
 
 ### Bullets
 
-- unlimited ammo in v0
-- fire rate: `4` shots per second
+- fire rate configurable (`shotsPerSecond`)
 - ballistic projectile
 - lower damage
-- higher velocity
+- higher velocity (configurable)
 
 ## Turret and Cannon Constraints
 
 ### Turret
 
-- yaw only
+- yaw only (bone `tourelle`)
 - free `360` degree rotation
-- initial rotation speed: `30 deg/s`
+- turn rate from `turret.yawSpeedDeg` in JSON
 
 ### Cannon
 
-- pitch only
-- total pitch travel: `90` degrees
-- exact min/max values are defined in `config/TankController.json`
+- pitch only (bone `canon`)
+- min/max pitch from `cannon.minPitchDeg` / `cannon.maxPitchDeg` in JSON
+- pitch speed from `cannon.pitchSpeedDeg`
 
 ## Energy System
 
@@ -219,67 +237,33 @@ All tank gameplay tuning must be externalized in `config/TankController.json`.
 
 This file is the source of truth for:
 
-- movement values
-- turn rates
-- pitch limits
-- FOV values
+- movement, suspension, grounding
+- turn rates, pitch limits
+- camera FOV and **orbit** parameters
 - battery and overcharge values
 - weapon values
 - power-up multipliers
 
-The game code should avoid hardcoding gameplay numbers except for temporary debug defaults.
+The game code should avoid hardcoding gameplay numbers except for small glue constants (e.g. reticle `baseScale` in `TankGameplayController.ts` until moved to JSON).
 
-## Recommended Initial Module Layout
+## Recommended Module Layout (actual)
 
-When implementation starts, keep the project modular.
-
-- `src/app/`
-- `src/core/`
-- `src/game/`
-- `src/ui/`
-- `src/assets/`
-- `src/config/`
-
-Suggested responsibilities:
-
-- `app`: bootstrap, state transitions, lifecycle
-- `core`: engine setup, scene, physics, update loop
-- `game`: tank, weapons, pickups, level loading
-- `ui`: menus and HUD
-- `assets`: asset discovery and node lookup helpers
-- `config`: JSON loading and runtime validation
+- `src/app/` — bootstrap, state transitions
+- `src/game/` — `createGameplayScene`, `TankGameplayController`, `TankInput`
+- `src/config/` — typed config + JSON import
+- `src/assets/` — asset URLs
 
 ## Vertical Slice Scope
 
-The first playable slice should include:
-
-- `MainMenu`
-- `Controls`
-- `LevelSelect`
-- one playable level loaded from `terrain.glb`
-- tank spawned from `SPAWN_tank`
-- movement, boost, turret, cannon, zoom
-- shell weapon
-- bullet weapon
-- battery and overcharge logic
-
-The following can be delayed:
-
-- enemy AI
-- damageable enemies
-- collectible pickups
-- HUD polish
-- sound design
-- advanced VFX
-- save system
+See `docs/VERTICAL_SLICE_BACKLOG.md`.
 
 ## Main Risks
 
 - physics instability due to small or inconsistent asset scales
 - unexpected local axes on imported bones and empties
-- mismatch between visible meshes and physical proxies
-- ballistic tuning feeling weak at prototype stage
-- camera feel if `CAM_tank` orientation is not clean in the asset
+- mismatch between visible meshes and `COL_tank`
+- ballistic tuning at large world scale
+- camera feel: orbit limits and `CAM_pivot` placement must match art intent
 
 ## Development Rule
 
