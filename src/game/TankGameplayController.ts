@@ -7,6 +7,7 @@ import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import { PhysicsBody } from "@babylonjs/core/Physics/v2/physicsBody";
 import { PhysicsShapeSphere, type PhysicsShape } from "@babylonjs/core/Physics/v2/physicsShape";
 import { PhysicsMotionType } from "@babylonjs/core/Physics/v2/IPhysicsEnginePlugin";
+// (raycast query type removed; using inline object literals)
 import type { Camera } from "@babylonjs/core/Cameras/camera";
 import type { AssetContainer } from "@babylonjs/core/assetContainer";
 import type { Bone } from "@babylonjs/core/Bones/bone";
@@ -48,6 +49,9 @@ export interface TankGameplayControllerOptions {
     rearLeft: Vector3;
     rearRight: Vector3;
   };
+  suspensionInfo: {
+    points: Vector3[];
+  };
   tankBody: PhysicsBody;
   tankCamera: Camera | null;
   reticleMesh: Mesh | null;
@@ -62,7 +66,8 @@ export class TankGameplayController {
   private readonly config: TankControllerConfig;
   private readonly tankAnchor: TransformNode;
   private readonly tankVisualRoot: TransformNode | null;
-  private readonly groundingInfo: TankGameplayControllerOptions["groundingInfo"];
+  // groundingInfo kept in options for backward compatibility, but unused in dynamic suspension mode.
+  private readonly suspensionPointsLocal: Vector3[];
   private readonly tankBody: PhysicsBody;
   private readonly tankCamera: Camera | null;
   private readonly input: TankInput;
@@ -91,10 +96,6 @@ export class TankGameplayController {
   private targetCannonPitchDeg = 0;
   private currentCannonPitchDeg = 0;
   private smoothedMoveAxis = 0;
-  private hullYawRadians = 0;
-  private verticalVelocity = 0;
-  private readonly planarVelocity = Vector3.Zero();
-  private readonly smoothedGroundNormal = Axis.Y.clone();
 
   private shellReloadTimer = 0;
   private bulletCooldownTimer = 0;
@@ -106,7 +107,8 @@ export class TankGameplayController {
     this.config = options.config;
     this.tankAnchor = options.tankAnchor;
     this.tankVisualRoot = options.tankVisualRoot;
-    this.groundingInfo = options.groundingInfo;
+    void options.groundingInfo;
+    this.suspensionPointsLocal = options.suspensionInfo.points.map((p) => p.clone());
     this.tankBody = options.tankBody;
     this.tankCamera = options.tankCamera;
     this.reticleMesh = options.reticleMesh;
@@ -148,7 +150,6 @@ export class TankGameplayController {
     initialForward.y = 0;
     if (initialForward.lengthSquared() > 1e-6) {
       initialForward.normalize();
-      this.hullYawRadians = Math.atan2(initialForward.x, initialForward.z);
     }
 
     this.scene.onBeforeRenderObservable.add(this.update);
@@ -430,27 +431,32 @@ export class TankGameplayController {
     const isMoving = canMove && Math.abs(this.smoothedMoveAxis) > 0.001;
 
     this.boostActive = false;
+
+    // Steering: drive the rigidbody (not the node transform).
     if (canMove) {
-      this.hullYawRadians += toRadians(turnAxis * this.config.movement.hullTurnSpeedDeg) * dt;
+      const angVel = this.tankBody.getAngularVelocity();
+      angVel.y = toRadians(turnAxis * this.config.movement.hullTurnSpeedDeg);
+      this.tankBody.setAngularVelocity(angVel);
     }
 
-    const forward = forwardFromYaw(this.hullYawRadians);
-    const yawRotation = Quaternion.FromLookDirectionRH(forward, Axis.Y);
+    // Suspension forces (raycast down from SUS_* points).
+    this.applySuspension();
 
-    let desiredForwardSpeed = 0;
+    // Traction + lateral friction at COM.
+    const forwardWorld = this.tankAnchor.getDirection(this.movementForwardAxis);
+    forwardWorld.y = 0;
+    if (forwardWorld.lengthSquared() > 1e-6) {
+      forwardWorld.normalize();
+    } else {
+      forwardWorld.copyFrom(Axis.Z);
+    }
+    const rightWorld = Vector3.Cross(Axis.Y, forwardWorld).normalize();
 
+    let tractionMultiplier = 1;
     if (isMoving) {
       const canBoost = boostHeld && this.overcharge > 0;
-      const speedMultiplier = canBoost ? this.config.movement.boostMultiplier : 1;
-      desiredForwardSpeed = this.smoothedMoveAxis * this.config.movement.moveSpeed * speedMultiplier;
-
-      this.battery = clamp(
-        this.battery - this.config.energy.batteryDrainMovingPerSecond * dt,
-        0,
-        this.config.energy.batteryMax
-      );
-
       if (canBoost) {
+        tractionMultiplier *= this.config.movement.boostMultiplier;
         this.overcharge = clamp(
           this.overcharge - this.config.energy.overchargeDrainBoostPerSecond * dt,
           0,
@@ -458,48 +464,79 @@ export class TankGameplayController {
         );
         this.boostActive = this.overcharge > 0;
       }
-    }
 
-    const acceleration = isMoving
-      ? this.config.movement.acceleration
-      : this.config.movement.brakeDeceleration;
-    const targetPlanarVelocity = forward.scale(desiredForwardSpeed);
-    const nextPlanarVelocity = moveTowardsVector(
-      this.planarVelocity,
-      targetPlanarVelocity,
-      acceleration * dt
-    );
-    this.planarVelocity.copyFrom(nextPlanarVelocity);
-    if (!isMoving && this.planarVelocity.lengthSquared() < 1e-4) {
-      this.planarVelocity.setAll(0);
-    }
-
-    const predictedPosition = this.tankAnchor.position.add(this.planarVelocity.scale(dt));
-    const groundedState = this.sampleGround(predictedPosition, yawRotation);
-    const targetPosition = predictedPosition.clone();
-    let targetRotation = yawRotation;
-
-    if (groundedState) {
-      const normalLerp = 1 - Math.exp(-this.config.grounding.visualTiltSharpness * dt);
-      this.smoothedGroundNormal.copyFrom(
-        blendNormalizedDirections(this.smoothedGroundNormal, groundedState.normal, normalLerp)
+      this.battery = clamp(
+        this.battery - this.config.energy.batteryDrainMovingPerSecond * dt,
+        0,
+        this.config.energy.batteryMax
       );
+    }
 
-      const groundedForward = rejectOnNormal(forward, this.smoothedGroundNormal);
-      if (groundedForward.lengthSquared() > 1e-6) {
-        groundedForward.normalize();
-        targetRotation = Quaternion.FromLookDirectionRH(groundedForward, this.smoothedGroundNormal);
+    const center = this.tankBody.getObjectCenterWorld();
+    const v = this.tankBody.getLinearVelocity();
+    const lateralSpeed = Vector3.Dot(v, rightWorld);
+    const lateralForce = rightWorld.scale(-lateralSpeed * this.config.suspension.lateralFriction);
+    this.tankBody.applyForce(lateralForce, center);
+
+    if (isMoving) {
+      const tractionForce = forwardWorld.scale(
+        this.smoothedMoveAxis * this.config.suspension.tractionForce * tractionMultiplier
+      );
+      this.tankBody.applyForce(tractionForce, center);
+    }
+  }
+
+  private applySuspension(): void {
+    const engine = this.scene.getPhysicsEngine();
+    if (!engine) {
+      return;
+    }
+
+    const center = this.tankBody.getObjectCenterWorld();
+    const linearVel = this.tankBody.getLinearVelocity();
+    const angularVel = this.tankBody.getAngularVelocity();
+
+    const rayStartHeight = this.config.suspension.rayStartHeight;
+    const rayLength = this.config.suspension.rayLength;
+    const restLength = this.config.suspension.restLength;
+    const k = this.config.suspension.springStrength;
+    const c = this.config.suspension.damperStrength;
+    const maxForce = this.config.suspension.maxForce;
+
+    for (const localPoint of this.suspensionPointsLocal) {
+      const q = this.tankAnchor.absoluteRotationQuaternion ?? this.tankAnchor.rotationQuaternion ?? Quaternion.Identity();
+      const worldPoint = this.tankAnchor.getAbsolutePosition().add(localPoint.clone().applyRotationQuaternion(q));
+
+      const from = worldPoint.add(Axis.Y.scale(rayStartHeight));
+      const to = from.add(Axis.Y.scale(-rayLength));
+      const hit = engine.raycast(from, to, {
+        ignoreBody: this.tankBody,
+        shouldHitTriggers: false,
+        collideWith: ~4
+      });
+
+      if (!hit.hasHit) {
+        continue;
       }
 
-      const snapLerp = 1 - Math.exp(-this.config.grounding.groundSnapSpeed * dt);
-      targetPosition.y = lerp(this.tankAnchor.position.y, groundedState.anchorY, snapLerp);
-      this.verticalVelocity = 0;
-    } else {
-      this.verticalVelocity += -9.81 * dt;
-      targetPosition.y = this.tankAnchor.position.y + this.verticalVelocity * dt;
-    }
+      hit.calculateHitDistance();
+      const distance = hit.hitDistance;
+      const compression = clamp(restLength - distance, 0, restLength);
+      if (compression <= 0) {
+        continue;
+      }
 
-    this.tankBody.setTargetTransform(targetPosition, targetRotation);
+      // Point velocity along suspension axis (up).
+      const r = hit.hitPointWorld.subtract(center);
+      const pointVel = linearVel.add(Vector3.Cross(angularVel, r));
+      const velAlongUp = Vector3.Dot(pointVel, Axis.Y);
+
+      let forceMag = k * compression - c * velAlongUp;
+      forceMag = clamp(forceMag, 0, maxForce);
+
+      const force = Axis.Y.scale(forceMag);
+      this.tankBody.applyForce(force, hit.hitPointWorld);
+    }
   }
 
   private applyCamera(zoomHeld: boolean): void {
@@ -533,114 +570,6 @@ export class TankGameplayController {
     this.tankVisualRoot.position.copyFrom(nextLocalPosition);
   }
 
-  private sampleGround(position: Vector3, yawRotation: Quaternion): {
-    normal: Vector3;
-    anchorY: number;
-  } | null {
-    const physicsEngine = this.scene.getPhysicsEngine();
-    if (!physicsEngine) {
-      return null;
-    }
-
-    const sampleOffsets = {
-      frontLeft: this.groundingInfo.frontLeft.applyRotationQuaternion(yawRotation),
-      frontRight: this.groundingInfo.frontRight.applyRotationQuaternion(yawRotation),
-      rearLeft: this.groundingInfo.rearLeft.applyRotationQuaternion(yawRotation),
-      rearRight: this.groundingInfo.rearRight.applyRotationQuaternion(yawRotation)
-    };
-    const minNormalY = Math.cos(toRadians(this.config.grounding.maxGroundSlopeDeg));
-    const rayStartHeight = this.config.grounding.probeStartHeight;
-    const rayLength = this.config.grounding.probeStartHeight + this.config.grounding.probeLength;
-    const hits = {
-      frontLeft: sampleGroundPoint(
-        physicsEngine,
-        this.tankBody,
-        position,
-        sampleOffsets.frontLeft,
-        rayStartHeight,
-        rayLength,
-        minNormalY
-      ),
-      frontRight: sampleGroundPoint(
-        physicsEngine,
-        this.tankBody,
-        position,
-        sampleOffsets.frontRight,
-        rayStartHeight,
-        rayLength,
-        minNormalY
-      ),
-      rearLeft: sampleGroundPoint(
-        physicsEngine,
-        this.tankBody,
-        position,
-        sampleOffsets.rearLeft,
-        rayStartHeight,
-        rayLength,
-        minNormalY
-      ),
-      rearRight: sampleGroundPoint(
-        physicsEngine,
-        this.tankBody,
-        position,
-        sampleOffsets.rearRight,
-        rayStartHeight,
-        rayLength,
-        minNormalY
-      )
-    };
-    const hitEntries = Object.values(hits).filter((entry): entry is GroundHit => entry !== null);
-    if (hitEntries.length < 3) {
-      return null;
-    }
-
-    const anchorYCandidates: number[] = [];
-    const groundClearance = this.config.grounding.groundClearance;
-    if (hits.frontLeft) {
-      anchorYCandidates.push(hits.frontLeft.point.y - sampleOffsets.frontLeft.y + groundClearance);
-    }
-    if (hits.frontRight) {
-      anchorYCandidates.push(hits.frontRight.point.y - sampleOffsets.frontRight.y + groundClearance);
-    }
-    if (hits.rearLeft) {
-      anchorYCandidates.push(hits.rearLeft.point.y - sampleOffsets.rearLeft.y + groundClearance);
-    }
-    if (hits.rearRight) {
-      anchorYCandidates.push(hits.rearRight.point.y - sampleOffsets.rearRight.y + groundClearance);
-    }
-
-    let groundNormal = hitEntries
-      .reduce((sum, entry) => sum.add(entry.normal), Vector3.Zero())
-      .scale(1 / hitEntries.length);
-
-    if (hits.frontLeft && hits.frontRight && hits.rearLeft && hits.rearRight) {
-      const frontMid = hits.frontLeft.point.add(hits.frontRight.point).scale(0.5);
-      const rearMid = hits.rearLeft.point.add(hits.rearRight.point).scale(0.5);
-      const leftMid = hits.frontLeft.point.add(hits.rearLeft.point).scale(0.5);
-      const rightMid = hits.frontRight.point.add(hits.rearRight.point).scale(0.5);
-      groundNormal = Vector3.Cross(rightMid.subtract(leftMid), frontMid.subtract(rearMid));
-      if (groundNormal.y < 0) {
-        groundNormal.scaleInPlace(-1);
-      }
-    }
-
-    if (groundNormal.lengthSquared() <= 1e-6) {
-      return null;
-    }
-
-    groundNormal.normalize();
-    return {
-      normal: groundNormal,
-      anchorY:
-        anchorYCandidates.reduce((sum, value) => sum + value, 0) /
-        Math.max(anchorYCandidates.length, 1)
-    };
-  }
-}
-
-interface GroundHit {
-  point: Vector3;
-  normal: Vector3;
 }
 
 function resolveBoneControl(container: AssetContainer, boneName: string): BoneControl {
@@ -678,60 +607,6 @@ function moveTowards(current: number, target: number, maxDelta: number): number 
   return current + Math.sign(target - current) * maxDelta;
 }
 
-function moveTowardsVector(current: Vector3, target: Vector3, maxDelta: number): Vector3 {
-  const delta = target.subtract(current);
-  const distance = delta.length();
-  if (distance <= maxDelta || distance <= 1e-6) {
-    return target.clone();
-  }
-
-  return current.add(delta.scale(maxDelta / distance));
-}
-
-function sampleGroundPoint(
-  physicsEngine: NonNullable<ReturnType<Scene["getPhysicsEngine"]>>,
-  tankBody: PhysicsBody,
-  position: Vector3,
-  offset: Vector3,
-  rayStartHeight: number,
-  rayLength: number,
-  minNormalY: number
-): GroundHit | null {
-  const rayFrom = position.add(offset).add(Axis.Y.scale(rayStartHeight));
-  const rayTo = rayFrom.add(Axis.Y.scale(-rayLength));
-  const hit = physicsEngine.raycast(rayFrom, rayTo, {
-    ignoreBody: tankBody,
-    shouldHitTriggers: false,
-    collideWith: ~4 // Ignore projectiles (group 4)
-  });
-  if (!hit.hasHit || hit.hitNormalWorld.y < minNormalY) {
-    return null;
-  }
-
-  return {
-    point: hit.hitPointWorld.clone(),
-    normal: hit.hitNormalWorld.clone()
-  };
-}
-
-function forwardFromYaw(yawRadians: number): Vector3 {
-  return new Vector3(Math.sin(yawRadians), 0, Math.cos(yawRadians));
-}
-
-function rejectOnNormal(vector: Vector3, normal: Vector3): Vector3 {
-  return vector.subtract(normal.scale(Vector3.Dot(vector, normal)));
-}
-
-function blendNormalizedDirections(from: Vector3, to: Vector3, amount: number): Vector3 {
-  const blended = Vector3.Lerp(from, to, amount);
-  if (blended.lengthSquared() <= 1e-6) {
-    return Axis.Y.clone();
-  }
-
-  blended.normalize();
-  return blended;
-}
-
 function moveTowardsAngle(current: number, target: number, maxDelta: number): number {
   const delta = repeat(target - current + 180, 360) - 180;
   if (Math.abs(delta) <= maxDelta) {
@@ -747,10 +622,6 @@ function repeat(value: number, length: number): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
-}
-
-function lerp(start: number, end: number, amount: number): number {
-  return start + (end - start) * amount;
 }
 
 function toRadians(valueInDegrees: number): number {

@@ -28,13 +28,24 @@
     "tankRestitution": 0.015
   },
   "grounding": {
-    "probeStartHeight": 1.0,
+    "probeStartHeight": 0.013,
+    "maxHitAboveProbeBaseY": 0.1,
     "probeLength": 3.0,
-    "groundClearance": 0.02,
+    "groundClearance": 0.0,
     "groundSnapSpeed": 18.0,
     "maxGroundSlopeDeg": 60.0,
     "visualTiltSharpness": 10.0,
     "positionSharpness": 14.0
+  },
+  "suspension": {
+    "rayStartHeight": 0.15,
+    "rayLength": 0.6,
+    "restLength": 0.35,
+    "springStrength": 2200.0,
+    "damperStrength": 220.0,
+    "maxForce": 6000.0,
+    "tractionForce": 600.0,
+    "lateralFriction": 8.0
   },
   "turret": {
     "yawSpeedDeg": 30.0,

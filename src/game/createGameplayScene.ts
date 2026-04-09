@@ -5,7 +5,9 @@ import { ArcRotateCamera } from "@babylonjs/core/Cameras/arcRotateCamera";
 import { Engine } from "@babylonjs/core/Engines/engine";
 import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight";
 import { SceneLoader } from "@babylonjs/core/Loading/sceneLoader";
+import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { Color4 } from "@babylonjs/core/Maths/math.color";
+import { Color3 } from "@babylonjs/core/Maths/math.color";
 import { Quaternion, Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { Axis } from "@babylonjs/core/Maths/math.axis";
 import { Mesh } from "@babylonjs/core/Meshes/mesh";
@@ -59,6 +61,10 @@ interface TankGroundingInfo {
   frontRight: Vector3;
   rearLeft: Vector3;
   rearRight: Vector3;
+}
+
+interface TankSuspensionInfo {
+  points: Vector3[];
 }
 
 interface TankPhysicsResource {
@@ -133,6 +139,7 @@ export async function createGameplayScene(
     tankColliderMesh,
     config.rig.movementForwardAxis
   );
+  const suspensionInfo = createTankSuspensionInfo(tankContainer, tankAnchor);
   const tankPhysics = createTankPhysics(tankAnchor, tankColliderMesh, groundingInfo, scene, config);
 
   const tankCamera = tankContainer.cameras.find((camera) => camera.name === "CAM_tank") ?? null;
@@ -175,6 +182,7 @@ export async function createGameplayScene(
     tankAnchor,
     tankVisualRoot,
     groundingInfo: groundingInfo,
+    suspensionInfo,
     tankBody: tankPhysics.body,
     tankCamera,
     reticleMesh,
@@ -236,13 +244,38 @@ function findTransformNode(
   );
 }
 
-function hideColliderMeshes(container: AssetContainer, _scene: Scene): void {
+function hideColliderMeshes(container: AssetContainer, scene: Scene): void {
+  const debugShowColliders = true;
+
+  let redWireframeMat = scene.getMaterialByName("debug_red_wireframe") as StandardMaterial | null;
+  if (!redWireframeMat) {
+    redWireframeMat = new StandardMaterial("debug_red_wireframe", scene);
+    redWireframeMat.emissiveColor = new Color3(1, 0, 0);
+    redWireframeMat.wireframe = true;
+    redWireframeMat.disableLighting = true;
+    redWireframeMat.backFaceCulling = false;
+  }
+
   for (const mesh of container.meshes) {
-    if (!mesh.name.startsWith("COL_")) {
+    const isCollider = mesh.name.startsWith("COL_");
+    const isTerrainStatic = mesh.name.startsWith("SM_");
+    const isTerrainDynamic = mesh.name.startsWith("DM_");
+
+    if (!isCollider && !isTerrainStatic && !isTerrainDynamic) {
       continue;
     }
-    mesh.isVisible = false;
-    mesh.isPickable = false;
+    // Keep gameplay picking for SM_/DM_ (reticle raycast), but never pick colliders.
+    if (isCollider) {
+      mesh.isPickable = false;
+    }
+
+    if (debugShowColliders) {
+      mesh.isVisible = true;
+    }
+
+    if (debugShowColliders && mesh instanceof Mesh) {
+      mesh.material = redWireframeMat;
+    }
   }
 }
 
@@ -292,6 +325,8 @@ function createWorldPhysics(container: AssetContainer, scene: Scene): PhysicsRes
       
       // Use a ConvexHull shape for dynamic meshes as it wraps the mesh geometry tightly
       const shape = new PhysicsShapeConvexHull(mesh, scene);
+      shape.filterMembershipMask = 1;
+      shape.filterCollideMask = 0xffffffff;
       
       body.shape = shape;
       
@@ -319,6 +354,8 @@ function createWorldPhysics(container: AssetContainer, scene: Scene): PhysicsRes
     if (mesh.name.startsWith("SM_") || mesh.name.startsWith("COL_")) {
       const body = new PhysicsBody(mesh, PhysicsMotionType.STATIC, false, scene);
       const shape = new PhysicsShapeMesh(mesh, scene);
+      shape.filterMembershipMask = 1;
+      shape.filterCollideMask = 0xffffffff;
       body.shape = shape;
       bodies.push(body);
       shapes.push(shape);
@@ -335,13 +372,14 @@ function createTankPhysics(
   scene: Scene,
   config: TankControllerConfig
 ): TankPhysicsResource {
-  const body = new PhysicsBody(tankAnchor, PhysicsMotionType.ANIMATED, false, scene);
+  const body = new PhysicsBody(tankAnchor, PhysicsMotionType.DYNAMIC, false, scene);
   const shape = tankColliderMesh
     ? new PhysicsShapeConvexHull(tankColliderMesh, scene)
     : new PhysicsShapeBox(Vector3.Zero(), Quaternion.Identity(), new Vector3(1, 0.5, 1.6), scene);
 
   // Assign the tank to collision group 2 so projectiles can ignore it
   shape.filterMembershipMask = 2;
+  shape.filterCollideMask = 0xffffffff;
 
   body.shape = shape;
   shape.material = {
@@ -355,9 +393,27 @@ function createTankPhysics(
   });
   body.setLinearDamping(config.physics.tankLinearDamping);
   body.setAngularDamping(config.physics.tankAngularDamping);
-  body.setGravityFactor(0);
+  body.setGravityFactor(1);
 
   return { body, shape, grounding };
+}
+
+function createTankSuspensionInfo(container: AssetContainer, tankAnchor: TransformNode): TankSuspensionInfo {
+  const names = ["SUS_FL", "SUS_FR", "SUS_ML", "SUS_MR", "SUS_RL", "SUS_RR"] as const;
+  const nodes = names
+    .map((name) => findTransformNode(container, name))
+    .filter((n): n is TransformNode | AbstractMesh => n !== null);
+
+  if (nodes.length === 6) {
+    return { points: nodes.map((n) => toAnchorLocalPosition(n, tankAnchor)) };
+  }
+
+  const fallbackNames = ["GROUND_FL", "GROUND_FR", "GROUND_RL", "GROUND_RR"] as const;
+  const fallbackNodes = fallbackNames
+    .map((name) => findTransformNode(container, name))
+    .filter((n): n is TransformNode | AbstractMesh => n !== null);
+
+  return { points: fallbackNodes.map((n) => toAnchorLocalPosition(n, tankAnchor)) };
 }
 
 function disposePhysicsGroup(group: PhysicsResourceGroup): void {
@@ -427,7 +483,7 @@ function createTankGroundingInfo(
         : bounds.extendSize.x;
 
   return {
-    baseClearance: Math.max(-bottomFromAnchor, 0.02),
+    baseClearance: Math.max(-bottomFromAnchor, 0.01),
     frontLeft: new Vector3(-sideExtent * 0.7, 0, forwardExtent * 0.7),
     frontRight: new Vector3(sideExtent * 0.7, 0, forwardExtent * 0.7),
     rearLeft: new Vector3(-sideExtent * 0.7, 0, -forwardExtent * 0.7),
