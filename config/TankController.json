@@ -39,7 +39,7 @@
   },
   "suspension": {
     "rayStartHeight": 0.15,
-    "rayLength": 0.6,
+    "rayLength": 3.5,
     "restLength": 0.35,
     "springStrength": 2200.0,
     "damperStrength": 220.0,
