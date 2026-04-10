@@ -23,6 +23,10 @@ interface GameplayUiState {
 }
 
 export class GameApp {
+  // Toggle the HTML debug overlay during gameplay (panel on top of canvas).
+  // Keep it off by default because it blocks navigation / aiming.
+  private static readonly SHOW_GAMEPLAY_DEBUG_PANEL = false;
+
   private readonly canvas: HTMLCanvasElement;
   private readonly overlay: HTMLDivElement;
   private readonly engine: Engine;
@@ -140,7 +144,12 @@ export class GameApp {
     this.overlay.innerHTML = "";
 
     const panel = document.createElement("div");
-    panel.className = this.screen === "gameplay" ? "panel panel-debug" : "panel panel-menu";
+    panel.className =
+      this.screen === "gameplay"
+        ? GameApp.SHOW_GAMEPLAY_DEBUG_PANEL
+          ? "panel panel-debug"
+          : "panel panel-menu"
+        : "panel panel-menu";
 
     if (this.screen === "main-menu") {
       panel.append(
@@ -182,7 +191,7 @@ export class GameApp {
     if (this.screen === "gameplay") {
       panel.append(createTitle(this.gameplayState.levelName || "Gameplay"));
 
-      if (this.gameplayState.isLoading) {
+      if (this.gameplayState.isLoading && GameApp.SHOW_GAMEPLAY_DEBUG_PANEL) {
         panel.append(createParagraph("Loading terrain, tank and Havok scene..."));
       }
 
@@ -190,7 +199,7 @@ export class GameApp {
         panel.append(createParagraph(`Error: ${this.gameplayState.errorMessage}`));
       }
 
-      if (this.gameplayState.summary) {
+      if (this.gameplayState.summary && GameApp.SHOW_GAMEPLAY_DEBUG_PANEL) {
         panel.append(
           createParagraph(`Spawn found: ${this.gameplayState.summary.spawnFound ? "yes" : "no"}`),
           createParagraph(`Tank camera: ${this.gameplayState.summary.tankCameraFound ? "yes" : "no"}`),
@@ -203,7 +212,7 @@ export class GameApp {
         );
       }
 
-      if (this.gameplayState.debug) {
+      if (this.gameplayState.debug && GameApp.SHOW_GAMEPLAY_DEBUG_PANEL) {
         panel.append(
           createParagraph(`Battery: ${this.gameplayState.debug.battery.toFixed(1)}%`),
           createParagraph(`Overcharge: ${this.gameplayState.debug.overcharge.toFixed(1)}%`),
@@ -231,7 +240,12 @@ export class GameApp {
   }
 
   private refreshGameplayUi(): void {
-    if (this.screen !== "gameplay" || !this.gameplayBundle || this.gameplayState.isLoading) {
+    if (
+      this.screen !== "gameplay" ||
+      !this.gameplayBundle ||
+      this.gameplayState.isLoading ||
+      !GameApp.SHOW_GAMEPLAY_DEBUG_PANEL
+    ) {
       return;
     }
 

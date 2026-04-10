@@ -4,6 +4,9 @@ import { Axis, Space } from "@babylonjs/core/Maths/math.axis";
 import "@babylonjs/core/Culling/ray";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
+import type { LinesMesh } from "@babylonjs/core/Meshes/linesMesh";
+import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
+import { Color3 } from "@babylonjs/core/Maths/math.color";
 import { PhysicsBody } from "@babylonjs/core/Physics/v2/physicsBody";
 import { PhysicsShapeSphere, type PhysicsShape } from "@babylonjs/core/Physics/v2/physicsShape";
 import { PhysicsMotionType } from "@babylonjs/core/Physics/v2/IPhysicsEnginePlugin";
@@ -57,8 +60,8 @@ export interface TankGameplayControllerOptions {
   tankCamera: TargetCamera | null;
   cameraPivotNode?: TransformNode | AbstractMesh | null;
   initialOrbit?: { yawRad: number; pitchRad: number; radius: number } | null;
-  reticleCameraMesh: Mesh | null;
-  reticleBarrelMesh: Mesh | null;
+  reticleCameraMesh: AbstractMesh | null;
+  reticleBarrelMesh: AbstractMesh | null;
   muzzleNode: TransformNode | AbstractMesh | null;
   ammoShellMesh: Mesh | null;
   ammoBulletMesh: Mesh | null;
@@ -66,6 +69,8 @@ export interface TankGameplayControllerOptions {
 }
 
 export class TankGameplayController {
+  private static readonly DEBUG_AIM_VECTORS = true;
+
   private readonly scene: Scene;
   private readonly config: TankControllerConfig;
   private readonly tankAnchor: TransformNode;
@@ -80,8 +85,8 @@ export class TankGameplayController {
   private readonly cannonControl: BoneControl;
   private readonly turretBaseLocalRotation: Quaternion;
   private readonly cannonBaseLocalRotation: Quaternion;
-  private readonly reticleCameraMesh: Mesh | null;
-  private readonly reticleBarrelMesh: Mesh | null;
+  private readonly reticleCameraMesh: AbstractMesh | null;
+  private readonly reticleBarrelMesh: AbstractMesh | null;
   private readonly muzzleNode: TransformNode | AbstractMesh | null;
   private readonly ammoShellMesh: Mesh | null;
   private readonly ammoBulletMesh: Mesh | null;
@@ -113,6 +118,11 @@ export class TankGameplayController {
   private orbitYawRad = 0;
   private orbitPitchRad = 0;
   private orbitRadius = 0;
+
+  private debugCameraRayLine: LinesMesh | null = null;
+  private debugBarrelForwardLine: LinesMesh | null = null;
+  private debugTargetMarker: Mesh | null = null;
+  private debugCameraOriginMarker: Mesh | null = null;
 
   public constructor(options: TankGameplayControllerOptions) {
     this.scene = options.scene;
@@ -176,6 +186,8 @@ export class TankGameplayController {
     } else {
       this.initOrbitCameraState();
     }
+
+    this.initAimDebugMeshes();
     this.scene.onBeforeRenderObservable.add(this.update);
   }
 
@@ -196,6 +208,11 @@ export class TankGameplayController {
   public dispose(): void {
     this.scene.onBeforeRenderObservable.removeCallback(this.update);
     this.input.dispose();
+
+    this.debugCameraRayLine?.dispose();
+    this.debugBarrelForwardLine?.dispose();
+    this.debugTargetMarker?.dispose();
+    this.debugCameraOriginMarker?.dispose();
 
     for (const proj of this.activeProjectiles) {
       proj.body.dispose();
@@ -340,6 +357,9 @@ export class TankGameplayController {
       return;
     }
 
+    // Ensure the camera world matrix/globalPosition is up to date before we use it for debug + raycasting.
+    camera.computeWorldMatrix();
+
     const ray = this.scene.createPickingRay(pointerX, pointerY, Matrix.Identity(), camera);
     let targetPoint: Vector3 | null = null;
 
@@ -373,6 +393,9 @@ export class TankGameplayController {
         targetPoint = tankPos.add(offset);
       }
 
+      // For debug visualization, use the actual camera position as ray origin.
+      // Babylon's picking ray origin can be at the near-plane, which is confusing visually.
+      this.updateAimDebug(camera.globalPosition.clone(), ray.direction, targetPoint);
       this.updateReticle(this.reticleCameraMesh, camera, targetPoint, 0.01);
       this.updateBarrelReticle(camera, 0.01);
 
@@ -446,7 +469,88 @@ export class TankGameplayController {
     );
   }
 
-  private updateReticle(mesh: Mesh | null, camera: Camera, worldPoint: Vector3, baseScale: number): void {
+  private initAimDebugMeshes(): void {
+    if (!TankGameplayController.DEBUG_AIM_VECTORS) {
+      return;
+    }
+    // Always-on debug for now: visible vectors to quickly diagnose missing/incorrect reticles.
+    this.debugCameraRayLine = MeshBuilder.CreateLines(
+      "debug_camera_ray",
+      { points: [Vector3.Zero(), Vector3.Zero()], updatable: true },
+      this.scene
+    );
+    this.debugCameraRayLine.color = new Color3(1, 1, 0);
+    this.debugCameraRayLine.renderingGroupId = 2;
+
+    this.debugBarrelForwardLine = MeshBuilder.CreateLines(
+      "debug_barrel_forward",
+      { points: [Vector3.Zero(), Vector3.Zero()], updatable: true },
+      this.scene
+    );
+    this.debugBarrelForwardLine.color = new Color3(0.2, 0.6, 1);
+    this.debugBarrelForwardLine.renderingGroupId = 2;
+
+    this.debugTargetMarker = MeshBuilder.CreateSphere(
+      "debug_aim_target",
+      { diameter: 0.25, segments: 8 },
+      this.scene
+    );
+    this.debugTargetMarker.isPickable = false;
+    this.debugTargetMarker.renderingGroupId = 2;
+
+    this.debugCameraOriginMarker = MeshBuilder.CreateSphere(
+      "debug_camera_origin",
+      { diameter: 0.18, segments: 8 },
+      this.scene
+    );
+    this.debugCameraOriginMarker.isPickable = false;
+    this.debugCameraOriginMarker.renderingGroupId = 2;
+  }
+
+  private updateAimDebug(rayOrigin: Vector3, _rayDir: Vector3, targetPoint: Vector3): void {
+    if (!TankGameplayController.DEBUG_AIM_VECTORS) {
+      return;
+    }
+    if (this.debugCameraOriginMarker) {
+      this.debugCameraOriginMarker.position.copyFrom(rayOrigin);
+      this.debugCameraOriginMarker.isVisible = true;
+    }
+    // Camera ray to target point
+    if (this.debugCameraRayLine) {
+      MeshBuilder.CreateLines(
+        this.debugCameraRayLine.name,
+        { points: [rayOrigin, targetPoint], instance: this.debugCameraRayLine },
+        this.scene
+      );
+      this.debugCameraRayLine.isVisible = true;
+    }
+
+    if (this.debugTargetMarker) {
+      this.debugTargetMarker.position.copyFrom(targetPoint);
+      this.debugTargetMarker.isVisible = true;
+    }
+
+    // Barrel forward vector (from MUZZLE_tank)
+    if (this.debugBarrelForwardLine && this.muzzleNode) {
+      const from = this.muzzleNode.getAbsolutePosition();
+      const forward = this.muzzleNode.getDirection(this.movementForwardAxis).scale(-this.config.rig.movementForwardSign);
+      if (forward.lengthSquared() > 1e-6) {
+        forward.normalize();
+      } else {
+        forward.copyFrom(Axis.Z);
+      }
+      const to = from.add(forward.scale(5));
+
+      MeshBuilder.CreateLines(
+        this.debugBarrelForwardLine.name,
+        { points: [from, to], instance: this.debugBarrelForwardLine },
+        this.scene
+      );
+      this.debugBarrelForwardLine.isVisible = true;
+    }
+  }
+
+  private updateReticle(mesh: AbstractMesh | null, camera: Camera, worldPoint: Vector3, _baseScale: number): void {
     if (!mesh) {
       return;
     }
@@ -455,10 +559,38 @@ export class TankGameplayController {
     const target = (mesh.parent instanceof TransformNode) ? mesh.parent : mesh;
     target.position.copyFrom(worldPoint);
     
+    // Reticles may come from GLB as disabled/invisible; force-enable at runtime.
+    if (mesh.parent instanceof TransformNode) {
+      mesh.parent.setEnabled(true);
+    }
+    mesh.setEnabled(true);
     mesh.isVisible = true;
+    mesh.visibility = 1;
+    // Make it visible even if its own material is culled / depth-tested poorly.
+    // (Only Mesh has overlay support; InstancedMesh inherits from AbstractMesh but not Mesh.)
+    const asAny = mesh as unknown as { renderOverlay?: boolean; overlayColor?: Color3; overlayAlpha?: number };
+    if (typeof asAny.renderOverlay === "boolean" || asAny.renderOverlay === undefined) {
+      asAny.renderOverlay = true;
+      asAny.overlayColor = new Color3(1, 1, 1);
+      asAny.overlayAlpha = 0.9;
+    }
+
     const distToCamera = Vector3.Distance(camera.globalPosition, worldPoint);
-    const newScale = distToCamera * baseScale;
-    mesh.scaling.set(newScale, newScale, newScale);
+
+    // Keep a constant on-screen size (in pixels).
+    // Convert desired pixel size to world size at this distance and camera FOV.
+    const desiredPixels = 24;
+    const renderH = Math.max(this.scene.getEngine().getRenderHeight(), 1);
+    const worldScreenHeightAtDist = 2 * distToCamera * Math.tan(camera.fov / 2);
+    const worldUnitsPerPixel = worldScreenHeightAtDist / renderH;
+    const desiredWorldSize = desiredPixels * worldUnitsPerPixel;
+
+    // Normalize by the mesh's authored size so artists don't have to match a strict unit scale.
+    const bi = mesh.getBoundingInfo();
+    const ext = bi.boundingBox.extendSize; // local-space half-extents
+    const authoredSize = Math.max(ext.x, ext.y, ext.z) * 2;
+    const uniformScale = authoredSize > 1e-6 ? desiredWorldSize / authoredSize : desiredWorldSize;
+    mesh.scaling.set(uniformScale, uniformScale, uniformScale);
   }
 
   private updateBarrelReticle(camera: Camera, baseScale: number): void {

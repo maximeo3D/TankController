@@ -225,8 +225,8 @@ export async function createGameplayScene(
     );
   }
 
-  const reticleCameraMesh = findMeshByName(tankContainer, "UI_reticle_camera");
-  const reticleBarrelMesh = findMeshByName(tankContainer, "UI_reticle_barrel");
+  const reticleCameraMesh = findAbstractMeshByName(tankContainer, "UI_reticle_camera");
+  const reticleBarrelMesh = findAbstractMeshByName(tankContainer, "UI_reticle_barrel");
   for (const reticle of [reticleCameraMesh, reticleBarrelMesh]) {
     if (!reticle) {
       continue;
@@ -243,6 +243,11 @@ export async function createGameplayScene(
 
     reticle.renderingGroupId = 1;
     reticle.isVisible = false;
+    reticle.isPickable = false;
+    reticle.alwaysSelectAsActiveMesh = true;
+    if (reticle.material) {
+      reticle.material.backFaceCulling = false;
+    }
   }
 
   const ammoShellMesh = findMeshByName(tankContainer, "AMMO_obus");
@@ -585,9 +590,19 @@ function disposePhysicsGroup(group: PhysicsResourceGroup): void {
   }
 }
 
+function findAbstractMeshByName(container: AssetContainer, name: string): AbstractMesh | null {
+  const wanted = name.trim().toLowerCase();
+  return (
+    container.meshes.find((candidate) => {
+      const n = candidate.name.trim().toLowerCase();
+      return n === wanted || n.startsWith(`${wanted}.`);
+    }) ?? null
+  );
+}
+
 function findMeshByName(container: AssetContainer, name: string): Mesh | null {
-  const mesh = container.meshes.find((candidate) => candidate.name === name);
-  return mesh instanceof Mesh ? mesh : null;
+  const candidate = findAbstractMeshByName(container, name);
+  return candidate instanceof Mesh ? candidate : null;
 }
 
 function createTankGroundingInfo(

@@ -103,14 +103,20 @@ export class TankInput {
   private readonly handlePointerMove = (event: PointerEvent): void => {
     this.lookDeltaX += event.movementX;
     this.lookDeltaY += event.movementY;
-    this.pointerX = event.offsetX;
-    this.pointerY = event.offsetY;
+    const rect = this.canvas.getBoundingClientRect();
+    const scaleX = rect.width > 0 ? this.canvas.width / rect.width : 1;
+    const scaleY = rect.height > 0 ? this.canvas.height / rect.height : 1;
+    this.pointerX = event.offsetX * scaleX;
+    this.pointerY = event.offsetY * scaleY;
   };
 
   private readonly handlePointerDown = (event: PointerEvent): void => {
     this.canvas.focus();
-    this.pointerX = event.offsetX;
-    this.pointerY = event.offsetY;
+    const rect = this.canvas.getBoundingClientRect();
+    const scaleX = rect.width > 0 ? this.canvas.width / rect.width : 1;
+    const scaleY = rect.height > 0 ? this.canvas.height / rect.height : 1;
+    this.pointerX = event.offsetX * scaleX;
+    this.pointerY = event.offsetY * scaleY;
 
     if (event.button === 0) {
       this.isPrimaryFireHeld = true;
