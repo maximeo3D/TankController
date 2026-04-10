@@ -22,10 +22,13 @@ import {
 import { PhysicsMotionType } from "@babylonjs/core/Physics/v2/IPhysicsEnginePlugin";
 import { HavokPlugin } from "@babylonjs/core/Physics/v2/Plugins/havokPlugin";
 import { Scene } from "@babylonjs/core/scene";
+import { CubeTexture } from "@babylonjs/core/Materials/Textures/cubeTexture";
+import { IblShadowsRenderPipeline } from "@babylonjs/core/PostProcesses/RenderPipeline/Pipelines/iblShadowsRenderPipeline";
+import { PostProcessRenderPipelineManager } from "@babylonjs/core/PostProcesses/RenderPipeline/postProcessRenderPipelineManager";
 import type { AssetContainer } from "@babylonjs/core/assetContainer";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import type { TankControllerConfig } from "../config/tankController";
-import { tankAssetUrl, terrainAssetUrl } from "../assets/assetUrls";
+import { tankAssetUrl, terrainAssetUrl, skyboxAssetUrl } from "../assets/assetUrls";
 import type { LevelDefinition } from "../app/levels";
 import {
   TankGameplayController,
@@ -86,6 +89,10 @@ export async function createGameplayScene(
   // Hide the default cursor in Babylon.js
   scene.defaultCursor = "none";
   scene.hoverCursor = "none";
+
+  const envTex = CubeTexture.CreateFromPrefilteredData(skyboxAssetUrl, scene);
+  scene.environmentTexture = envTex;
+  scene.createDefaultSkybox(envTex, true, 1000, 0.1, true);
 
   const fallbackCamera = new ArcRotateCamera(
     "fallback_camera",
@@ -196,6 +203,34 @@ export async function createGameplayScene(
     ammoBulletMesh
   });
 
+  if (!(scene as any).postProcessRenderPipelineManager) {
+    (scene as any).postProcessRenderPipelineManager = new PostProcessRenderPipelineManager();
+  }
+
+  const shadowPipeline = new IblShadowsRenderPipeline(
+    "ibl shadows",
+    scene,
+    {
+      resolutionExp: 6,
+      sampleDirections: 1,
+      shadowOpacity: 0.8
+    },
+    [tankCamera ?? scene.activeCamera!]
+  );
+
+  const shadowCastingMeshes = scene.meshes.filter(m => 
+    m.isVisible && 
+    !m.name.includes("skyBox") && 
+    !m.name.startsWith("UI_") && 
+    !m.name.startsWith("AMMO_") && 
+    !m.name.startsWith("COL_")
+  );
+  
+  shadowPipeline.addShadowCastingMesh(shadowCastingMeshes as Mesh[]);
+  shadowPipeline.addShadowReceivingMaterial();
+  shadowPipeline.updateSceneBounds();
+  shadowPipeline.updateVoxelization();
+
   return {
     scene,
     summary: {
@@ -209,6 +244,7 @@ export async function createGameplayScene(
     getDebugState: () => controller.getDebugState(),
     dispose: () => {
       controller.dispose();
+      shadowPipeline.dispose();
       disposePhysicsGroup(worldPhysics);
       tankPhysics.body.dispose();
       tankPhysics.shape.dispose();

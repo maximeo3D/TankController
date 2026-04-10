@@ -1,3 +1,6 @@
+import "@babylonjs/core/PostProcesses/RenderPipeline/postProcessRenderPipelineManagerSceneComponent";
+import "@babylonjs/core/Rendering/prePassRendererSceneComponent";
+import "@babylonjs/core/Rendering/geometryBufferRendererSceneComponent";
 import "./styles.css";
 import { GameApp } from "./app/GameApp";
 
