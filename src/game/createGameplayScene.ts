@@ -140,12 +140,7 @@ export async function createGameplayScene(
     tankColliderMesh,
     config.rig.movementForwardAxis
   );
-  const suspensionInfo = createTankSuspensionInfo(
-    tankContainer,
-    tankAnchor,
-    tankColliderMesh,
-    config.rig.movementForwardAxis
-  );
+  const suspensionInfo = createTankSuspensionInfo(tankContainer, tankAnchor);
   const tankPhysics = createTankPhysics(tankAnchor, tankColliderMesh, groundingInfo, scene, config);
   snapTankAnchorYToTerrain(scene, tankAnchor, tankPhysics.body, suspensionInfo.points, config);
 
@@ -156,14 +151,16 @@ export async function createGameplayScene(
     scene.activeCamera = tankCamera;
   }
 
-  const reticleMesh = findMeshByName(tankContainer, "UI_tank_reticle");
-  if (reticleMesh) {
-    // Make sure it's rendered on top of everything
-    reticleMesh.renderingGroupId = 1;
-    // Unparent so we can move it freely in world space
-    reticleMesh.setParent(null);
-    // Always face the camera
-    reticleMesh.billboardMode = Mesh.BILLBOARDMODE_ALL;
+  const reticleCameraMesh = findMeshByName(tankContainer, "UI_reticle_camera");
+  const reticleBarrelMesh = findMeshByName(tankContainer, "UI_reticle_barrel");
+  for (const reticle of [reticleCameraMesh, reticleBarrelMesh]) {
+    if (!reticle) {
+      continue;
+    }
+    reticle.renderingGroupId = 1;
+    reticle.setParent(null);
+    reticle.billboardMode = Mesh.BILLBOARDMODE_ALL;
+    reticle.isVisible = false;
   }
 
   const ammoShellMesh = findMeshByName(tankContainer, "AMMO_obus");
@@ -192,7 +189,8 @@ export async function createGameplayScene(
     suspensionInfo,
     tankBody: tankPhysics.body,
     tankCamera,
-    reticleMesh,
+    reticleCameraMesh,
+    reticleBarrelMesh,
     muzzleNode,
     ammoShellMesh,
     ammoBulletMesh
@@ -245,9 +243,7 @@ function findTransformNode(
   name: string
 ): TransformNode | AbstractMesh | null {
   const candidates = [...container.transformNodes, ...container.meshes];
-  return (
-    candidates.find((node) => node.name === name || node.name.startsWith(`${name}.`)) ?? null
-  );
+  return candidates.find((node) => node.name === name || node.name.startsWith(`${name}.`)) ?? null;
 }
 
 function refreshTankRigWorldMatrices(tankAnchor: TransformNode, container: AssetContainer): void {
@@ -324,7 +320,7 @@ function hideColliderMeshes(container: AssetContainer, scene: Scene): void {
   }
 
   for (const mesh of container.meshes) {
-    const isCollider = mesh.name.startsWith("COL_");
+    const isCollider = mesh.name.startsWith("COL_") || mesh.name === "COL_tank";
     const isTerrainStatic = mesh.name.startsWith("SM_");
     const isTerrainDynamic = mesh.name.startsWith("DM_");
 
@@ -334,15 +330,16 @@ function hideColliderMeshes(container: AssetContainer, scene: Scene): void {
     // Keep gameplay picking for SM_/DM_ (reticle raycast), but never pick colliders.
     if (isCollider) {
       mesh.isPickable = false;
+    }
+
+    if (isCollider) {
       mesh.isVisible = debugShowColliders;
-      if (debugShowColliders && mesh instanceof Mesh) {
-        mesh.material = redWireframeMat;
-      }
     } else if (debugShowColliders) {
       mesh.isVisible = true;
-      if (mesh instanceof Mesh) {
-        mesh.material = redWireframeMat;
-      }
+    }
+
+    if (debugShowColliders && mesh instanceof Mesh) {
+      mesh.material = redWireframeMat;
     }
   }
 }
@@ -466,80 +463,22 @@ function createTankPhysics(
   return { body, shape, grounding };
 }
 
-function midPointLocal(a: Vector3, b: Vector3): Vector3 {
-  return new Vector3((a.x + b.x) * 0.5, (a.y + b.y) * 0.5, (a.z + b.z) * 0.5);
-}
+function createTankSuspensionInfo(container: AssetContainer, tankAnchor: TransformNode): TankSuspensionInfo {
+  const names = ["SUS_FL", "SUS_FR", "SUS_ML", "SUS_MR", "SUS_RL", "SUS_RR"] as const;
+  const nodes = names
+    .map((name) => findTransformNode(container, name))
+    .filter((n): n is TransformNode | AbstractMesh => n !== null);
 
-function createTankSuspensionInfo(
-  container: AssetContainer,
-  tankAnchor: TransformNode,
-  tankColliderMesh: Mesh | null,
-  movementForwardAxis: "x" | "y" | "z"
-): TankSuspensionInfo {
-  refreshTankRigWorldMatrices(tankAnchor, container);
-
-  const sixNames = ["SUS_FL", "SUS_FR", "SUS_ML", "SUS_MR", "SUS_RL", "SUS_RR"] as const;
-  const sixNodes = sixNames.map((name) => findTransformNode(container, name));
-  if (sixNodes.every((node) => node)) {
-    return {
-      points: (sixNodes as Array<TransformNode | AbstractMesh>).map((n) => toAnchorLocalPosition(n, tankAnchor))
-    };
+  if (nodes.length === 6) {
+    return { points: nodes.map((n) => toAnchorLocalPosition(n, tankAnchor)) };
   }
 
-  const fourFromGround = (["GROUND_FL", "GROUND_FR", "GROUND_RL", "GROUND_RR"] as const)
-    .map((name) => findTransformNode(container, name));
-  if (fourFromGround.every((node) => node)) {
-    const [fl, fr, rl, rr] = fourFromGround as Array<TransformNode | AbstractMesh>;
-    return suspensionPointsFromFourCorners(tankAnchor, fl, fr, rl, rr);
-  }
+  const fallbackNames = ["GROUND_FL", "GROUND_FR", "GROUND_RL", "GROUND_RR"] as const;
+  const fallbackNodes = fallbackNames
+    .map((name) => findTransformNode(container, name))
+    .filter((n): n is TransformNode | AbstractMesh => n !== null);
 
-  const fourFromSus = (["SUS_FL", "SUS_FR", "SUS_RL", "SUS_RR"] as const)
-    .map((name) => findTransformNode(container, name));
-  if (fourFromSus.every((node) => node)) {
-    const [fl, fr, rl, rr] = fourFromSus as Array<TransformNode | AbstractMesh>;
-    return suspensionPointsFromFourCorners(tankAnchor, fl, fr, rl, rr);
-  }
-
-  if (tankColliderMesh) {
-    const bounds = tankColliderMesh.getBoundingInfo().boundingBox;
-    const forwardExtent =
-      movementForwardAxis === "x"
-        ? bounds.extendSize.x
-        : movementForwardAxis === "y"
-          ? bounds.extendSize.y
-          : bounds.extendSize.z;
-    const sideExtent =
-      movementForwardAxis === "x"
-        ? bounds.extendSize.z
-        : movementForwardAxis === "z"
-          ? bounds.extendSize.x
-          : bounds.extendSize.x;
-    const fl = new Vector3(-sideExtent * 0.7, 0, forwardExtent * 0.7);
-    const fr = new Vector3(sideExtent * 0.7, 0, forwardExtent * 0.7);
-    const rl = new Vector3(-sideExtent * 0.7, 0, -forwardExtent * 0.7);
-    const rr = new Vector3(sideExtent * 0.7, 0, -forwardExtent * 0.7);
-    return {
-      points: [fl, fr, midPointLocal(fl, rl), midPointLocal(fr, rr), rl, rr]
-    };
-  }
-
-  return { points: [] };
-}
-
-function suspensionPointsFromFourCorners(
-  tankAnchor: TransformNode,
-  fl: TransformNode | AbstractMesh,
-  fr: TransformNode | AbstractMesh,
-  rl: TransformNode | AbstractMesh,
-  rr: TransformNode | AbstractMesh
-): TankSuspensionInfo {
-  const flL = toAnchorLocalPosition(fl, tankAnchor);
-  const frL = toAnchorLocalPosition(fr, tankAnchor);
-  const rlL = toAnchorLocalPosition(rl, tankAnchor);
-  const rrL = toAnchorLocalPosition(rr, tankAnchor);
-  return {
-    points: [flL, frL, midPointLocal(flL, rlL), midPointLocal(frL, rrL), rlL, rrL]
-  };
+  return { points: fallbackNodes.map((n) => toAnchorLocalPosition(n, tankAnchor)) };
 }
 
 function disposePhysicsGroup(group: PhysicsResourceGroup): void {
@@ -563,12 +502,10 @@ function createTankGroundingInfo(
   tankColliderMesh: Mesh | null,
   movementForwardAxis: "x" | "y" | "z"
 ): TankGroundingInfo {
-  const groundingFromFour = (
-    frontLeft: TransformNode | AbstractMesh,
-    frontRight: TransformNode | AbstractMesh,
-    rearLeft: TransformNode | AbstractMesh,
-    rearRight: TransformNode | AbstractMesh
-  ): TankGroundingInfo => {
+  const probeNames = ["GROUND_FL", "GROUND_FR", "GROUND_RL", "GROUND_RR"] as const;
+  const probeNodes = probeNames.map((name) => findTransformNode(tankContainer, name));
+  if (probeNodes.every((node) => node)) {
+    const [frontLeft, frontRight, rearLeft, rearRight] = probeNodes as Array<TransformNode | AbstractMesh>;
     const frontLeftLocal = toAnchorLocalPosition(frontLeft, tankAnchor);
     const frontRightLocal = toAnchorLocalPosition(frontRight, tankAnchor);
     const rearLeftLocal = toAnchorLocalPosition(rearLeft, tankAnchor);
@@ -583,20 +520,6 @@ function createTankGroundingInfo(
       rearLeft: rearLeftLocal,
       rearRight: rearRightLocal
     };
-  };
-
-  const groundProbeNames = ["GROUND_FL", "GROUND_FR", "GROUND_RL", "GROUND_RR"] as const;
-  const groundProbeNodes = groundProbeNames.map((name) => findTransformNode(tankContainer, name));
-  if (groundProbeNodes.every((node) => node)) {
-    const [frontLeft, frontRight, rearLeft, rearRight] = groundProbeNodes as Array<TransformNode | AbstractMesh>;
-    return groundingFromFour(frontLeft, frontRight, rearLeft, rearRight);
-  }
-
-  const susCornerNames = ["SUS_FL", "SUS_FR", "SUS_RL", "SUS_RR"] as const;
-  const susCornerNodes = susCornerNames.map((name) => findTransformNode(tankContainer, name));
-  if (susCornerNodes.every((node) => node)) {
-    const [frontLeft, frontRight, rearLeft, rearRight] = susCornerNodes as Array<TransformNode | AbstractMesh>;
-    return groundingFromFour(frontLeft, frontRight, rearLeft, rearRight);
   }
 
   if (!tankColliderMesh) {

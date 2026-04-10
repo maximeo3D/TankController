@@ -54,7 +54,8 @@ export interface TankGameplayControllerOptions {
   };
   tankBody: PhysicsBody;
   tankCamera: Camera | null;
-  reticleMesh: Mesh | null;
+  reticleCameraMesh: Mesh | null;
+  reticleBarrelMesh: Mesh | null;
   muzzleNode: TransformNode | AbstractMesh | null;
   ammoShellMesh: Mesh | null;
   ammoBulletMesh: Mesh | null;
@@ -73,7 +74,10 @@ export class TankGameplayController {
   private readonly input: TankInput;
   private readonly turretControl: BoneControl;
   private readonly cannonControl: BoneControl;
-  private readonly reticleMesh: Mesh | null;
+  private readonly turretBaseLocalRotation: Quaternion;
+  private readonly cannonBaseLocalRotation: Quaternion;
+  private readonly reticleCameraMesh: Mesh | null;
+  private readonly reticleBarrelMesh: Mesh | null;
   private readonly muzzleNode: TransformNode | AbstractMesh | null;
   private readonly ammoShellMesh: Mesh | null;
   private readonly ammoBulletMesh: Mesh | null;
@@ -111,7 +115,8 @@ export class TankGameplayController {
     this.suspensionPointsLocal = options.suspensionInfo.points.map((p) => p.clone());
     this.tankBody = options.tankBody;
     this.tankCamera = options.tankCamera;
-    this.reticleMesh = options.reticleMesh;
+    this.reticleCameraMesh = options.reticleCameraMesh;
+    this.reticleBarrelMesh = options.reticleBarrelMesh;
     this.muzzleNode = options.muzzleNode;
     this.ammoShellMesh = options.ammoShellMesh;
     this.ammoBulletMesh = options.ammoBulletMesh;
@@ -119,6 +124,8 @@ export class TankGameplayController {
     this.input = new TankInput(options.canvas);
     this.turretControl = resolveBoneControl(options.tankContainer, "tourelle");
     this.cannonControl = resolveBoneControl(options.tankContainer, "canon");
+    this.turretBaseLocalRotation = getControlLocalRotation(this.turretControl, this.tankAnchor);
+    this.cannonBaseLocalRotation = getControlLocalRotation(this.cannonControl, this.tankAnchor);
     this.movementForwardAxis = axisFromConfig(
       options.config.rig.movementForwardAxis,
       options.config.rig.movementForwardSign
@@ -251,13 +258,13 @@ export class TankGameplayController {
 
     // Calculate forward direction towards the reticle
     let forward = Vector3.Zero();
-    if (this.reticleMesh) {
-      forward = this.reticleMesh.position.subtract(mesh.position);
+    if (this.reticleBarrelMesh) {
+      forward = this.reticleBarrelMesh.position.subtract(mesh.position);
     }
     
     // Fallback if reticle is too close or missing
     if (forward.lengthSquared() < 1e-6) {
-      forward = this.muzzleNode.getDirection(this.movementForwardAxis).scale(this.config.rig.movementForwardSign);
+      forward = this.muzzleNode.getDirection(this.movementForwardAxis).scale(-this.config.rig.movementForwardSign);
     } else {
       forward.normalize();
     }
@@ -348,17 +355,8 @@ export class TankGameplayController {
         targetPoint = tankPos.add(offset);
       }
 
-      if (this.reticleMesh) {
-        this.reticleMesh.position.copyFrom(targetPoint);
-        this.reticleMesh.isVisible = true;
-
-        // Scale the reticle based on its distance from the camera to keep it the same size on screen
-        const distToCamera = Vector3.Distance(camera.globalPosition, targetPoint);
-        // Base scale factor - adjust this to make the reticle globally bigger or smaller
-        const baseScale = 0.01; 
-        const newScale = distToCamera * baseScale;
-        this.reticleMesh.scaling.set(newScale, newScale, newScale);
-      }
+      this.updateReticle(this.reticleCameraMesh, camera, targetPoint, 0.01);
+      this.updateBarrelReticle(camera, 0.01);
 
       // Transform target point to tank's local space
       const invHullMatrix = this.tankAnchor.getWorldMatrix().clone().invert();
@@ -403,9 +401,14 @@ export class TankGameplayController {
     const turretStepRad = toRadians(turretNextYawDeg - this.currentTurretYawDeg);
     this.currentTurretYawDeg = turretNextYawDeg;
 
-    if (Math.abs(turretStepRad) > 0) {
-      rotateControl(this.turretControl, this.turretYawAxis, turretStepRad, this.tankAnchor);
-    }
+    void turretStepRad;
+    setControlAxisAngle(
+      this.turretControl,
+      this.turretBaseLocalRotation,
+      this.turretYawAxis,
+      toRadians(this.currentTurretYawDeg),
+      this.tankAnchor
+    );
 
     const cannonNextPitchDeg = moveTowards(
       this.currentCannonPitchDeg,
@@ -415,9 +418,58 @@ export class TankGameplayController {
     const cannonStepRad = toRadians(cannonNextPitchDeg - this.currentCannonPitchDeg);
     this.currentCannonPitchDeg = cannonNextPitchDeg;
 
-    if (Math.abs(cannonStepRad) > 0) {
-      rotateControl(this.cannonControl, this.cannonPitchAxis, cannonStepRad, this.tankAnchor);
+    void cannonStepRad;
+    setControlAxisAngle(
+      this.cannonControl,
+      this.cannonBaseLocalRotation,
+      this.cannonPitchAxis,
+      toRadians(this.currentCannonPitchDeg),
+      this.tankAnchor
+    );
+  }
+
+  private updateReticle(mesh: Mesh | null, camera: Camera, worldPoint: Vector3, baseScale: number): void {
+    if (!mesh) {
+      return;
     }
+    mesh.position.copyFrom(worldPoint);
+    mesh.isVisible = true;
+    const distToCamera = Vector3.Distance(camera.globalPosition, worldPoint);
+    const newScale = distToCamera * baseScale;
+    mesh.scaling.set(newScale, newScale, newScale);
+  }
+
+  private updateBarrelReticle(camera: Camera, baseScale: number): void {
+    const mesh = this.reticleBarrelMesh;
+    if (!mesh || !this.muzzleNode) {
+      return;
+    }
+
+    const from = this.muzzleNode.getAbsolutePosition();
+    const forward = this.muzzleNode
+      .getDirection(this.movementForwardAxis)
+      .scale(-this.config.rig.movementForwardSign);
+    if (forward.lengthSquared() <= 1e-6) {
+      return;
+    }
+    forward.normalize();
+
+    const maxDist = 200;
+    const to = from.add(forward.scale(maxDist));
+
+    const physics = this.scene.getPhysicsEngine();
+    let hitPoint: Vector3 | null = null;
+    if (physics) {
+      const hit = physics.raycast(from, to, { ignoreBody: this.tankBody, shouldHitTriggers: false, collideWith: ~4 });
+      if (hit.hasHit) {
+        hitPoint = hit.hitPointWorld.clone();
+      }
+    }
+    if (!hitPoint) {
+      hitPoint = to;
+    }
+
+    this.updateReticle(mesh, camera, hitPoint, baseScale);
   }
 
   private applyMovement(moveAxis: number, turnAxis: number, boostHeld: boolean, dt: number): void {
@@ -583,19 +635,44 @@ function resolveBoneControl(container: AssetContainer, boneName: string): BoneCo
   };
 }
 
-function rotateControl(
+function getControlLocalRotation(control: BoneControl, tankAnchor: TransformNode): Quaternion {
+  if (control.transformNode) {
+    control.transformNode.rotationQuaternion ??= Quaternion.Identity();
+    return control.transformNode.rotationQuaternion.clone();
+  }
+
+  if (control.bone) {
+    return control.bone.getRotationQuaternion(Space.LOCAL, tankAnchor).clone();
+  }
+
+  return Quaternion.Identity();
+}
+
+function setControlAxisAngle(
   control: BoneControl,
+  baseLocalRotation: Quaternion,
   axis: Vector3,
-  amountRad: number,
+  angleRad: number,
   tankAnchor: TransformNode
 ): void {
+  const normAxis = axis.clone();
+  if (normAxis.lengthSquared() > 1e-6) {
+    normAxis.normalize();
+  } else {
+    normAxis.copyFrom(Axis.Y);
+  }
+
+  const q = Quaternion.RotationAxis(normAxis, angleRad);
+  const local = baseLocalRotation.multiply(q);
+
   if (control.transformNode) {
-    control.transformNode.rotate(axis, amountRad, Space.LOCAL);
+    control.transformNode.rotationQuaternion ??= Quaternion.Identity();
+    control.transformNode.rotationQuaternion.copyFrom(local);
     return;
   }
 
   if (control.bone) {
-    control.bone.rotate(axis, amountRad, Space.LOCAL, tankAnchor);
+    control.bone.setRotationQuaternion(local, Space.LOCAL, tankAnchor);
   }
 }
 
