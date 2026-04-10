@@ -70,7 +70,7 @@ export interface TankGameplayControllerOptions {
 }
 
 export class TankGameplayController {
-  private static readonly DEBUG_AIM_VECTORS = true;
+  private static readonly DEBUG_AIM_VECTORS = false;
 
   private readonly scene: Scene;
   private readonly config: TankControllerConfig;
