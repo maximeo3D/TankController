@@ -23,6 +23,7 @@ export class TankInput {
   private isPrimaryFireHeld = false;
   private isZoomHeld = false;
   private selectedWeapon: WeaponType = "shell";
+  private pointerLocked = false;
 
   public constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -31,6 +32,7 @@ export class TankInput {
     window.addEventListener("keydown", this.handleKeyDown);
     window.addEventListener("keyup", this.handleKeyUp);
     window.addEventListener("blur", this.handleBlur);
+    document.addEventListener("pointerlockchange", this.handlePointerLockChange);
     this.canvas.addEventListener("pointermove", this.handlePointerMove);
     this.canvas.addEventListener("pointerdown", this.handlePointerDown);
     this.canvas.addEventListener("pointerup", this.handlePointerUp);
@@ -62,6 +64,7 @@ export class TankInput {
     window.removeEventListener("keydown", this.handleKeyDown);
     window.removeEventListener("keyup", this.handleKeyUp);
     window.removeEventListener("blur", this.handleBlur);
+    document.removeEventListener("pointerlockchange", this.handlePointerLockChange);
     this.canvas.removeEventListener("pointermove", this.handlePointerMove);
     this.canvas.removeEventListener("pointerdown", this.handlePointerDown);
     this.canvas.removeEventListener("pointerup", this.handlePointerUp);
@@ -100,9 +103,19 @@ export class TankInput {
     this.isZoomHeld = false;
   };
 
+  private readonly handlePointerLockChange = (): void => {
+    this.pointerLocked = document.pointerLockElement === this.canvas;
+    // Avoid a big "jump" right after (un)locking.
+    this.lookDeltaX = 0;
+    this.lookDeltaY = 0;
+  };
+
   private readonly handlePointerMove = (event: PointerEvent): void => {
-    this.lookDeltaX += event.movementX;
-    this.lookDeltaY += event.movementY;
+    // When pointer is locked, movementX/Y are reliable deltas even if cursor would leave the window.
+    if (this.pointerLocked) {
+      this.lookDeltaX += event.movementX;
+      this.lookDeltaY += event.movementY;
+    }
     const rect = this.canvas.getBoundingClientRect();
     const scaleX = rect.width > 0 ? this.canvas.width / rect.width : 1;
     const scaleY = rect.height > 0 ? this.canvas.height / rect.height : 1;
@@ -112,6 +125,10 @@ export class TankInput {
 
   private readonly handlePointerDown = (event: PointerEvent): void => {
     this.canvas.focus();
+    // Capture pointer for FPS-style camera control. Escape releases it automatically.
+    if (!this.pointerLocked) {
+      void this.canvas.requestPointerLock();
+    }
     const rect = this.canvas.getBoundingClientRect();
     const scaleX = rect.width > 0 ? this.canvas.width / rect.width : 1;
     const scaleY = rect.height > 0 ? this.canvas.height / rect.height : 1;

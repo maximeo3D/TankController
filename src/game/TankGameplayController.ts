@@ -351,7 +351,7 @@ export class TankGameplayController {
     }
   }
 
-  private applyTurretAndCannon(pointerX: number, pointerY: number, dt: number): void {
+  private applyTurretAndCannon(_pointerX: number, _pointerY: number, dt: number): void {
     const camera = this.tankCamera ?? this.scene.activeCamera;
     if (!camera) {
       return;
@@ -360,7 +360,10 @@ export class TankGameplayController {
     // Ensure the camera world matrix/globalPosition is up to date before we use it for debug + raycasting.
     camera.computeWorldMatrix();
 
-    const ray = this.scene.createPickingRay(pointerX, pointerY, Matrix.Identity(), camera);
+    // "Camera reticle" is a fixed crosshair: raycast from screen center (not pointer position).
+    const cx = this.scene.getEngine().getRenderWidth() * 0.5;
+    const cy = this.scene.getEngine().getRenderHeight() * 0.5;
+    const ray = this.scene.createPickingRay(cx, cy, Matrix.Identity(), camera);
     let targetPoint: Vector3 | null = null;
 
     const pickResult = this.scene.pickWithRay(ray, (mesh) => {
@@ -387,7 +390,7 @@ export class TankGameplayController {
       // (Note: The game uses a x10 scale, you can increase this value if 1.0 feels too short)
       const tankPos = this.tankAnchor.getAbsolutePosition();
       const offset = targetPoint.subtract(tankPos);
-      const maxDistance = 10.0;
+      const maxDistance = this.config.aim.cameraMaxTargetDistance;
       if (offset.length() > maxDistance) {
         offset.normalize().scaleInPlace(maxDistance);
         targetPoint = tankPos.add(offset);
@@ -579,7 +582,7 @@ export class TankGameplayController {
 
     // Keep a constant on-screen size (in pixels).
     // Convert desired pixel size to world size at this distance and camera FOV.
-    const desiredPixels = 24;
+    const desiredPixels = 36;
     const renderH = Math.max(this.scene.getEngine().getRenderHeight(), 1);
     const worldScreenHeightAtDist = 2 * distToCamera * Math.tan(camera.fov / 2);
     const worldUnitsPerPixel = worldScreenHeightAtDist / renderH;
@@ -608,7 +611,7 @@ export class TankGameplayController {
     }
     forward.normalize();
 
-    const maxDist = 200;
+    const maxDist = this.config.aim.barrelRayMaxDistance;
     const to = from.add(forward.scale(maxDist));
 
     const physics = this.scene.getPhysicsEngine();
@@ -799,11 +802,13 @@ export class TankGameplayController {
     const maxPitch = toRadians(this.config.camera.orbitMaxPitchDeg);
     this.orbitPitchRad = clamp(this.orbitPitchRad, minPitch, maxPitch);
 
-    this.orbitRadius = clamp(
-      this.orbitRadius,
-      this.config.camera.orbitMinRadius,
-      this.config.camera.orbitMaxRadius
-    );
+    if (this.config.camera.orbitClampRadius) {
+      this.orbitRadius = clamp(
+        this.orbitRadius,
+        this.config.camera.orbitMinRadius,
+        this.config.camera.orbitMaxRadius
+      );
+    }
 
     const pivotWorld = this.cameraPivotNode.getAbsolutePosition();
     const cosPitch = Math.cos(this.orbitPitchRad);

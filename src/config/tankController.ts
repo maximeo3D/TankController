@@ -67,11 +67,16 @@ export interface TankControllerConfig {
     orbitPitchDegPerPixel: number;
     orbitYawSign: 1 | -1;
     orbitPitchSign: 1 | -1;
+    orbitClampRadius: boolean;
     orbitMinPitchDeg: number;
     orbitMaxPitchDeg: number;
     orbitMinRadius: number;
     orbitMaxRadius: number;
     orbitDefaultRadius: number;
+  };
+  aim: {
+    cameraMaxTargetDistance: number;
+    barrelRayMaxDistance: number;
   };
   energy: {
     batteryMax: number;

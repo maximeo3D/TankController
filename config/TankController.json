@@ -10,13 +10,13 @@
     "cannonPitchSign": 1
   },
   "movement": {
-    "moveSpeed": 0.5,
+    "moveSpeed": 0.35,
     "boostMultiplier": 1.5,
     "hullTurnSpeedDeg": 45.0,
-    "acceleration": 6.0,
-    "brakeDeceleration": 3.8,
-    "inputRiseRate": 1.8,
-    "inputFallRate": 2.8,
+    "acceleration": 4.0,
+    "brakeDeceleration": 4,
+    "inputRiseRate": 1.5,
+    "inputFallRate": 1.5,
     "lateralGrip": 0.8
   },
   "physics": {
@@ -41,14 +41,14 @@
     "rayStartHeight": 0.15,
     "rayLength": 3.5,
     "restLength": 0.35,
-    "springStrength": 2200.0,
-    "damperStrength": 220.0,
+    "springStrength": 1200.0,
+    "damperStrength": 120.0,
     "maxForce": 6000.0,
     "tractionForce": 600.0,
     "lateralFriction": 8.0
   },
   "turret": {
-    "yawSpeedDeg": 30.0,
+    "yawSpeedDeg": 45.0,
     "mouseSensitivityDegPerPixel": 0.35
   },
   "cannon": {
@@ -58,19 +58,23 @@
     "maxPitchDeg": 80.0
   },
   "camera": {
-    "defaultFovDeg": 45.0,
+    "defaultFovDeg": 55.0,
     "zoomFovMultiplier": 0.5,
     "boostFovMultiplier": 1.1,
-
     "orbitYawDegPerPixel": 0.18,
     "orbitPitchDegPerPixel": 0.14,
     "orbitYawSign": -1,
     "orbitPitchSign": 1,
+    "orbitClampRadius": true,
     "orbitMinPitchDeg": -20.0,
-    "orbitMaxPitchDeg": 70.0,
-    "orbitMinRadius": 4.0,
+    "orbitMaxPitchDeg": 20.0,
+    "orbitMinRadius": 0.1,
     "orbitMaxRadius": 18.0,
     "orbitDefaultRadius": 10.0
+  },
+  "aim": {
+    "cameraMaxTargetDistance": 200.0,
+    "barrelRayMaxDistance": 200.0
   },
   "energy": {
     "batteryMax": 100.0,

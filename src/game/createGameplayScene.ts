@@ -162,16 +162,8 @@ export async function createGameplayScene(
     let startWorld: Vector3 | null = null;
 
     if (camStartNode) {
-      const candidate = camStartNode.getAbsolutePosition();
-      const offset = candidate.subtract(pivotWorld);
-      const radius = offset.length();
-      const horizLen = Math.sqrt(offset.x * offset.x + offset.z * offset.z);
-
-      // If CAM_tank is almost directly above the pivot (or too close), it seeds a "top-down" orbit.
-      // In that case, ignore it and use an automatic third-person start pose.
-      if (radius > 0.01 && horizLen > radius * 0.25) {
-        startWorld = candidate;
-      }
+      // If CAM_tank exists, always use it as the initial orbit seed (artist-authored pose).
+      startWorld = camStartNode.getAbsolutePosition();
     }
 
     if (!startWorld) {
@@ -227,26 +219,36 @@ export async function createGameplayScene(
 
   const reticleCameraMesh = findAbstractMeshByName(tankContainer, "UI_reticle_camera");
   const reticleBarrelMesh = findAbstractMeshByName(tankContainer, "UI_reticle_barrel");
-  for (const reticle of [reticleCameraMesh, reticleBarrelMesh]) {
-    if (!reticle) {
-      continue;
-    }
-    const pivot = new TransformNode(reticle.name + "_pivot", scene);
-    reticle.setParent(pivot);
-    reticle.position.setAll(0); // Center the mesh on the pivot
-    pivot.billboardMode = Mesh.BILLBOARDMODE_ALL;
-    
-    // Most GLB models have Z+ as forward, but billboardMode in RH might expect a different axis
-    // We can now rotate the child mesh independently of the billboard parent.
-    // Let's try to flip it 180 degrees by default.
-    reticle.rotationQuaternion = Quaternion.FromEulerAngles(0, Math.PI, 0);
 
-    reticle.renderingGroupId = 1;
-    reticle.isVisible = false;
-    reticle.isPickable = false;
-    reticle.alwaysSelectAsActiveMesh = true;
-    if (reticle.material) {
-      reticle.material.backFaceCulling = false;
+  // Camera reticle = world-space marker at the camera ray hit point (billboard).
+  if (reticleCameraMesh) {
+    const pivot = new TransformNode(reticleCameraMesh.name + "_pivot", scene);
+    reticleCameraMesh.setParent(pivot);
+    reticleCameraMesh.position.setAll(0);
+    pivot.billboardMode = Mesh.BILLBOARDMODE_ALL;
+    reticleCameraMesh.rotationQuaternion = Quaternion.FromEulerAngles(0, Math.PI, 0);
+    reticleCameraMesh.renderingGroupId = 1;
+    reticleCameraMesh.isVisible = false;
+    reticleCameraMesh.isPickable = false;
+    reticleCameraMesh.alwaysSelectAsActiveMesh = true;
+    if (reticleCameraMesh.material) {
+      reticleCameraMesh.material.backFaceCulling = false;
+    }
+  }
+
+  // Barrel reticle = world element (billboard at hit point).
+  if (reticleBarrelMesh) {
+    const pivot = new TransformNode(reticleBarrelMesh.name + "_pivot", scene);
+    reticleBarrelMesh.setParent(pivot);
+    reticleBarrelMesh.position.setAll(0); // Center the mesh on the pivot
+    pivot.billboardMode = Mesh.BILLBOARDMODE_ALL;
+    reticleBarrelMesh.rotationQuaternion = Quaternion.FromEulerAngles(0, Math.PI, 0);
+    reticleBarrelMesh.renderingGroupId = 1;
+    reticleBarrelMesh.isVisible = false;
+    reticleBarrelMesh.isPickable = false;
+    reticleBarrelMesh.alwaysSelectAsActiveMesh = true;
+    if (reticleBarrelMesh.material) {
+      reticleBarrelMesh.material.backFaceCulling = false;
     }
   }
 
