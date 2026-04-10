@@ -58,9 +58,19 @@
     "maxPitchDeg": 80.0
   },
   "camera": {
-    "defaultFovDeg": 60.0,
+    "defaultFovDeg": 45.0,
     "zoomFovMultiplier": 0.5,
-    "boostFovMultiplier": 1.1
+    "boostFovMultiplier": 1.1,
+
+    "orbitYawDegPerPixel": 0.18,
+    "orbitPitchDegPerPixel": 0.14,
+    "orbitYawSign": -1,
+    "orbitPitchSign": 1,
+    "orbitMinPitchDeg": -20.0,
+    "orbitMaxPitchDeg": 70.0,
+    "orbitMinRadius": 4.0,
+    "orbitMaxRadius": 18.0,
+    "orbitDefaultRadius": 10.0
   },
   "energy": {
     "batteryMax": 100.0,

@@ -3,6 +3,7 @@ import "@babylonjs/loaders/glTF";
 import "@babylonjs/core/Physics/physicsEngineComponent";
 import "@babylonjs/core/Helpers/sceneHelpers";
 import { ArcRotateCamera } from "@babylonjs/core/Cameras/arcRotateCamera";
+import { UniversalCamera } from "@babylonjs/core/Cameras/universalCamera";
 import { Engine } from "@babylonjs/core/Engines/engine";
 import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight";
 import { SceneLoader } from "@babylonjs/core/Loading/sceneLoader";
@@ -151,11 +152,77 @@ export async function createGameplayScene(
   const tankPhysics = createTankPhysics(tankAnchor, tankColliderMesh, groundingInfo, scene, config);
   snapTankAnchorYToTerrain(scene, tankAnchor, tankPhysics.body, suspensionInfo.points, config);
 
-  const tankCamera = tankContainer.cameras.find((camera) => camera.name === "CAM_tank") ?? null;
-  if (tankCamera) {
+  const camPivotNode = findTransformNode(tankContainer, "CAM_pivot");
+  const camStartNode = findTransformNode(tankContainer, "CAM_tank");
+
+  let tankCamera: UniversalCamera | null = null;
+  let initialOrbit: { yawRad: number; pitchRad: number; radius: number } | null = null;
+  if (camPivotNode) {
+    const pivotWorld = camPivotNode.getAbsolutePosition();
+    let startWorld: Vector3 | null = null;
+
+    if (camStartNode) {
+      const candidate = camStartNode.getAbsolutePosition();
+      const offset = candidate.subtract(pivotWorld);
+      const radius = offset.length();
+      const horizLen = Math.sqrt(offset.x * offset.x + offset.z * offset.z);
+
+      // If CAM_tank is almost directly above the pivot (or too close), it seeds a "top-down" orbit.
+      // In that case, ignore it and use an automatic third-person start pose.
+      if (radius > 0.01 && horizLen > radius * 0.25) {
+        startWorld = candidate;
+      }
+    }
+
+    if (!startWorld) {
+      const radius = config.camera.orbitDefaultRadius;
+      const height = Math.max(radius * 0.35, 1);
+      const sourceAxis =
+        config.rig.movementForwardAxis === "x"
+          ? Axis.X
+          : config.rig.movementForwardAxis === "y"
+            ? Axis.Y
+            : Axis.Z;
+      const forward = tankAnchor.getDirection(sourceAxis).scale(config.rig.movementForwardSign);
+      forward.y = 0;
+      if (forward.lengthSquared() > 1e-6) {
+        forward.normalize();
+      } else {
+        forward.copyFrom(Axis.Z);
+      }
+
+      startWorld = pivotWorld.subtract(forward.scale(radius)).add(Axis.Y.scale(height));
+    }
+
+    tankCamera = new UniversalCamera("tank_orbit_camera", startWorld.clone(), scene);
     tankCamera.fov = toRadians(config.camera.defaultFovDeg);
     tankCamera.minZ = 0.01;
+    tankCamera.inputs.clear();
+    tankCamera.attachControl(canvas, true);
+    tankCamera.setTarget(pivotWorld);
     scene.activeCamera = tankCamera;
+
+    // Seed orbit state from the chosen start pose so the first "orbit step"
+    // keeps the camera exactly where the artist placed it in Blender.
+    const offset = startWorld.subtract(pivotWorld);
+    const horizLen = Math.sqrt(offset.x * offset.x + offset.z * offset.z);
+    const radius = Math.max(offset.length(), 0.001);
+    initialOrbit = {
+      yawRad: Math.atan2(offset.x, offset.z),
+      pitchRad: Math.atan2(offset.y, Math.max(horizLen, 0.001)),
+      radius
+    };
+  } else {
+    // If we stay on fallbackCamera, the view will likely be "wrong" relative to the tank.
+    // This warning helps diagnose GLB naming/hierarchy quickly.
+    const allNames = [...tankContainer.transformNodes, ...tankContainer.meshes]
+      .map((n) => n.name)
+      .filter((n) => n.toLowerCase().includes("cam_"))
+      .slice(0, 30);
+    console.warn(
+      "[TankController] CAM_pivot not found in tank GLB. Falling back to default camera. CAM_* candidates:",
+      allNames
+    );
   }
 
   const reticleCameraMesh = findMeshByName(tankContainer, "UI_reticle_camera");
@@ -192,7 +259,10 @@ export async function createGameplayScene(
 
   const muzzleNode = findTransformNode(tankContainer, "MUZZLE_tank");
 
-  fallbackCamera.dispose();
+  // Only dispose the fallback camera if we successfully switched to another active camera.
+  if (scene.activeCamera !== fallbackCamera) {
+    fallbackCamera.dispose();
+  }
   const controller = new TankGameplayController({
     scene,
     canvas,
@@ -204,6 +274,8 @@ export async function createGameplayScene(
     suspensionInfo,
     tankBody: tankPhysics.body,
     tankCamera,
+    cameraPivotNode: camPivotNode,
+    initialOrbit,
     reticleCameraMesh,
     reticleBarrelMesh,
     muzzleNode,
@@ -216,7 +288,7 @@ export async function createGameplayScene(
     scene,
     summary: {
       spawnFound: Boolean(spawnNode),
-      tankCameraFound: Boolean(tankCamera),
+      tankCameraFound: Boolean(camStartNode) || Boolean(camPivotNode),
       terrainStaticMeshes: countNamedMeshes(terrainContainer, "SM_"),
       terrainDynamicMeshes: countNamedMeshes(terrainContainer, "DM_"),
       terrainColliderMeshes: countNamedMeshes(terrainContainer, "COL_"),
@@ -259,7 +331,13 @@ function findTransformNode(
   name: string
 ): TransformNode | AbstractMesh | null {
   const candidates = [...container.transformNodes, ...container.meshes];
-  return candidates.find((node) => node.name === name || node.name.startsWith(`${name}.`)) ?? null;
+  const wanted = name.trim().toLowerCase();
+  return (
+    candidates.find((node) => {
+      const n = node.name.trim().toLowerCase();
+      return n === wanted || n.startsWith(`${wanted}.`);
+    }) ?? null
+  );
 }
 
 function refreshTankRigWorldMatrices(tankAnchor: TransformNode, container: AssetContainer): void {

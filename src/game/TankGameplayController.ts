@@ -9,6 +9,7 @@ import { PhysicsShapeSphere, type PhysicsShape } from "@babylonjs/core/Physics/v
 import { PhysicsMotionType } from "@babylonjs/core/Physics/v2/IPhysicsEnginePlugin";
 // (raycast query type removed; using inline object literals)
 import type { Camera } from "@babylonjs/core/Cameras/camera";
+import type { TargetCamera } from "@babylonjs/core/Cameras/targetCamera";
 import type { AssetContainer } from "@babylonjs/core/assetContainer";
 import type { Bone } from "@babylonjs/core/Bones/bone";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
@@ -53,7 +54,9 @@ export interface TankGameplayControllerOptions {
     points: Vector3[];
   };
   tankBody: PhysicsBody;
-  tankCamera: Camera | null;
+  tankCamera: TargetCamera | null;
+  cameraPivotNode?: TransformNode | AbstractMesh | null;
+  initialOrbit?: { yawRad: number; pitchRad: number; radius: number } | null;
   reticleCameraMesh: Mesh | null;
   reticleBarrelMesh: Mesh | null;
   muzzleNode: TransformNode | AbstractMesh | null;
@@ -70,7 +73,8 @@ export class TankGameplayController {
   // groundingInfo kept in options for backward compatibility, but unused in dynamic suspension mode.
   private readonly suspensionPointsLocal: Vector3[];
   private readonly tankBody: PhysicsBody;
-  private readonly tankCamera: Camera | null;
+  private readonly tankCamera: TargetCamera | null;
+  private readonly cameraPivotNode: TransformNode | AbstractMesh | null;
   private readonly input: TankInput;
   private readonly turretControl: BoneControl;
   private readonly cannonControl: BoneControl;
@@ -106,6 +110,10 @@ export class TankGameplayController {
   private activeProjectiles: { mesh: Mesh; body: PhysicsBody; shape: PhysicsShape; age: number; debugMesh?: AbstractMesh | null }[] = [];
   private physicsViewer?: PhysicsViewer;
 
+  private orbitYawRad = 0;
+  private orbitPitchRad = 0;
+  private orbitRadius = 0;
+
   public constructor(options: TankGameplayControllerOptions) {
     this.scene = options.scene;
     this.config = options.config;
@@ -115,6 +123,7 @@ export class TankGameplayController {
     this.suspensionPointsLocal = options.suspensionInfo.points.map((p) => p.clone());
     this.tankBody = options.tankBody;
     this.tankCamera = options.tankCamera;
+    this.cameraPivotNode = options.cameraPivotNode ?? null;
     this.reticleCameraMesh = options.reticleCameraMesh;
     this.reticleBarrelMesh = options.reticleBarrelMesh;
     this.muzzleNode = options.muzzleNode;
@@ -159,6 +168,14 @@ export class TankGameplayController {
       initialForward.normalize();
     }
 
+    if (options.initialOrbit) {
+      this.orbitYawRad = options.initialOrbit.yawRad;
+      this.orbitPitchRad = options.initialOrbit.pitchRad;
+      this.orbitRadius = options.initialOrbit.radius;
+      this.applyOrbitCamera(0, 0);
+    } else {
+      this.initOrbitCameraState();
+    }
     this.scene.onBeforeRenderObservable.add(this.update);
   }
 
@@ -197,6 +214,7 @@ export class TankGameplayController {
     this.activeWeapon = frame.selectedWeapon;
     this.fireHeld = frame.fireHeld;
 
+    this.applyOrbitCamera(frame.lookDeltaX, frame.lookDeltaY);
     this.applyTurretAndCannon(frame.pointerX, frame.pointerY, dt);
     this.applyMovement(frame.moveAxis, frame.turnAxis, frame.boostHeld, dt);
     this.applyVisualSmoothing(dt);
@@ -612,6 +630,63 @@ export class TankGameplayController {
     }
 
     this.tankCamera.fov = toRadians(this.config.camera.defaultFovDeg) * fovMultiplier;
+  }
+
+  private initOrbitCameraState(): void {
+    if (!this.tankCamera || !this.cameraPivotNode) {
+      return;
+    }
+
+    const pivotWorld = this.cameraPivotNode.getAbsolutePosition();
+    const camWorld = this.tankCamera.globalPosition ?? this.tankCamera.position;
+    const offset = camWorld.subtract(pivotWorld);
+    const horizLen = Math.sqrt(offset.x * offset.x + offset.z * offset.z);
+    const radius = Math.max(offset.length(), 0.001);
+
+    this.orbitYawRad = Math.atan2(offset.x, offset.z);
+    this.orbitPitchRad = Math.atan2(offset.y, Math.max(horizLen, 0.001));
+    this.orbitRadius = radius;
+  }
+
+  private applyOrbitCamera(lookDeltaX: number, lookDeltaY: number): void {
+    if (!this.tankCamera || !this.cameraPivotNode) {
+      return;
+    }
+
+    // Mouse deltas are in pixels; config is degrees per pixel.
+    this.orbitYawRad +=
+      toRadians(
+        lookDeltaX * this.config.camera.orbitYawDegPerPixel * this.config.camera.orbitYawSign
+      );
+    this.orbitPitchRad +=
+      toRadians(
+        lookDeltaY * this.config.camera.orbitPitchDegPerPixel * this.config.camera.orbitPitchSign
+      );
+
+    const minPitch = toRadians(this.config.camera.orbitMinPitchDeg);
+    const maxPitch = toRadians(this.config.camera.orbitMaxPitchDeg);
+    this.orbitPitchRad = clamp(this.orbitPitchRad, minPitch, maxPitch);
+
+    this.orbitRadius = clamp(
+      this.orbitRadius,
+      this.config.camera.orbitMinRadius,
+      this.config.camera.orbitMaxRadius
+    );
+
+    const pivotWorld = this.cameraPivotNode.getAbsolutePosition();
+    const cosPitch = Math.cos(this.orbitPitchRad);
+    const sinPitch = Math.sin(this.orbitPitchRad);
+    const sinYaw = Math.sin(this.orbitYawRad);
+    const cosYaw = Math.cos(this.orbitYawRad);
+
+    const offset = new Vector3(
+      sinYaw * cosPitch * this.orbitRadius,
+      sinPitch * this.orbitRadius,
+      cosYaw * cosPitch * this.orbitRadius
+    );
+
+    this.tankCamera.position.copyFrom(pivotWorld.add(offset));
+    this.tankCamera.setTarget(pivotWorld);
   }
 
   private applyVisualSmoothing(dt: number): void {

@@ -63,6 +63,15 @@ export interface TankControllerConfig {
     defaultFovDeg: number;
     zoomFovMultiplier: number;
     boostFovMultiplier: number;
+    orbitYawDegPerPixel: number;
+    orbitPitchDegPerPixel: number;
+    orbitYawSign: 1 | -1;
+    orbitPitchSign: 1 | -1;
+    orbitMinPitchDeg: number;
+    orbitMaxPitchDeg: number;
+    orbitMinRadius: number;
+    orbitMaxRadius: number;
+    orbitDefaultRadius: number;
   };
   energy: {
     batteryMax: number;
