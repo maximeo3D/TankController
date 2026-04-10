@@ -24,8 +24,6 @@ import { PhysicsMotionType } from "@babylonjs/core/Physics/v2/IPhysicsEnginePlug
 import { HavokPlugin } from "@babylonjs/core/Physics/v2/Plugins/havokPlugin";
 import { Scene } from "@babylonjs/core/scene";
 import { CubeTexture } from "@babylonjs/core/Materials/Textures/cubeTexture";
-import { IblShadowsRenderPipeline } from "@babylonjs/core/Rendering/IBLShadows/iblShadowsRenderPipeline";
-import { PostProcessRenderPipelineManager } from "@babylonjs/core/PostProcesses/RenderPipeline/postProcessRenderPipelineManager";
 import type { AssetContainer } from "@babylonjs/core/assetContainer";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import type { TankControllerConfig } from "../config/tankController";
@@ -86,13 +84,14 @@ export async function createGameplayScene(
   const scene = new Scene(engine);
   scene.useRightHandedSystem = true;
   scene.clearColor = new Color4(0.05, 0.06, 0.08, 1);
-  
+
   // Hide the default cursor in Babylon.js
   scene.defaultCursor = "none";
   scene.hoverCursor = "none";
 
   const envTex = CubeTexture.CreateFromPrefilteredData(skyboxAssetUrl, scene);
   scene.environmentTexture = envTex;
+  scene.environmentIntensity = 0.5;
   scene.createDefaultSkybox(envTex, true, 1000, 0.1, true);
 
   const fallbackCamera = new ArcRotateCamera(
@@ -107,7 +106,7 @@ export async function createGameplayScene(
   fallbackCamera.fov = toRadians(config.camera.defaultFovDeg);
   scene.activeCamera = fallbackCamera;
 
-  new HemisphericLight("sun", new Vector3(0.2, 1, 0.1), scene).intensity = 1.1;
+  new HemisphericLight("sun", new Vector3(0.2, 1, 0.1), scene).intensity = 0.5;
 
   const havok = await HavokPhysics();
   const havokPlugin = new HavokPlugin(true, havok);
@@ -165,9 +164,17 @@ export async function createGameplayScene(
     if (!reticle) {
       continue;
     }
+    const pivot = new TransformNode(reticle.name + "_pivot", scene);
+    reticle.setParent(pivot);
+    reticle.position.setAll(0); // Center the mesh on the pivot
+    pivot.billboardMode = Mesh.BILLBOARDMODE_ALL;
+    
+    // Most GLB models have Z+ as forward, but billboardMode in RH might expect a different axis
+    // We can now rotate the child mesh independently of the billboard parent.
+    // Let's try to flip it 180 degrees by default.
+    reticle.rotationQuaternion = Quaternion.FromEulerAngles(0, Math.PI, 0);
+
     reticle.renderingGroupId = 1;
-    reticle.setParent(null);
-    reticle.billboardMode = Mesh.BILLBOARDMODE_ALL;
     reticle.isVisible = false;
   }
 
@@ -204,33 +211,6 @@ export async function createGameplayScene(
     ammoBulletMesh
   });
 
-  if (!(scene as any).postProcessRenderPipelineManager) {
-    (scene as any).postProcessRenderPipelineManager = new PostProcessRenderPipelineManager();
-  }
-
-  const shadowPipeline = new IblShadowsRenderPipeline(
-    "ibl shadows",
-    scene,
-    {
-      resolutionExp: 6,
-      sampleDirections: 1,
-      shadowOpacity: 0.8
-    },
-    [tankCamera ?? scene.activeCamera!]
-  );
-
-  const shadowCastingMeshes = scene.meshes.filter(m => 
-    m.isVisible && 
-    !m.name.includes("skyBox") && 
-    !m.name.startsWith("UI_") && 
-    !m.name.startsWith("AMMO_") && 
-    !m.name.startsWith("COL_")
-  );
-  
-  shadowPipeline.addShadowCastingMesh(shadowCastingMeshes as Mesh[]);
-  shadowPipeline.addShadowReceivingMaterial();
-  shadowPipeline.updateSceneBounds();
-  shadowPipeline.updateVoxelization();
 
   return {
     scene,
@@ -245,7 +225,6 @@ export async function createGameplayScene(
     getDebugState: () => controller.getDebugState(),
     dispose: () => {
       controller.dispose();
-      shadowPipeline.dispose();
       disposePhysicsGroup(worldPhysics);
       tankPhysics.body.dispose();
       tankPhysics.shape.dispose();
@@ -424,28 +403,28 @@ function createWorldPhysics(container: AssetContainer, scene: Scene): PhysicsRes
 
     if (mesh.name.startsWith("DM_")) {
       const body = new PhysicsBody(mesh, PhysicsMotionType.DYNAMIC, false, scene);
-      
+
       // Use a ConvexHull shape for dynamic meshes as it wraps the mesh geometry tightly
       const shape = new PhysicsShapeConvexHull(mesh, scene);
       shape.filterMembershipMask = 1;
       shape.filterCollideMask = 0xffffffff;
-      
+
       body.shape = shape;
-      
+
       // Calculate mass properties based on the mesh bounding box to ensure stable physics
       // even if the mesh origin is not perfectly centered
       const boundingInfo = mesh.getBoundingInfo();
       const extents = boundingInfo.boundingBox.extendSizeWorld;
       const volume = extents.x * extents.y * extents.z * 8; // 2*x * 2*y * 2*z
-      
+
       // Use the center of the bounding box as the center of mass
       const centerOfMass = boundingInfo.boundingBox.centerWorld.subtract(mesh.getAbsolutePosition());
-      
-      body.setMassProperties({ 
+
+      body.setMassProperties({
         mass: Math.max(volume * 5, 1), // Base mass on volume, minimum 1kg
         centerOfMass: centerOfMass
       });
-      
+
       body.setLinearDamping(0.6);
       body.setAngularDamping(0.8);
       bodies.push(body);

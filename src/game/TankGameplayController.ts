@@ -11,7 +11,7 @@ import { PhysicsMotionType } from "@babylonjs/core/Physics/v2/IPhysicsEnginePlug
 import type { Camera } from "@babylonjs/core/Cameras/camera";
 import type { AssetContainer } from "@babylonjs/core/assetContainer";
 import type { Bone } from "@babylonjs/core/Bones/bone";
-import type { TransformNode } from "@babylonjs/core/Meshes/transformNode";
+import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import type { Scene } from "@babylonjs/core/scene";
 import type { TankControllerConfig } from "../config/tankController";
 import { TankInput, type WeaponType } from "./TankInput";
@@ -259,7 +259,7 @@ export class TankGameplayController {
     // Calculate forward direction towards the reticle
     let forward = Vector3.Zero();
     if (this.reticleBarrelMesh) {
-      forward = this.reticleBarrelMesh.position.subtract(mesh.position);
+      forward = this.reticleBarrelMesh.getAbsolutePosition().subtract(mesh.position);
     }
     
     // Fallback if reticle is too close or missing
@@ -432,7 +432,11 @@ export class TankGameplayController {
     if (!mesh) {
       return;
     }
-    mesh.position.copyFrom(worldPoint);
+    
+    // Update the position of the billboard pivot (parent) or the mesh itself if no parent
+    const target = (mesh.parent instanceof TransformNode) ? mesh.parent : mesh;
+    target.position.copyFrom(worldPoint);
+    
     mesh.isVisible = true;
     const distToCamera = Vector3.Distance(camera.globalPosition, worldPoint);
     const newScale = distToCamera * baseScale;
