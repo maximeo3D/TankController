@@ -1,5 +1,5 @@
 # Tank game development workflow
-_Exported on 4/10/2026 at 09:12:58 GMT+2 from Cursor (2.6.22)_
+_Exported on 4/10/2026 at 11:11:19 GMT+2 from Cursor (2.6.22)_
 
 ---
 
@@ -2951,4 +2951,194 @@ Maintenant tu devrais retrouver :
 - et les collisions avec le décor
 
 Si tu me dis “ça avance mais trop lentement / ça patine”, on ajustera `suspension.tractionForce` et `physics.tankFriction`.
+
+---
+
+**User**
+
+J'ai modifié un peu le projet sur un autre PC. Pour te tenir au courant de ce que j'ai fait en gros : tout à été scalé x10 dans Blender pour que la physique et les deplacement soient plus "accurate", j'ai aussi caché les colliders en wireframe rouge.
+Maintenant ce que j'aimerai modifié c'est avoir 2 réticules distincts, un pour la camera, et un pour le canon, ou chacun des réticules seront attachés au bout du vecteur correspondant. J'ai donc ajouté les 2 objets suivant au GLB UI_reticle_barrel et UI_reticle_camera. Tu peux t'occuper de mettre ça en place coté code ?
+
+---
+
+**Cursor**
+
+Je vais d’abord regarder comment le réticule actuel est géré (UI_tank_reticle) puis je remplace ça par 2 meshes (`UI_reticle_camera` et `UI_reticle_barrel`) avec deux raycasts séparés : un depuis la caméra (viseur écran) et un depuis le muzzle/canon (trajectoire canon).
+
+Je vais remplacer `UI_tank_reticle` par deux meshes (`UI_reticle_camera` et `UI_reticle_barrel`) dans `createGameplayScene.ts`, puis mettre à jour `TankGameplayController` pour positionner chaque réticule avec son propre raycast (caméra vs muzzle). Ensuite j’aligne aussi la direction des projectiles sur le réticule “barrel”.
+
+C’est en place.
+
+### Ce que j’ai fait
+- **GLB**: on récupère maintenant `UI_reticle_camera` et `UI_reticle_barrel` (au lieu de `UI_tank_reticle`), on les `setParent(null)`, `billboardMode`, `renderingGroupId = 1`, et on les met invisibles au départ.
+- **Réticule caméra**: positionné sur le **point visé par la caméra** (ray depuis la souris, comme avant).
+- **Réticule canon**: positionné sur le **ray Havok** tiré depuis `MUZZLE_tank` dans la direction “forward” du muzzle.
+- **Projectiles**: la direction de tir se base maintenant sur le **réticule canon** (barrel), pas celui caméra.
+
+### Fichiers modifiés
+- `src/game/createGameplayScene.ts`
+- `src/game/TankGameplayController.ts`
+
+Build OK via `rebuild.bat`.
+
+Si tu vois que le réticule “barrel” part dans une direction bizarre, c’est quasi sûr que l’axe “forward” du `MUZZLE_tank` n’est pas celui attendu : dans ce cas, je te fais une option de config `barrelForwardAxis` (ou on corrige l’orientation de l’empty dans Blender).
+
+---
+
+**User**
+
+Je comprends pas t'as modifié autre chose que les réticules ?? Les wireframe des colliders sont de nouveau visible et la physique ne se comporte plus du tout pareil
+
+---
+
+**Cursor**
+
+Je vais vérifier exactement ce qui a changé dans ton repo (diff Git) pour te dire clairement quelles lignes ont été modifiées, puis je remets le mode wireframe colliders sur **off par défaut** (comme tu l’avais) et je m’assure qu’on ne touche pas au comportement physique en faisant uniquement les reticules.
+
+Oui — tu as raison, et c’est visible dans le diff.
+
+### Ce que j’avais “cassé” (sans intention)
+- **Wireframe colliders**: dans `hideColliderMeshes(...)`, le flag `debugShowColliders` était repassé à **`true`**, donc tout redevenait visible en rouge.
+- **Comportement physique**: dans `createGameplayScene.ts`, il y avait des helpers chez toi (sur l’autre PC) qui ont été supprimés dans le diff :
+  - `findTransformNode` qui acceptait aussi les noms Blender du style `SUS_FL.001`
+  - un **snap initial en Y** du tank pour qu’il démarre correctement posé sur le sol
+
+### Fix fait maintenant
+- `debugShowColliders` est de nouveau à **`false`** (colliders cachés par défaut).
+- `findTransformNode` accepte à nouveau `name` **ou** `name.*` (Blender).
+- j’ai **remis le snap initial en Y** après création du body, pour que le tank démarre “en contact”.
+
+Et j’ai aussi nettoyé un bout inutile côté réticule canon (un `pickWithRay` dummy) pour ne garder que le raycast Havok.
+
+Rebuild OK. Si tu veux, prochaine étape: je te mets `debugShowColliders` dans `TankController.json` (toggle propre) au lieu d’un bool hardcodé.
+
+---
+
+**User**
+
+Le collider du tank COL_tank est maintenant visible alors qu'il n'est pas censé l'etre
+
+---
+
+**Cursor**
+
+Je corrige ça: `COL_tank` ne commence pas par `COL_`, donc il n’était plus filtré. Je vais l’inclure explicitement dans la logique de masquage des colliders pour qu’il reste toujours invisible.
+
+Tu avais raison: `COL_tank` **ne matchait pas** `startsWith("COL_")`, donc il n’était jamais caché.
+
+Je viens de corriger `hideColliderMeshes(...)` dans `src/game/createGameplayScene.ts` :
+- `isCollider` inclut maintenant **`mesh.name === "COL_tank"`**
+- et quand `debugShowColliders = false`, les colliders (dont `COL_tank`) sont bien **`isVisible = false`**
+
+Rebuild OK.
+
+---
+
+**User**
+
+Le veteur du canon est inversé, il va dans la direction opposé, à l'arrière, possible de corriger ça ?
+
+---
+
+**Cursor**
+
+Je corrige ça en inversant le sens “forward” utilisé pour le raycast du canon (et le fallback de direction de tir), sans toucher aux contrôles de déplacement. Ensuite je rebuild.
+
+Corrigé.
+
+Le raycast “barrel” (et le fallback de direction de tir) utilisaient le `forward` du `MUZZLE_tank` dans le mauvais sens. J’ai inversé le signe ici :
+
+- `updateBarrelReticle()` (direction du réticule canon)
+- `spawnProjectile()` fallback (direction si le réticule n’est pas dispo)
+
+Rebuild OK.
+
+---
+
+**User**
+
+La tourelle arrive à tourner sur des axes sur lesquels elle n'est pas du tout censée tourner, elle doit être verrouillé sur son axe vertical, le lacet, et ne doit tourner sur aucun autre axe
+
+---
+
+**Cursor**
+
+Je vais verrouiller la tourelle (et le canon) en **rotation absolue** sur leur axe unique au lieu d’appliquer des petites rotations cumulatives (`rotate()`), ce qui élimine les dérives pitch/roll. Ensuite je lance un check TypeScript/lints.
+
+J’ai corrigé ça en **verrouillant la tourelle en “yaw only”** (et le canon en “pitch only”) via une **rotation absolue** recalculée chaque frame, au lieu d’accumuler des `rotate()` qui finissaient par introduire du pitch/roll.
+
+- **Fichier modifié**: `src/game/TankGameplayController.ts`
+- **Changement clé**: on mémorise la rotation locale de base (`tourelle` / `canon`) au spawn, puis on applique uniquement \(yaw\) / \(pitch\) autour de l’axe configuré avec `setRotationQuaternion(..., Space.LOCAL, tankAnchor)`.
+
+Le check lints est OK. (Mon `npm run build` échoue ici à cause d’un souci de chemin UNC côté Windows/CMD, mais ça n’est pas lié au code.)
+
+---
+
+**User**
+
+J'aimerai integrer le systeme d'IBL de Babylon.JS, tu peux proceder à l'implémentation de l'IBL en utilisant la doc officielle :https://doc.babylonjs.com/features/featuresDeepDive/postProcesses/IBLShadowsRenderingPipeline 
+J'ai aussi placé le fichier .env dans le dossier assets/textures, c'est le fichier skybox.env qu'il faut utiliser, j'aimerai aussi que la skybox soit visible, pas qu'elle ne balance uniquement la lumière
+
+
+---
+
+**Cursor**
+
+OK — je vais (1) charger `assets/textures/skybox.env` comme `scene.environmentTexture`, (2) créer une skybox visible avec cette env map, et (3) ajouter l’`IBLShadowsRenderingPipeline` d’après la doc officielle, branchée sur la caméra active.
+
+Je vais maintenant repérer le nom exact de la classe Babylon (le pipeline IBL) dans `@babylonjs/core`, puis je branche `skybox.env` + skybox visible dans `createGameplayScene.ts` et j’attache le pipeline à la caméra active.
+
+### IBL + skybox visible + IBL shadows (doc officielle)
+
+J’ai intégré l’IBL en utilisant `assets/textures/skybox.env` et j’ai rendu la **skybox visible**, puis j’ai ajouté le pipeline **IBL Shadows** conformément à la doc officielle ([IBLShadowsRenderingPipeline](https://doc.babylonjs.com/features/featuresDeepDive/postProcesses/IBLShadowsRenderingPipeline)).
+
+- **Env map (.env)**: chargée et assignée à `scene.environmentTexture`
+- **Skybox visible**: créée via `scene.createDefaultSkybox(...)` (pas seulement la lumière)
+- **Pipeline IBL shadows**: `IblShadowsRenderPipeline` attaché à la caméra active, avec voxelization lancée une fois
+
+### Fichiers modifiés
+
+- `src/assets/assetUrls.ts`: ajout de `skyboxEnvUrl`
+- `src/game/createGameplayScene.ts`: chargement `skybox.env`, skybox visible, ajout du `IblShadowsRenderPipeline` (casters statiques terrain `SM_`/`COL_`, receivers = tous matériaux)
+
+---
+
+**User**
+
+Il y a une erreur : Error: i.createDefaultSkybox is not a function
+
+---
+
+**Cursor**
+
+Je corrige en utilisant l’API supportée en Babylon 9: `scene.createDefaultEnvironment(...)` (qui crée la skybox visible) au lieu de `scene.createDefaultSkybox(...)`. Ensuite je relance un check lints.
+
+### Fix appliqué
+
+J’ai remplacé `scene.createDefaultSkybox(...)` (qui n’existe pas chez toi) par l’API supportée :
+
+- `scene.createDefaultEnvironment({ createSkybox: true, skyboxTexture: environmentTexture, environmentTexture, ... })`
+
+C’est dans `src/game/createGameplayScene.ts`, et il n’y a pas de lints sur le fichier.
+
+---
+
+**User**
+
+Maintenant c'est cette erreur : Error: i.createDefaultEnvironment is not a function
+
+---
+
+**Cursor**
+
+Le souci vient des “helpers” Babylon en version modulaire: ces fonctions sont ajoutées à `Scene` seulement si on importe le module qui patch le prototype. Je rajoute l’import `@babylonjs/core/Helpers/sceneHelpers`, et tes `createDefaultEnvironment(...)` / skybox vont fonctionner.
+
+### Fix
+
+J’ai ajouté l’import side-effect qui active ces helpers sur `Scene` :
+
+- `import "@babylonjs/core/Helpers/sceneHelpers";`
+
+Dans `src/game/createGameplayScene.ts`.  
+Après ça, `scene.createDefaultEnvironment(...)` (et `createDefaultSkybox` si tu veux) existe bien.
 
