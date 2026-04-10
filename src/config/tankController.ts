@@ -62,6 +62,7 @@ export interface TankControllerConfig {
   camera: {
     defaultFovDeg: number;
     zoomFovMultiplier: number;
+    zoomViewFovDeg: number;
     boostFovMultiplier: number;
     orbitYawDegPerPixel: number;
     orbitPitchDegPerPixel: number;

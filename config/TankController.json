@@ -60,6 +60,7 @@
   "camera": {
     "defaultFovDeg": 55.0,
     "zoomFovMultiplier": 0.5,
+    "zoomViewFovDeg": 40,
     "boostFovMultiplier": 1.1,
     "orbitYawDegPerPixel": 0.18,
     "orbitPitchDegPerPixel": 0.14,

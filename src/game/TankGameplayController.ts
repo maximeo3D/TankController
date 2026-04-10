@@ -58,6 +58,7 @@ export interface TankGameplayControllerOptions {
   };
   tankBody: PhysicsBody;
   tankCamera: TargetCamera | null;
+  tankZoomCamera?: TargetCamera | null;
   cameraPivotNode?: TransformNode | AbstractMesh | null;
   initialOrbit?: { yawRad: number; pitchRad: number; radius: number } | null;
   reticleCameraMesh: AbstractMesh | null;
@@ -79,6 +80,7 @@ export class TankGameplayController {
   private readonly suspensionPointsLocal: Vector3[];
   private readonly tankBody: PhysicsBody;
   private readonly tankCamera: TargetCamera | null;
+  private readonly tankZoomCamera: TargetCamera | null;
   private readonly cameraPivotNode: TransformNode | AbstractMesh | null;
   private readonly input: TankInput;
   private readonly turretControl: BoneControl;
@@ -119,6 +121,11 @@ export class TankGameplayController {
   private orbitPitchRad = 0;
   private orbitRadius = 0;
 
+  // We distinguish between:
+  // - control camera: used for aiming/turret/cannon logic (always the orbit camera)
+  // - render camera: the scene.activeCamera (orbit or zoom view)
+  private lastAimTargetPoint: Vector3 | null = null;
+
   private debugCameraRayLine: LinesMesh | null = null;
   private debugBarrelForwardLine: LinesMesh | null = null;
   private debugTargetMarker: Mesh | null = null;
@@ -133,6 +140,7 @@ export class TankGameplayController {
     this.suspensionPointsLocal = options.suspensionInfo.points.map((p) => p.clone());
     this.tankBody = options.tankBody;
     this.tankCamera = options.tankCamera;
+    this.tankZoomCamera = options.tankZoomCamera ?? null;
     this.cameraPivotNode = options.cameraPivotNode ?? null;
     this.reticleCameraMesh = options.reticleCameraMesh;
     this.reticleBarrelMesh = options.reticleBarrelMesh;
@@ -352,7 +360,9 @@ export class TankGameplayController {
   }
 
   private applyTurretAndCannon(_pointerX: number, _pointerY: number, dt: number): void {
-    const camera = this.tankCamera ?? this.scene.activeCamera;
+    // IMPORTANT: gameplay aiming must not change when switching to the alternative zoom view.
+    // So we always use the orbit camera (tankCamera) as the control camera for raycasts/aim.
+    const camera = this.tankCamera ?? (this.scene.activeCamera as TargetCamera | null);
     if (!camera) {
       return;
     }
@@ -386,6 +396,8 @@ export class TankGameplayController {
     }
 
     if (targetPoint) {
+      this.lastAimTargetPoint = targetPoint.clone();
+
       // Limit the distance of the target point from the tank to 1 meter
       // (Note: The game uses a x10 scale, you can increase this value if 1.0 feels too short)
       const tankPos = this.tankAnchor.getAbsolutePosition();
@@ -394,6 +406,7 @@ export class TankGameplayController {
       if (offset.length() > maxDistance) {
         offset.normalize().scaleInPlace(maxDistance);
         targetPoint = tankPos.add(offset);
+        this.lastAimTargetPoint.copyFrom(targetPoint);
       }
 
       // For debug visualization, use the actual camera position as ray origin.
@@ -749,22 +762,73 @@ export class TankGameplayController {
   }
 
   private applyCamera(zoomHeld: boolean): void {
-    if (!this.tankCamera) {
-      return;
-    }
-
     this.zoomActive = zoomHeld;
-    let fovMultiplier = 1;
+    const orbitCam = this.tankCamera ?? null;
+    const zoomCam = this.tankZoomCamera ?? null;
 
-    if (zoomHeld) {
-      fovMultiplier *= this.config.camera.zoomFovMultiplier;
+    // Prefer camera switching if the zoom camera exists; otherwise fall back to FOV zoom.
+    const nextActive =
+      zoomHeld && zoomCam ? zoomCam : orbitCam ?? (this.scene.activeCamera as TargetCamera | null);
+    if (nextActive && this.scene.activeCamera !== nextActive) {
+      this.scene.activeCamera = nextActive;
     }
 
-    if (this.boostActive) {
-      fovMultiplier *= this.config.camera.boostFovMultiplier;
+    // If we're in the alternative view, make it FOLLOW the orbit camera orientation.
+    // This keeps the view consistent while preserving gameplay aiming based on orbit camera.
+    if (zoomHeld && zoomCam && orbitCam) {
+      orbitCam.computeWorldMatrix();
+
+      // Position zoom camera near the muzzle, with a consistent "left + up + slight back" offset
+      // in the cannon's forward frame (world-space). This avoids bone axis surprises.
+      if (this.muzzleNode) {
+        const muzzlePos = this.muzzleNode.getAbsolutePosition();
+        const forward = this.muzzleNode
+          .getDirection(this.movementForwardAxis)
+          .scale(-this.config.rig.movementForwardSign);
+        if (forward.lengthSquared() > 1e-6) {
+          forward.normalize();
+        } else {
+          forward.copyFrom(Axis.Z);
+        }
+
+        const right = Vector3.Cross(Axis.Y, forward);
+        if (right.lengthSquared() > 1e-6) {
+          right.normalize();
+        } else {
+          right.copyFrom(Axis.X);
+        }
+
+        const leftOffset = 0.12;
+        const upOffset = 0;
+        const backOffset = -0.95;
+        const desiredPos = muzzlePos
+          .add(right.scale(leftOffset))
+          .add(Axis.Y.scale(upOffset))
+          .add(forward.scale(backOffset));
+
+        zoomCam.position.copyFrom(desiredPos);
+        zoomCam.setTarget(desiredPos.add(forward.scale(1000)));
+      } else {
+        // Fallback: keep using orbit forward vector.
+        const forward = orbitCam.getForwardRay(1).direction;
+        const from = zoomCam.globalPosition ?? zoomCam.position;
+        zoomCam.setTarget(from.add(forward.scale(1000)));
+      }
     }
 
-    this.tankCamera.fov = toRadians(this.config.camera.defaultFovDeg) * fovMultiplier;
+    const boostMultiplier = this.boostActive ? this.config.camera.boostFovMultiplier : 1;
+    const orbitFov = toRadians(this.config.camera.defaultFovDeg) * boostMultiplier;
+    const zoomFov = toRadians(this.config.camera.zoomViewFovDeg) * boostMultiplier;
+
+    if (orbitCam) {
+      orbitCam.fov = orbitFov;
+    }
+    if (zoomCam) {
+      zoomCam.fov = zoomFov;
+    } else if (zoomHeld && orbitCam) {
+      // No zoom camera: keep old behavior as fallback.
+      orbitCam.fov = zoomFov;
+    }
   }
 
   private initOrbitCameraState(): void {

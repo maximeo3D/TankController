@@ -156,6 +156,7 @@ export async function createGameplayScene(
   const camStartNode = findTransformNode(tankContainer, "CAM_tank");
 
   let tankCamera: UniversalCamera | null = null;
+  let tankZoomCamera: UniversalCamera | null = null;
   let initialOrbit: { yawRad: number; pitchRad: number; radius: number } | null = null;
   if (camPivotNode) {
     const pivotWorld = camPivotNode.getAbsolutePosition();
@@ -193,6 +194,14 @@ export async function createGameplayScene(
     tankCamera.attachControl(canvas, true);
     tankCamera.setTarget(pivotWorld);
     scene.activeCamera = tankCamera;
+
+    // Create zoom camera (actual placement handled by controller, based on muzzle forward).
+    tankZoomCamera = new UniversalCamera("tank_zoom_camera", Vector3.Zero(), scene);
+    tankZoomCamera.fov = toRadians(config.camera.zoomViewFovDeg);
+    tankZoomCamera.minZ = 0.01;
+    tankZoomCamera.inputs.clear();
+    tankZoomCamera.rotationQuaternion = Quaternion.Identity();
+    // Do not attach control: input is managed by our own TankInput + controller logic.
 
     // Seed orbit state from the chosen start pose so the first "orbit step"
     // keeps the camera exactly where the artist placed it in Blender.
@@ -281,6 +290,7 @@ export async function createGameplayScene(
     suspensionInfo,
     tankBody: tankPhysics.body,
     tankCamera,
+    tankZoomCamera,
     cameraPivotNode: camPivotNode,
     initialOrbit,
     reticleCameraMesh,
