@@ -1,6 +1,7 @@
 import HavokPhysics from "@babylonjs/havok";
 import "@babylonjs/loaders/glTF";
 import "@babylonjs/core/Physics/physicsEngineComponent";
+import "@babylonjs/core/Helpers/sceneHelpers";
 import { ArcRotateCamera } from "@babylonjs/core/Cameras/arcRotateCamera";
 import { Engine } from "@babylonjs/core/Engines/engine";
 import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight";
