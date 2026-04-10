@@ -21,7 +21,9 @@ export class TankInput {
   private pointerX = 0;
   private pointerY = 0;
   private isPrimaryFireHeld = false;
-  private isZoomHeld = false;
+  // Zoom is implemented as a toggle (RMB click) instead of "hold",
+  // because holding RMB can prevent LMB events on some browsers.
+  private zoomToggled = false;
   private selectedWeapon: WeaponType = "shell";
   private pointerLocked = false;
 
@@ -49,7 +51,7 @@ export class TankInput {
       pointerX: this.pointerX,
       pointerY: this.pointerY,
       boostHeld: this.pressedKeys.has("shift"),
-      zoomHeld: this.isZoomHeld,
+      zoomHeld: this.zoomToggled,
       fireHeld: this.isPrimaryFireHeld,
       selectedWeapon: this.selectedWeapon
     };
@@ -100,7 +102,7 @@ export class TankInput {
     this.lookDeltaX = 0;
     this.lookDeltaY = 0;
     this.isPrimaryFireHeld = false;
-    this.isZoomHeld = false;
+    this.zoomToggled = false;
   };
 
   private readonly handlePointerLockChange = (): void => {
@@ -140,7 +142,7 @@ export class TankInput {
     }
 
     if (event.button === 2) {
-      this.isZoomHeld = true;
+      this.zoomToggled = !this.zoomToggled;
     }
   };
 
@@ -150,7 +152,7 @@ export class TankInput {
     }
 
     if (event.button === 2 || event.type === "pointerleave") {
-      this.isZoomHeld = false;
+      // Zoom is toggled on RMB down; no-op here.
     }
   };
 
