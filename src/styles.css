@@ -41,6 +41,27 @@ body {
   padding: 24px;
 }
 
+/* ~50px total height: modest type + padding; pointer-events none so it never blocks UI */
+.fps-counter {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 60;
+  pointer-events: none;
+  box-sizing: border-box;
+  min-height: 44px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: rgba(245, 248, 255, 0.9);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+  letter-spacing: 0.03em;
+}
+
 .panel {
   pointer-events: auto;
   display: flex;

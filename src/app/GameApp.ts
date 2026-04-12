@@ -29,6 +29,7 @@ export class GameApp {
 
   private readonly canvas: HTMLCanvasElement;
   private readonly overlay: HTMLDivElement;
+  private readonly fpsElement: HTMLDivElement;
   private readonly engine: Engine;
   private currentScene: Scene;
   private gameplayBundle: GameplaySceneBundle | null = null;
@@ -49,7 +50,12 @@ export class GameApp {
     this.overlay = document.createElement("div");
     this.overlay.className = "ui-layer";
 
-    rootElement.append(this.canvas, this.overlay);
+    this.fpsElement = document.createElement("div");
+    this.fpsElement.className = "fps-counter";
+    this.fpsElement.setAttribute("aria-live", "polite");
+    this.fpsElement.textContent = "— FPS";
+
+    rootElement.append(this.canvas, this.overlay, this.fpsElement);
 
     this.engine = new Engine(this.canvas, true);
     this.currentScene = this.createMenuScene();
@@ -65,6 +71,7 @@ export class GameApp {
     this.engine.runRenderLoop(() => {
       this.currentScene.render();
       this.refreshGameplayUi();
+      this.updateFpsDisplay();
     });
   }
 
@@ -265,6 +272,11 @@ export class GameApp {
   private disposeGameplayBundle(): void {
     this.gameplayBundle?.dispose();
     this.gameplayBundle = null;
+  }
+
+  private updateFpsDisplay(): void {
+    const fps = Math.round(this.engine.getFps());
+    this.fpsElement.textContent = `${fps} FPS`;
   }
 }
 
