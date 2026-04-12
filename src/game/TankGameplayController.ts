@@ -595,7 +595,7 @@ export class TankGameplayController {
 
     // Keep a constant on-screen size (in pixels).
     // Convert desired pixel size to world size at this distance and camera FOV.
-    const desiredPixels = 36;
+    const desiredPixels = 64;
     const renderH = Math.max(this.scene.getEngine().getRenderHeight(), 1);
     const worldScreenHeightAtDist = 2 * distToCamera * Math.tan(camera.fov / 2);
     const worldUnitsPerPixel = worldScreenHeightAtDist / renderH;

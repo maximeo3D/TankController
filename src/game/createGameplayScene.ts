@@ -28,7 +28,7 @@ import { CubeTexture } from "@babylonjs/core/Materials/Textures/cubeTexture";
 import type { AssetContainer } from "@babylonjs/core/assetContainer";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import type { TankControllerConfig } from "../config/tankController";
-import { tankAssetUrl, terrainAssetUrl, skyboxAssetUrl } from "../assets/assetUrls";
+import { tankAssetUrl, skyboxAssetUrl } from "../assets/assetUrls";
 import type { LevelDefinition } from "../app/levels";
 import {
   TankGameplayController,
@@ -78,7 +78,7 @@ interface TankPhysicsResource {
 
 export async function createGameplayScene(
   engine: Engine,
-  _level: LevelDefinition,
+  level: LevelDefinition,
   config: TankControllerConfig,
   canvas: HTMLCanvasElement
 ): Promise<GameplaySceneBundle> {
@@ -113,7 +113,7 @@ export async function createGameplayScene(
   const havokPlugin = new HavokPlugin(true, havok);
   scene.enablePhysics(new Vector3(0, -9.81, 0), havokPlugin);
 
-  const terrainContainer = await SceneLoader.LoadAssetContainerAsync("", terrainAssetUrl, scene);
+  const terrainContainer = await SceneLoader.LoadAssetContainerAsync("", level.terrainUrl, scene);
   terrainContainer.addAllToScene();
   hideColliderMeshes(terrainContainer, scene);
   const worldPhysics = createWorldPhysics(terrainContainer, scene);
