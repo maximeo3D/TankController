@@ -412,8 +412,8 @@ export class TankGameplayController {
       // For debug visualization, use the actual camera position as ray origin.
       // Babylon's picking ray origin can be at the near-plane, which is confusing visually.
       this.updateAimDebug(camera.globalPosition.clone(), ray.direction, targetPoint);
-      this.updateReticle(this.reticleCameraMesh, camera, targetPoint, 0.01);
-      this.updateBarrelReticle(camera, 0.01);
+      this.updateReticle(this.reticleCameraMesh, camera, targetPoint, 1);
+      this.updateBarrelReticle(camera);
 
       // Transform target point to tank's local space
       const invHullMatrix = this.tankAnchor.getWorldMatrix().clone().invert();
@@ -566,7 +566,15 @@ export class TankGameplayController {
     }
   }
 
-  private updateReticle(mesh: AbstractMesh | null, camera: Camera, worldPoint: Vector3, _baseScale: number): void {
+  /** Multiplicateur de taille écran pour le réticule canon vs celui de la caméra (même `desiredPixels` de base). */
+  private static readonly BARREL_RETICLE_SCREEN_SCALE = 3;
+
+  private updateReticle(
+    mesh: AbstractMesh | null,
+    camera: Camera,
+    worldPoint: Vector3,
+    screenSizeMultiplier = 1
+  ): void {
     if (!mesh) {
       return;
     }
@@ -595,11 +603,11 @@ export class TankGameplayController {
 
     // Keep a constant on-screen size (in pixels).
     // Convert desired pixel size to world size at this distance and camera FOV.
-    const desiredPixels = 64;
+    const desiredPixels = 32;
     const renderH = Math.max(this.scene.getEngine().getRenderHeight(), 1);
     const worldScreenHeightAtDist = 2 * distToCamera * Math.tan(camera.fov / 2);
     const worldUnitsPerPixel = worldScreenHeightAtDist / renderH;
-    const desiredWorldSize = desiredPixels * worldUnitsPerPixel;
+    const desiredWorldSize = desiredPixels * worldUnitsPerPixel * screenSizeMultiplier;
 
     // Normalize by the mesh's authored size so artists don't have to match a strict unit scale.
     const bi = mesh.getBoundingInfo();
@@ -609,7 +617,7 @@ export class TankGameplayController {
     mesh.scaling.set(uniformScale, uniformScale, uniformScale);
   }
 
-  private updateBarrelReticle(camera: Camera, baseScale: number): void {
+  private updateBarrelReticle(camera: Camera): void {
     const mesh = this.reticleBarrelMesh;
     if (!mesh || !this.muzzleNode) {
       return;
@@ -639,7 +647,7 @@ export class TankGameplayController {
       hitPoint = to;
     }
 
-    this.updateReticle(mesh, camera, hitPoint, baseScale);
+    this.updateReticle(mesh, camera, hitPoint, TankGameplayController.BARREL_RETICLE_SCREEN_SCALE);
   }
 
   private applyMovement(moveAxis: number, turnAxis: number, boostHeld: boolean, dt: number): void {
