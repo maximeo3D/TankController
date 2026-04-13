@@ -2,6 +2,7 @@ import { Vector3, Quaternion, Matrix } from "@babylonjs/core/Maths/math.vector";
 import { Plane } from "@babylonjs/core/Maths/math.plane";
 import { Axis, Space } from "@babylonjs/core/Maths/math.axis";
 import "@babylonjs/core/Culling/ray";
+import { Ray } from "@babylonjs/core/Culling/ray";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import type { LinesMesh } from "@babylonjs/core/Meshes/linesMesh";
@@ -894,7 +895,35 @@ export class TankGameplayController {
       cosYaw * cosPitch * this.orbitRadius
     );
 
-    this.tankCamera.position.copyFrom(pivotWorld.add(offset));
+    const desiredPos = pivotWorld.add(offset);
+    let finalPos = desiredPos;
+
+    if (this.config.camera.orbitCollisionEnabled) {
+      const toDesired = desiredPos.subtract(pivotWorld);
+      const dist = toDesired.length();
+      if (dist > 1e-4) {
+        const dir = toDesired.scale(1 / dist);
+        const ray = new Ray(pivotWorld, dir, dist);
+        const hit = this.scene.pickWithRay(ray, (mesh) => {
+          const n = mesh.name;
+          // Block camera against world geometry only (not tank/UI).
+          return (
+            n.startsWith("SM_") ||
+            n.startsWith("DM_") ||
+            n.toLowerCase().includes("ground") ||
+            n.startsWith("COL_")
+          );
+        });
+
+        if (hit?.hit && typeof hit.distance === "number") {
+          const pad = Math.max(this.config.camera.orbitCollisionPadding, 0);
+          const clampedDist = Math.max(hit.distance - pad, 0.05);
+          finalPos = pivotWorld.add(dir.scale(clampedDist));
+        }
+      }
+    }
+
+    this.tankCamera.position.copyFrom(finalPos);
     this.tankCamera.setTarget(pivotWorld);
   }
 

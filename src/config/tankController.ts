@@ -64,6 +64,8 @@ export interface TankControllerConfig {
     zoomFovMultiplier: number;
     zoomViewFovDeg: number;
     boostFovMultiplier: number;
+    orbitCollisionEnabled: boolean;
+    orbitCollisionPadding: number;
     orbitYawDegPerPixel: number;
     orbitPitchDegPerPixel: number;
     orbitYawSign: 1 | -1;
