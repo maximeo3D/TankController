@@ -146,6 +146,12 @@ export class TankGameplayController {
   /** Coup de recul à fusionner dans `applyTurretAndCannon` (après `updateWeapons`). */
   private pendingCannonRecoilKickY = 0;
 
+  /** Inclinaison du hull (rad) : pitch autour X, roll autour Z — côté opposé au tir qui s’enfonce. */
+  private hullRecoilPitch = 0;
+  private hullRecoilRoll = 0;
+  private pendingHullRecoilPitch = 0;
+  private pendingHullRecoilRoll = 0;
+
   private orbitYawRad = 0;
   private orbitPitchRad = 0;
   private orbitRadius = 0;
@@ -441,6 +447,7 @@ export class TankGameplayController {
 
     this.activeProjectiles.push({ mesh, body, shape, age: 0, debugMesh });
     this.pendingCannonRecoilKickY += this.config.cannon.recoilKickY;
+    this.applyHullRecoilImpulseFromWorldForward(forward);
   }
 
   private updateProjectiles(dt: number): void {
@@ -1062,11 +1069,52 @@ export class TankGameplayController {
       return;
     }
 
+    const hullRs = this.config.cannon.hullRecoilReturnSpeed;
+    this.hullRecoilPitch = moveTowards(this.hullRecoilPitch, 0, hullRs * dt);
+    this.hullRecoilRoll = moveTowards(this.hullRecoilRoll, 0, hullRs * dt);
+    this.hullRecoilPitch += this.pendingHullRecoilPitch;
+    this.hullRecoilRoll += this.pendingHullRecoilRoll;
+    this.pendingHullRecoilPitch = 0;
+    this.pendingHullRecoilRoll = 0;
+
     this.tankVisualRoot.rotationQuaternion ??= Quaternion.Identity();
-    this.tankVisualRoot.rotationQuaternion.copyFromFloats(0, 0, 0, 1);
+    this.tankVisualRoot.rotationQuaternion.copyFrom(
+      Quaternion.RotationYawPitchRoll(0, this.hullRecoilPitch, this.hullRecoilRoll)
+    );
+
     const positionLerp = 1 - Math.exp(-this.config.grounding.positionSharpness * dt);
     const nextLocalPosition = Vector3.Lerp(this.tankVisualRoot.position, Vector3.Zero(), positionLerp);
     this.tankVisualRoot.position.copyFrom(nextLocalPosition);
+  }
+
+  /**
+   * Incline le visuel du hull : le côté opposé à la direction de tir (plan horizontal) s’enfonce.
+   * `worldForward` = direction du tir (monde), même logique que le projectile.
+   */
+  private applyHullRecoilImpulseFromWorldForward(worldForward: Vector3): void {
+    if (!this.tankVisualRoot) {
+      return;
+    }
+
+    const horiz = worldForward.clone();
+    horiz.y = 0;
+    if (horiz.lengthSquared() < 1e-8) {
+      return;
+    }
+    horiz.normalize();
+
+    const inv = this.tankAnchor.getWorldMatrix().clone().invert();
+    const dir = Vector3.TransformNormal(horiz, inv);
+    dir.y = 0;
+    if (dir.lengthSquared() < 1e-8) {
+      return;
+    }
+    dir.normalize();
+
+    const K = toRadians(this.config.cannon.hullRecoilKickDeg) * this.config.cannon.hullRecoilSign;
+    // Espace local du hull (X droite, Y haut, Z avant typique) : pitch (X) / roll (Z) pondérés par la direction horizontale du tir.
+    this.pendingHullRecoilPitch += -K * dir.z;
+    this.pendingHullRecoilRoll += K * dir.x;
   }
 
 }

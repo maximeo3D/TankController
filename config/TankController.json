@@ -41,7 +41,7 @@
     "rayStartHeight": 0.15,
     "rayLength": 3.5,
     "restLength": 0.35,
-    "springStrength": 1200.0,
+    "springStrength": 2200.0,
     "damperStrength": 120.0,
     "maxForce": 6000.0,
     "tractionForce": 600.0,
@@ -57,7 +57,10 @@
     "minPitchDeg": -10.0,
     "maxPitchDeg": 80.0,
     "recoilKickY": -0.15,
-    "recoilReturnSpeed": 0.25
+    "recoilReturnSpeed": 0.25,
+    "hullRecoilReturnSpeed": 0.2,
+    "hullRecoilKickDeg": 4,
+    "hullRecoilSign": 1
   },
   "camera": {
     "defaultFovDeg": 55.0,

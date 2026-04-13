@@ -60,8 +60,14 @@ export interface TankControllerConfig {
     maxPitchDeg: number;
     /** Décalage local Y ajouté au bone `canon` à chaque tir (m ; ajuster le signe selon l’orientation du bone dans Blender). */
     recoilKickY: number;
-    /** Vitesse de retour du recul vers la position de repos (unités Z par seconde). */
+    /** Vitesse de retour du recul du canon (décalage Y du bone, m/s). */
     recoilReturnSpeed: number;
+    /** Vitesse de retour de l’inclinaison du hull après un tir (rad/s pour pitch/roll). */
+    hullRecoilReturnSpeed: number;
+    /** Amplitude d’inclinaison du châssis (visuel) par tir, en degrés ; le côté opposé à la direction de tir s’enfonce. */
+    hullRecoilKickDeg: number;
+    /** Inverse l’inclinaison du hull si le sens avant/arrière ou gauche/droite est inversé. */
+    hullRecoilSign: 1 | -1;
   };
   camera: {
     defaultFovDeg: number;
