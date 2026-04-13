@@ -34,6 +34,7 @@ import {
   TankGameplayController,
   type TankGameplayDebugState
 } from "./TankGameplayController";
+import { createTrackTreadParticleBundle } from "./trackTreadParticles";
 
 export interface GameplaySceneSummary {
   spawnFound: boolean;
@@ -290,6 +291,17 @@ export async function createGameplayScene(
     rr: findTransformNode(tankContainer, "SUS_RR")
   };
 
+  const susBackLeft =
+    findTransformNode(tankContainer, "SUS_BL") ?? findTransformNode(tankContainer, "SUS_RL");
+  const susBackRight =
+    findTransformNode(tankContainer, "SUS_BR") ?? findTransformNode(tankContainer, "SUS_RR");
+
+  let trackTreadParticles = null;
+  try {
+    trackTreadParticles = await createTrackTreadParticleBundle(scene, susBackLeft, susBackRight);
+  } catch (err) {
+    console.warn("[TankController] Track tread particles could not be created:", err);
+  }
 
   // Only dispose the fallback camera if we successfully switched to another active camera.
   if (scene.activeCamera !== fallbackCamera) {
@@ -315,7 +327,8 @@ export async function createGameplayScene(
     muzzleNode,
     tracksSourceMesh,
     ammoShellMesh,
-    ammoBulletMesh
+    ammoBulletMesh,
+    trackTreadParticles
   });
 
 

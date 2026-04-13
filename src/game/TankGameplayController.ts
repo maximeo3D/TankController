@@ -24,6 +24,7 @@ import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import type { Scene } from "@babylonjs/core/scene";
 import type { TankControllerConfig } from "../config/tankController";
 import { TankInput, type WeaponType } from "./TankInput";
+import type { TrackTreadParticleBundle } from "./trackTreadParticles";
 
 interface BoneControl {
   bone: Bone | null;
@@ -81,6 +82,8 @@ export interface TankGameplayControllerOptions {
   ammoShellMesh: Mesh | null;
   ammoBulletMesh: Mesh | null;
   physicsViewer?: PhysicsViewer;
+  /** Chenilles : fumée + gravillons sur SUS_BL / SUS_BR (si chargés). */
+  trackTreadParticles?: TrackTreadParticleBundle | null;
 }
 
 export class TankGameplayController {
@@ -135,6 +138,7 @@ export class TankGameplayController {
   private bulletCooldownTimer = 0;
   private activeProjectiles: { mesh: Mesh; body: PhysicsBody; shape: PhysicsShape; age: number; debugMesh?: AbstractMesh | null }[] = [];
   private physicsViewer?: PhysicsViewer;
+  private readonly trackTreadParticles: TrackTreadParticleBundle | null;
 
   private orbitYawRad = 0;
   private orbitPitchRad = 0;
@@ -192,6 +196,7 @@ export class TankGameplayController {
     this.ammoShellMesh = options.ammoShellMesh;
     this.ammoBulletMesh = options.ammoBulletMesh;
     this.physicsViewer = options.physicsViewer;
+    this.trackTreadParticles = options.trackTreadParticles ?? null;
     this.input = new TankInput(options.canvas);
     this.turretControl = resolveBoneControl(options.tankContainer, "tourelle");
     this.cannonControl = resolveBoneControl(options.tankContainer, "canon");
@@ -314,6 +319,8 @@ export class TankGameplayController {
       proj.shape.dispose();
       proj.mesh.dispose();
     }
+
+    this.trackTreadParticles?.dispose();
   }
 
   private readonly update = (): void => {
@@ -802,6 +809,21 @@ export class TankGameplayController {
       );
       this.tankBody.applyForce(tractionForce, center);
     }
+
+    this.updateTrackTreadDust(forwardWorld);
+  }
+
+  /** Fumée / gravillons : actifs seulement quand le tank se déplace vers l'avant (vitesse selon l'axe marche). */
+  private updateTrackTreadDust(forwardWorld: Vector3): void {
+    if (!this.trackTreadParticles) {
+      return;
+    }
+    const v = this.tankBody.getLinearVelocity();
+    const vForward = Vector3.Dot(v, forwardWorld);
+    const minSpeed = 0.12;
+    // Traction avant = vitesse négative selon +forwardWorld (repère châssis / input inversé).
+    const advancing = this.battery > 0 && vForward < -minSpeed;
+    this.trackTreadParticles.setAdvancing(advancing);
   }
 
   private applySuspension(): void {

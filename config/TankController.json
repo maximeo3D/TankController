@@ -90,7 +90,7 @@
     "yOffset": 0.015,
     "raycastStartHeight": 0.35,
     "raycastLength": 2.5,
-    "opacityMultiplier": 0.25
+    "opacityMultiplier": 0.1
   },
   "energy": {
     "batteryMax": 100.0,
@@ -108,7 +108,7 @@
       "startsChambered": true,
       "reloadSeconds": 4.0,
       "damage": 100.0,
-      "muzzleVelocity": 60.0,
+      "muzzleVelocity": 100.0,
       "gravityMultiplier": 1
     },
     "bullet": {

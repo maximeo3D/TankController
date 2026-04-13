@@ -1,0 +1,33 @@
+{
+"name": "fumee",
+"id": "fumee",
+"capacity": 600,
+"emitter": [0, 0.03, 0],
+"particleTexture": "smoke.png",
+"minEmitBox": [-0.1, 0, -0.005],
+"maxEmitBox": [0.1, 0, 0.005],
+"color1": [0.5, 0.5, 0.5, 0.4],
+"color2": [0.4, 0.4, 0.4, 0.2],
+"colorDead": [0.2, 0.2, 0.2, 0],
+"minSize": 0.04,
+"maxSize": 0.08,
+"sizeGradients": [
+{ "gradient": 0, "factor1": 0.4 },
+{ "gradient": 0.5, "factor1": 1.5 },
+{ "gradient": 1, "factor1": 0 }
+],
+"minLifeTime": 1,
+"maxLifeTime": 2.25,
+"emitRate": 20,
+"gravity": [0, 0, 0],
+"direction1": [-0.2, 1, -0.2],
+"direction2": [0.2, 1, 0.2],
+"minEmitPower": 0.075,
+"maxEmitPower": 0.15,
+"updateSpeed": 0.016,
+"minAngularSpeed": -0.5,
+"maxAngularSpeed": 0.5,
+"blendMode": 1,
+"isBillboardBased": true,
+"billboardMode": 7
+}
