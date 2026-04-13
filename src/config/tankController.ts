@@ -58,6 +58,10 @@ export interface TankControllerConfig {
     mouseSensitivityDegPerPixel: number;
     minPitchDeg: number;
     maxPitchDeg: number;
+    /** Décalage local Y ajouté au bone `canon` à chaque tir (m ; ajuster le signe selon l’orientation du bone dans Blender). */
+    recoilKickY: number;
+    /** Vitesse de retour du recul vers la position de repos (unités Z par seconde). */
+    recoilReturnSpeed: number;
   };
   camera: {
     defaultFovDeg: number;

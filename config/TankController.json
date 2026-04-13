@@ -55,7 +55,9 @@
     "pitchSpeedDeg": 30.0,
     "mouseSensitivityDegPerPixel": 0.2,
     "minPitchDeg": -10.0,
-    "maxPitchDeg": 80.0
+    "maxPitchDeg": 80.0,
+    "recoilKickY": -0.15,
+    "recoilReturnSpeed": 0.25
   },
   "camera": {
     "defaultFovDeg": 55.0,

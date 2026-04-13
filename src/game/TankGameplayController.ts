@@ -106,6 +106,7 @@ export class TankGameplayController {
   private readonly cannonControl: BoneControl;
   private readonly turretBaseLocalRotation: Quaternion;
   private readonly cannonBaseLocalRotation: Quaternion;
+  private readonly cannonBaseLocalPosition: Vector3;
   private readonly reticleCameraMesh: AbstractMesh | null;
   private readonly reticleBarrelMesh: AbstractMesh | null;
   private readonly muzzleNode: TransformNode | AbstractMesh | null;
@@ -139,6 +140,11 @@ export class TankGameplayController {
   private activeProjectiles: { mesh: Mesh; body: PhysicsBody; shape: PhysicsShape; age: number; debugMesh?: AbstractMesh | null }[] = [];
   private physicsViewer?: PhysicsViewer;
   private readonly trackTreadParticles: TrackTreadParticleBundle | null;
+
+  /** Décalage courant sur l’axe local Y du bone canon (recul). */
+  private cannonRecoilOffsetY = 0;
+  /** Coup de recul à fusionner dans `applyTurretAndCannon` (après `updateWeapons`). */
+  private pendingCannonRecoilKickY = 0;
 
   private orbitYawRad = 0;
   private orbitPitchRad = 0;
@@ -202,6 +208,7 @@ export class TankGameplayController {
     this.cannonControl = resolveBoneControl(options.tankContainer, "canon");
     this.turretBaseLocalRotation = getControlLocalRotation(this.turretControl, this.tankAnchor);
     this.cannonBaseLocalRotation = getControlLocalRotation(this.cannonControl, this.tankAnchor);
+    this.cannonBaseLocalPosition = getControlLocalPosition(this.cannonControl);
     this.movementForwardAxis = axisFromConfig(
       options.config.rig.movementForwardAxis,
       options.config.rig.movementForwardSign
@@ -334,12 +341,12 @@ export class TankGameplayController {
     this.fireHeld = frame.fireHeld;
 
     this.applyOrbitCamera(frame.lookDeltaX, frame.lookDeltaY);
+    this.updateWeapons(dt);
     this.applyTurretAndCannon(frame.pointerX, frame.pointerY, dt);
     this.applyMovement(frame.moveAxis, frame.turnAxis, frame.boostHeld, dt);
     this.applyVisualSmoothing(dt);
     this.applyCamera(frame.zoomHeld);
     this.trackSystem?.update(dt);
-    this.updateWeapons(dt);
     this.updateProjectiles(dt);
   };
 
@@ -433,6 +440,7 @@ export class TankGameplayController {
     }
 
     this.activeProjectiles.push({ mesh, body, shape, age: 0, debugMesh });
+    this.pendingCannonRecoilKickY += this.config.cannon.recoilKickY;
   }
 
   private updateProjectiles(dt: number): void {
@@ -571,6 +579,15 @@ export class TankGameplayController {
     this.currentCannonPitchDeg = cannonNextPitchDeg;
 
     void cannonStepRad;
+
+    this.cannonRecoilOffsetY = moveTowards(
+      this.cannonRecoilOffsetY,
+      0,
+      this.config.cannon.recoilReturnSpeed * dt
+    );
+    this.cannonRecoilOffsetY += this.pendingCannonRecoilKickY;
+    this.pendingCannonRecoilKickY = 0;
+
     setControlAxisAngle(
       this.cannonControl,
       this.cannonBaseLocalRotation,
@@ -578,6 +595,10 @@ export class TankGameplayController {
       toRadians(this.currentCannonPitchDeg),
       this.tankAnchor
     );
+
+    const cannonPos = this.cannonBaseLocalPosition.clone();
+    cannonPos.y += this.cannonRecoilOffsetY;
+    setControlLocalPosition(this.cannonControl, cannonPos);
   }
 
   private initAimDebugMeshes(): void {
@@ -1272,6 +1293,29 @@ function getControlLocalRotation(control: BoneControl, tankAnchor: TransformNode
   }
 
   return Quaternion.Identity();
+}
+
+function getControlLocalPosition(control: BoneControl): Vector3 {
+  if (control.transformNode) {
+    return control.transformNode.position.clone();
+  }
+
+  if (control.bone) {
+    return control.bone.position.clone();
+  }
+
+  return Vector3.Zero();
+}
+
+function setControlLocalPosition(control: BoneControl, position: Vector3): void {
+  if (control.transformNode) {
+    control.transformNode.position.copyFrom(position);
+    return;
+  }
+
+  if (control.bone) {
+    control.bone.position.copyFrom(position);
+  }
 }
 
 function setControlAxisAngle(
