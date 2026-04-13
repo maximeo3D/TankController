@@ -3,11 +3,15 @@ import { Plane } from "@babylonjs/core/Maths/math.plane";
 import { Axis, Space } from "@babylonjs/core/Maths/math.axis";
 import "@babylonjs/core/Culling/ray";
 import { Ray } from "@babylonjs/core/Culling/ray";
+import type { Material } from "@babylonjs/core/Materials/material";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import type { LinesMesh } from "@babylonjs/core/Meshes/linesMesh";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
+import { Mesh as BabylonMesh } from "@babylonjs/core/Meshes/mesh";
 import { Color3 } from "@babylonjs/core/Maths/math.color";
+import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
+import { Texture } from "@babylonjs/core/Materials/Textures/texture";
 import { PhysicsBody } from "@babylonjs/core/Physics/v2/physicsBody";
 import { PhysicsShapeSphere, type PhysicsShape } from "@babylonjs/core/Physics/v2/physicsShape";
 import { PhysicsMotionType } from "@babylonjs/core/Physics/v2/IPhysicsEnginePlugin";
@@ -57,6 +61,14 @@ export interface TankGameplayControllerOptions {
   suspensionInfo: {
     points: Vector3[];
   };
+  suspensionNodes?: {
+    fl: TransformNode | AbstractMesh | null;
+    fr: TransformNode | AbstractMesh | null;
+    ml: TransformNode | AbstractMesh | null;
+    mr: TransformNode | AbstractMesh | null;
+    rl: TransformNode | AbstractMesh | null;
+    rr: TransformNode | AbstractMesh | null;
+  };
   tankBody: PhysicsBody;
   tankCamera: TargetCamera | null;
   tankZoomCamera?: TargetCamera | null;
@@ -65,6 +77,7 @@ export interface TankGameplayControllerOptions {
   reticleCameraMesh: AbstractMesh | null;
   reticleBarrelMesh: AbstractMesh | null;
   muzzleNode: TransformNode | AbstractMesh | null;
+  tracksSourceMesh?: AbstractMesh | null;
   ammoShellMesh: Mesh | null;
   ammoBulletMesh: Mesh | null;
   physicsViewer?: PhysicsViewer;
@@ -75,10 +88,12 @@ export class TankGameplayController {
 
   private readonly scene: Scene;
   private readonly config: TankControllerConfig;
+  private readonly tracksConfig: NonNullable<TankControllerConfig["tracks"]>;
   private readonly tankAnchor: TransformNode;
   private readonly tankVisualRoot: TransformNode | null;
   // groundingInfo kept in options for backward compatibility, but unused in dynamic suspension mode.
   private readonly suspensionPointsLocal: Vector3[];
+  private readonly suspensionNodes: NonNullable<TankGameplayControllerOptions["suspensionNodes"]>;
   private readonly tankBody: PhysicsBody;
   private readonly tankCamera: TargetCamera | null;
   private readonly tankZoomCamera: TargetCamera | null;
@@ -91,6 +106,9 @@ export class TankGameplayController {
   private readonly reticleCameraMesh: AbstractMesh | null;
   private readonly reticleBarrelMesh: AbstractMesh | null;
   private readonly muzzleNode: TransformNode | AbstractMesh | null;
+  private readonly trackMaterial: Material | null;
+  private trackSystem: TrackSegmentSystem | null = null;
+  private readonly tankMeshIdsToIgnore = new Set<number>();
   private readonly ammoShellMesh: Mesh | null;
   private readonly ammoBulletMesh: Mesh | null;
   private readonly movementForwardAxis: Vector3;
@@ -135,10 +153,31 @@ export class TankGameplayController {
   public constructor(options: TankGameplayControllerOptions) {
     this.scene = options.scene;
     this.config = options.config;
+    this.tracksConfig = options.config.tracks ?? {
+      enabled: false,
+      spacing: 0.25,
+      maxPointsPerRibbon: 120,
+      segmentLength: 0.35,
+      segmentWidth: 0.22,
+      uvRepeatU: 1,
+      uvRepeatV: 1,
+      yOffset: 0.015,
+      raycastStartHeight: 0.35,
+      raycastLength: 2.5,
+      opacityMultiplier: 1.0
+    };
     this.tankAnchor = options.tankAnchor;
     this.tankVisualRoot = options.tankVisualRoot;
     void options.groundingInfo;
     this.suspensionPointsLocal = options.suspensionInfo.points.map((p) => p.clone());
+    this.suspensionNodes = options.suspensionNodes ?? {
+      fl: null,
+      fr: null,
+      ml: null,
+      mr: null,
+      rl: null,
+      rr: null
+    };
     this.tankBody = options.tankBody;
     this.tankCamera = options.tankCamera;
     this.tankZoomCamera = options.tankZoomCamera ?? null;
@@ -146,6 +185,10 @@ export class TankGameplayController {
     this.reticleCameraMesh = options.reticleCameraMesh;
     this.reticleBarrelMesh = options.reticleBarrelMesh;
     this.muzzleNode = options.muzzleNode;
+    this.trackMaterial = (options.tracksSourceMesh?.material as Material | null | undefined) ?? null;
+    for (const m of options.tankContainer.meshes) {
+      this.tankMeshIdsToIgnore.add(m.uniqueId);
+    }
     this.ammoShellMesh = options.ammoShellMesh;
     this.ammoBulletMesh = options.ammoBulletMesh;
     this.physicsViewer = options.physicsViewer;
@@ -197,7 +240,50 @@ export class TankGameplayController {
     }
 
     this.initAimDebugMeshes();
+    this.initTrackSystem();
     this.scene.onBeforeRenderObservable.add(this.update);
+  }
+
+  private initTrackSystem(): void {
+    if (!this.tracksConfig.enabled) {
+      console.warn("[TankController][tracks] tracks.enabled is false (or missing); track ribbons disabled.");
+      return;
+    }
+
+    const material =
+      this.trackMaterial ??
+      (() => {
+        console.warn(
+          "[TankController][tracks] TEX_tracks has no material. Using fallback material."
+        );
+        const m = new StandardMaterial("tracks_fallback_mat", this.scene);
+        m.diffuseColor = new Color3(0.05, 0.05, 0.05);
+        m.emissiveColor = new Color3(0.02, 0.02, 0.02);
+        m.alpha = clamp(this.tracksConfig.opacityMultiplier, 0, 1);
+        m.backFaceCulling = false;
+        return m;
+      })();
+
+    const anyNode =
+      this.suspensionNodes.fl ||
+      this.suspensionNodes.fr ||
+      this.suspensionNodes.ml ||
+      this.suspensionNodes.mr ||
+      this.suspensionNodes.rl ||
+      this.suspensionNodes.rr;
+    if (!anyNode) {
+      console.warn("[TankController][tracks] No SUS_* nodes found; cannot spawn track segments.");
+      return;
+    }
+
+    this.trackSystem = new TrackSegmentSystem({
+      scene: this.scene,
+      material,
+      tracksConfig: this.tracksConfig,
+      tankBody: this.tankBody,
+      nodes: this.suspensionNodes,
+      ignoreMeshIds: this.tankMeshIdsToIgnore
+    });
   }
 
   public getDebugState(): TankGameplayDebugState {
@@ -245,6 +331,7 @@ export class TankGameplayController {
     this.applyMovement(frame.moveAxis, frame.turnAxis, frame.boostHeld, dt);
     this.applyVisualSmoothing(dt);
     this.applyCamera(frame.zoomHeld);
+    this.trackSystem?.update(dt);
     this.updateWeapons(dt);
     this.updateProjectiles(dt);
   };
@@ -939,6 +1026,206 @@ export class TankGameplayController {
     this.tankVisualRoot.position.copyFrom(nextLocalPosition);
   }
 
+}
+
+type TrackNodeKey = "fl" | "fr" | "ml" | "mr" | "rl" | "rr";
+
+interface TrackSegment {
+  mesh: BabylonMesh;
+  age: number;
+}
+
+class TrackSegmentSystem {
+  private readonly scene: Scene;
+  private readonly tracksConfig: NonNullable<TankControllerConfig["tracks"]>;
+  private readonly tankBody: PhysicsBody;
+  private readonly material: Material;
+  private readonly nodes: NonNullable<TankGameplayControllerOptions["suspensionNodes"]>;
+  private readonly ignoreMeshIds: ReadonlySet<number>;
+
+  private readonly segmentsByNode = new Map<TrackNodeKey, TrackSegment[]>();
+  private readonly lastSpawnByNode = new Map<TrackNodeKey, Vector3>();
+  private readonly baseSegmentMesh: BabylonMesh;
+
+  public constructor(args: {
+    scene: Scene;
+    material: Material;
+    tracksConfig: NonNullable<TankControllerConfig["tracks"]>;
+    tankBody: PhysicsBody;
+    nodes: NonNullable<TankGameplayControllerOptions["suspensionNodes"]>;
+    ignoreMeshIds: ReadonlySet<number>;
+  }) {
+    this.scene = args.scene;
+    this.material = args.material;
+    this.tracksConfig = args.tracksConfig;
+    this.tankBody = args.tankBody;
+    this.nodes = args.nodes;
+    this.ignoreMeshIds = args.ignoreMeshIds;
+
+    const keys: TrackNodeKey[] = ["fl", "fr", "ml", "mr", "rl", "rr"];
+    for (const k of keys) {
+      this.segmentsByNode.set(k, []);
+    }
+
+    // Apply optional opacity multiplier if the material supports it,
+    // without overwriting materials that don't use `alpha`.
+    const opacityMul = clamp(this.tracksConfig.opacityMultiplier, 0, 1);
+    if (Math.abs(opacityMul - 1) > 1e-6) {
+      const anyMat = this.material as unknown as { alpha?: number };
+      if (typeof anyMat.alpha === "number") {
+        anyMat.alpha = clamp(anyMat.alpha * opacityMul, 0, 1);
+      }
+    }
+
+    // Texture tiling for the track segments material (diffuse/albedo).
+    const u = Math.max(this.tracksConfig.uvRepeatU ?? 1, 0.001);
+    const v = Math.max(this.tracksConfig.uvRepeatV ?? 1, 0.001);
+    const any = this.material as unknown as {
+      diffuseTexture?: unknown;
+      albedoTexture?: unknown;
+      baseTexture?: unknown;
+    };
+    const tex =
+      (any.diffuseTexture as unknown) ||
+      (any.albedoTexture as unknown) ||
+      (any.baseTexture as unknown) ||
+      null;
+    if (tex && tex instanceof Texture) {
+      tex.wrapU = Texture.WRAP_ADDRESSMODE;
+      tex.wrapV = Texture.WRAP_ADDRESSMODE;
+      tex.uScale = u;
+      tex.vScale = v;
+    } else if (tex && typeof tex === "object") {
+      // Fallback for texture-like objects.
+      const t = tex as { uScale?: number; vScale?: number; wrapU?: number; wrapV?: number };
+      if (typeof t.uScale === "number") t.uScale = u;
+      if (typeof t.vScale === "number") t.vScale = v;
+      if (typeof t.wrapU === "number") t.wrapU = Texture.WRAP_ADDRESSMODE;
+      if (typeof t.wrapV === "number") t.wrapV = Texture.WRAP_ADDRESSMODE;
+    }
+
+    // Base mesh for instances
+    this.baseSegmentMesh = MeshBuilder.CreatePlane(
+      "tracks_segment_base",
+      { width: 1, height: 1, sideOrientation: BabylonMesh.DOUBLESIDE },
+      this.scene
+    );
+    this.baseSegmentMesh.isVisible = false;
+    this.baseSegmentMesh.isPickable = false;
+    this.baseSegmentMesh.material = this.material;
+  }
+
+  public update(dt: number): void {
+    if (!this.tracksConfig.enabled) {
+      return;
+    }
+
+    // Spawn segments only from the middle suspension points (less noisy visually).
+    const keys: TrackNodeKey[] = ["ml", "mr"];
+    for (const k of keys) {
+      const node = this.nodes[k];
+      if (!node) continue;
+      this.sampleAndSpawnSegment(k, node);
+    }
+
+    // Age and prune segments (simple TTL via max count; dt aging kept if later needed)
+    for (const k of keys) {
+      const segs = this.segmentsByNode.get(k);
+      if (!segs) continue;
+      for (const s of segs) {
+        s.age += dt;
+      }
+      const maxSegs = Math.max(1, Math.floor(this.tracksConfig.maxPointsPerRibbon));
+      while (segs.length > maxSegs) {
+        const old = segs.shift();
+        old?.mesh.dispose();
+      }
+    }
+  }
+
+  private sampleAndSpawnSegment(key: TrackNodeKey, node: TransformNode | AbstractMesh): void {
+    const from = node.getAbsolutePosition().add(Axis.Y.scale(this.tracksConfig.raycastStartHeight));
+    const to = from.add(Axis.Y.scale(-this.tracksConfig.raycastLength));
+    const dir = to.subtract(from);
+    const len = dir.length();
+    if (len <= 1e-4) {
+      return;
+    }
+    dir.scaleInPlace(1 / len);
+
+    // Prefer physics raycast (doesn't depend on mesh.isPickable / render picking).
+    let hitPoint: Vector3 | null = null;
+    const engine = this.scene.getPhysicsEngine();
+    if (engine) {
+      const physicsHit = engine.raycast(from, to, {
+        ignoreBody: this.tankBody,
+        shouldHitTriggers: false,
+        collideWith: 0xffffffff
+      });
+      if (physicsHit.hasHit) {
+        // Some engines/plugins require this to populate distance fields reliably.
+        physicsHit.calculateHitDistance();
+        if (physicsHit.hitPointWorld) {
+          hitPoint = physicsHit.hitPointWorld.clone();
+        } else if (typeof physicsHit.hitDistance === "number") {
+          hitPoint = from.add(dir.scale(physicsHit.hitDistance));
+        }
+      }
+    } else {
+      const ray = new Ray(from, dir, len);
+      const pickHit = this.scene.pickWithRay(ray, (mesh) => {
+        // Accept any world mesh, but never hit the tank itself.
+        if (this.ignoreMeshIds.has(mesh.uniqueId)) {
+          return false;
+        }
+        if (!mesh.isEnabled() || !mesh.isVisible) {
+          return false;
+        }
+        return true;
+      });
+      if (pickHit?.hit && pickHit.pickedPoint) {
+        hitPoint = pickHit.pickedPoint.clone();
+      }
+    }
+
+    if (!hitPoint) {
+      return;
+    }
+
+    const center = hitPoint.add(Axis.Y.scale(this.tracksConfig.yOffset));
+    const last = this.lastSpawnByNode.get(key) ?? null;
+    const spacing = Math.max(this.tracksConfig.spacing, 0.01);
+    if (last && Vector3.DistanceSquared(last, center) < spacing * spacing) {
+      return;
+    }
+
+    // Orientation: use the SUS_ node forward projected on ground plane.
+    // Convention: use local +Z as forward for the empty.
+    const forward = node.getDirection(Axis.Z);
+    forward.y = 0;
+    if (forward.lengthSquared() > 1e-6) {
+      forward.normalize();
+    } else {
+      forward.copyFrom(Axis.Z);
+    }
+
+    // Spawn a segment plane centered at hit point.
+    const inst = this.baseSegmentMesh.createInstance(`tracks_seg_${key}_${Date.now()}`);
+    inst.isPickable = false;
+    inst.alwaysSelectAsActiveMesh = false;
+    inst.position.copyFrom(center);
+    // Plane is created in XY; after `toGround` rotation, local Y maps to world Z (length).
+    inst.scaling.set(this.tracksConfig.segmentWidth, this.tracksConfig.segmentLength, 1);
+    // `CreatePlane` is vertical (XY). Rotate -90° around X to lay it on ground (XZ),
+    // then apply yaw so the segment points in the SUS_ forward direction.
+    const toGround = Quaternion.RotationAxis(Axis.X, -Math.PI / 2);
+    const yaw = Quaternion.FromLookDirectionLH(forward, Axis.Y);
+    inst.rotationQuaternion = yaw.multiply(toGround);
+
+    const segs = this.segmentsByNode.get(key);
+    segs?.push({ mesh: inst as unknown as BabylonMesh, age: 0 });
+    this.lastSpawnByNode.set(key, center.clone());
+  }
 }
 
 function resolveBoneControl(container: AssetContainer, boneName: string): BoneControl {

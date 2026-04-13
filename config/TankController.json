@@ -79,6 +79,19 @@
     "cameraMaxTargetDistance": 200.0,
     "barrelRayMaxDistance": 200.0
   },
+  "tracks": {
+    "enabled": true,
+    "spacing": 0.15,
+    "maxPointsPerRibbon": 20,
+    "segmentLength": 1.2,
+    "segmentWidth": 0.15,
+    "uvRepeatU": 1.0,
+    "uvRepeatV": 6.0,
+    "yOffset": 0.015,
+    "raycastStartHeight": 0.35,
+    "raycastLength": 2.5,
+    "opacityMultiplier": 0.25
+  },
   "energy": {
     "batteryMax": 100.0,
     "overchargeMax": 100.0,

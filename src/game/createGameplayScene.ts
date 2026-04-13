@@ -228,6 +228,12 @@ export async function createGameplayScene(
 
   const reticleCameraMesh = findAbstractMeshByName(tankContainer, "UI_reticle_camera");
   const reticleBarrelMesh = findAbstractMeshByName(tankContainer, "UI_reticle_barrel");
+  const tracksSourceMesh = findAbstractMeshByName(tankContainer, "TEX_tracks");
+  if (tracksSourceMesh) {
+    tracksSourceMesh.isVisible = false;
+    tracksSourceMesh.isPickable = false;
+    tracksSourceMesh.setEnabled(false);
+  }
 
   // Camera reticle = world-space marker at the camera ray hit point (billboard).
   if (reticleCameraMesh) {
@@ -275,6 +281,16 @@ export async function createGameplayScene(
 
   const muzzleNode = findTransformNode(tankContainer, "MUZZLE_tank");
 
+  const suspensionNodes = {
+    fl: findTransformNode(tankContainer, "SUS_FL"),
+    fr: findTransformNode(tankContainer, "SUS_FR"),
+    ml: findTransformNode(tankContainer, "SUS_ML"),
+    mr: findTransformNode(tankContainer, "SUS_MR"),
+    rl: findTransformNode(tankContainer, "SUS_RL"),
+    rr: findTransformNode(tankContainer, "SUS_RR")
+  };
+
+
   // Only dispose the fallback camera if we successfully switched to another active camera.
   if (scene.activeCamera !== fallbackCamera) {
     fallbackCamera.dispose();
@@ -288,6 +304,7 @@ export async function createGameplayScene(
     tankVisualRoot,
     groundingInfo: groundingInfo,
     suspensionInfo,
+    suspensionNodes,
     tankBody: tankPhysics.body,
     tankCamera,
     tankZoomCamera,
@@ -296,6 +313,7 @@ export async function createGameplayScene(
     reticleCameraMesh,
     reticleBarrelMesh,
     muzzleNode,
+    tracksSourceMesh,
     ammoShellMesh,
     ammoBulletMesh
   });

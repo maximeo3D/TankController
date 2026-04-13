@@ -81,6 +81,20 @@ export interface TankControllerConfig {
     cameraMaxTargetDistance: number;
     barrelRayMaxDistance: number;
   };
+  // Optional for backward compatibility with older configs.
+  tracks?: {
+    enabled: boolean;
+    spacing: number;
+    maxPointsPerRibbon: number;
+    segmentLength: number;
+    segmentWidth: number;
+    uvRepeatU: number;
+    uvRepeatV: number;
+    yOffset: number;
+    raycastStartHeight: number;
+    raycastLength: number;
+    opacityMultiplier: number;
+  };
   energy: {
     batteryMax: number;
     overchargeMax: number;
