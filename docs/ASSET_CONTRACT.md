@@ -42,8 +42,10 @@ The goal is to make asset integration deterministic in code.
 
 ### UI / Weapons (tank)
 
-- `UI_tank_reticle`: reticle mesh (world position updated each frame; billboard in code)
+- `UI_reticle_camera`: camera reticle mesh (billboard; constant screen size in code)
+- `UI_reticle_barrel`: barrel reticle mesh (billboard; constant screen size in code)
 - `AMMO_obus`, `AMMO_balle`: template meshes for projectiles (hidden; cloned when firing)
+- `TEX_tracks`: hidden mesh used to supply the material for track marks
 
 ## Terrain Contract
 
@@ -81,6 +83,7 @@ The goal is to make asset integration deterministic in code.
 - **orbit pivot (recommended):** `CAM_pivot` — empty placed above the turret (or at the intended orbit center); moves with the hull / rig
 - collider mesh: `COL_tank`
 - **suspension empties:** `SUS_FL`, `SUS_FR`, `SUS_ML`, `SUS_MR`, `SUS_RL`, `SUS_RR`
+- (optional) `TEX_tracks` mesh for track material
 
 ### Functional Meaning
 
@@ -89,10 +92,11 @@ The goal is to make asset integration deterministic in code.
 - `tourelle`: yaw pivot
 - `canon`: pitch pivot
 - `MUZZLE_tank`: origin and forward reference for projectile spawning
-- `CAM_tank`: gameplay camera (must be a **TargetCamera** family type in Babylon, e.g. Universal / Free, for `setTarget` + orbit)
+- `CAM_tank`: gameplay orbit camera (must be a **TargetCamera** family type in Babylon, e.g. Universal / Free, for `setTarget` + orbit)
 - `CAM_pivot`: world anchor the camera **orbits** around (code updates camera position each frame)
 - `SUS_*`: downward ray origins for suspension (converted to anchor-local offsets after load)
 - `COL_tank`: simplified collision mesh for the tank (convex hull in physics)
+- `TEX_tracks`: source mesh used to provide the track material (mesh hidden at runtime)
 
 ### Transform Expectations
 
@@ -110,6 +114,7 @@ The goal is to make asset integration deterministic in code.
 - Other tank visuals are parented under **`tank_visual_root`** for smoothing / separation
 - `CAM_tank` is **unparented** at load when `CAM_pivot` is found; position is preserved in world space; default camera inputs are cleared so orbit is fully script-driven
 - Aiming uses **screen picking** from the active camera, not raw bone deltas from mouse alone
+- Zoom view is an **alternative render camera** created/managed in code; it does not require an authored `CAM_tank_zoom` node in the GLB
 
 ## Cannon and Turret Constraints (authoring)
 

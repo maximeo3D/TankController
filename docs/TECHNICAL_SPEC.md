@@ -25,7 +25,7 @@ The player controls a toy tank on a terrain loaded from `GLB` assets. The first 
 The project uses an intentionally enlarged scale compared to the original toy concept.
 
 - Assets are exported from Blender with **`×10` scale** (or equivalent); gameplay and physics are tuned in that space.
-- Reticle screen size is compensated in code (`baseScale` on `UI_tank_reticle`) so HUD stays readable at large world units.
+- Reticle screen size is compensated in code so HUD stays readable at large world units.
 - If physics become unstable, prefer tuning JSON values before changing the asset contract.
 
 ## Application States
@@ -86,7 +86,8 @@ The tank file contains:
 - empty **`CAM_pivot`**: orbit center above the turret (used at runtime)
 - six empties **`SUS_FL`**, **`SUS_FR`**, **`SUS_ML`**, **`SUS_MR`**, **`SUS_RL`**, **`SUS_RR`**: suspension raycast origins (wheel / contact probes)
 - optional legacy **`GROUND_*`** four-corner names (fallback only if `SUS_*` are incomplete)
-- mesh **`UI_tank_reticle`**: world-space reticle (unparented in code, billboard)
+- meshes **`UI_reticle_camera`** and **`UI_reticle_barrel`**: world-space reticles (billboarded in code)
+- mesh **`TEX_tracks`**: hidden source mesh used to provide the track material
 - meshes **`AMMO_obus`** / **`AMMO_balle`**: projectile templates (hidden, cloned on fire)
 - invisible mesh **`COL_tank`**: convex hull physics collider for the tank
 
@@ -108,7 +109,8 @@ The tank file contains:
 
 - **`COL_tank`** is the collision shape for the tank (convex hull); it is parented to the physics anchor, not driven by suspension alone.
 - The rigid body is attached to a **`tank_anchor`** transform node; visuals hang under **`tank_visual_root`** for optional smoothing.
-- **Suspension**: each frame, Havok **raycasts** are cast downward from the six `SUS_*` points (positions in anchor space). Spring-damper forces are applied at hit points so the hull stays supported; parameters live under `suspension` in `TankController.json` (e.g. `rayLength`, `restLength`, `springStrength`).
+- **Suspension**: each frame, Havok **raycasts** are cast downward from the six `SUS_*` points (converted to anchor-local offsets at load). Spring-damper forces are applied at hit points so the hull stays supported; parameters live under `suspension` in `TankController.json`.
+  - Practical note: the suspension tries to maintain a nominal contact distance \(`rayStartHeight + restLength`\). If this is too large relative to `SUS_*` placement, the tank will “hover” above the ground.
 - **Spawn snap**: once per scene load, the tank anchor may be lowered so probe rays match a nominal contact distance (`snapTankAnchorYToTerrain`), reducing float at spawn.
 - **Grounding metadata** (`grounding` in JSON): used for legacy / helper data; primary behavior is the dynamic suspension + collider.
 
@@ -137,8 +139,9 @@ If overcharge is `0%`:
 ### Aiming (current implementation)
 
 - **Not** raw “mouse X = turret only, mouse Y = cannon only” on its own.
-- Each frame, a **picking ray** is built from the **active gameplay camera** through the pointer (`createPickingRay`); it intersects terrain (`SM_*` / `DM_*`) or a fallback horizontal plane.
-- The **reticle** (`UI_tank_reticle`) is placed at the hit point (with a max distance from the tank).
+- Each frame, a **picking ray** is built from the **orbit camera** through the **screen center** (`createPickingRay`); it intersects world geometry or a fallback plane.
+- The **camera reticle** (`UI_reticle_camera`) is placed at the camera ray hit point (with a max distance clamp), billboarded and scaled to constant screen size.
+- The **barrel reticle** (`UI_reticle_barrel`) is placed at the muzzle ray hit point, also billboarded and scaled to constant screen size.
 - **Turret yaw** and **cannon pitch** targets are derived from that world target in hull space, then rotated toward limits at configured speeds (`turret` / `cannon` in JSON).
 - With **`CAM_pivot`** present and a **`TargetCamera`**-compatible `CAM_tank`, **mouse movement applies an orbit** (yaw/pitch around the pivot in hull space, distance clamped) before the ray is cast, so the view rotates around the tank like a third-person tank game.
 
@@ -152,20 +155,38 @@ If overcharge is `0%`:
 
 ### Zoom
 
-- right mouse button held
-- zoom reduces camera FOV using `camera.zoomFovMultiplier` in JSON
-- while boost is active, camera FOV can increase using `camera.boostFovMultiplier`
+- right mouse button toggles an **alternative zoom view camera** (render-only)
+- aiming and turret/cannon control remain driven by the **orbit camera** (control camera); only the render viewpoint changes
+- zoom view FOV uses `camera.zoomViewFovDeg` (and still respects `camera.boostFovMultiplier`)
 
 ## Camera configuration (`config/TankController.json`)
 
 Under `camera`, besides FOV:
 
 - **`orbitYawDegPerPixel`** / **`orbitPitchDegPerPixel`**: mouse orbit sensitivity when `CAM_pivot` + orbit path is active
+- **`orbitYawSign`** / **`orbitPitchSign`**: axis inversion (`1` / `-1`)
 - **`orbitMinPitchDeg`** / **`orbitMaxPitchDeg`**: vertical orbit limits
 - **`orbitMinRadius`** / **`orbitMaxRadius`**: distance clamp
 - **`orbitDefaultRadius`**: fallback if initial camera–pivot distance is too small to infer
+- **`orbitCollisionEnabled`** / **`orbitCollisionPadding`**: ray-based camera collision to avoid clipping through world geometry
 
 At runtime, if `CAM_pivot` exists, **`CAM_tank` is detached** from the rig (world position preserved), default Babylon camera inputs on `FreeCamera` are cleared, and position/target are driven in code.
+
+## Tracks (visual)
+
+The tank can leave temporary track marks using **spawned segment planes**:
+
+- a small plane segment is spawned at fixed spacing while the tank moves
+- segments use the material from `TEX_tracks` (the mesh itself is hidden/disabled)
+- segments are currently spawned from the middle suspension points (`SUS_ML` and `SUS_MR`) to reduce visual noise
+
+Key config values live under `tracks` in `TankController.json`:
+
+- `enabled`, `spacing`, `maxPointsPerRibbon` (used as **max segments**)
+- `segmentLength`, `segmentWidth`
+- `uvRepeatU`, `uvRepeatV`
+- `yOffset`, `raycastStartHeight`, `raycastLength`
+- `opacityMultiplier`
 
 ## Weapon Rules
 
@@ -245,6 +266,12 @@ This file is the source of truth for:
 - power-up multipliers
 
 The game code should avoid hardcoding gameplay numbers except for small glue constants (e.g. reticle `baseScale` in `TankGameplayController.ts` until moved to JSON).
+
+## Debug toggles
+
+Optional debug visuals can be enabled via `debug` in `config/TankController.json`:
+
+- `debug.showSuspensionSpheres`: shows small red spheres at the `SUS_*` empty positions (used to validate suspension probe placement after GLB export).
 
 ## Recommended Module Layout (actual)
 

@@ -1,4 +1,7 @@
 {
+  "debug": {
+    "showSuspensionSpheres": false
+  },
   "rig": {
     "spawnYawOffsetDeg": 0.0,
     "movementForwardAxis": "z",
@@ -38,9 +41,9 @@
     "positionSharpness": 14.0
   },
   "suspension": {
-    "rayStartHeight": 0.15,
+    "rayStartHeight": 0.05,
     "rayLength": 3.5,
-    "restLength": 0.35,
+    "restLength": 0.05,
     "springStrength": 2200.0,
     "damperStrength": 120.0,
     "maxForce": 6000.0,

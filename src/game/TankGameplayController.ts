@@ -166,6 +166,8 @@ export class TankGameplayController {
   private debugTargetMarker: Mesh | null = null;
   private debugCameraOriginMarker: Mesh | null = null;
 
+  private susDebugSpheres: Mesh[] = [];
+
   public constructor(options: TankGameplayControllerOptions) {
     this.scene = options.scene;
     this.config = options.config;
@@ -259,7 +261,40 @@ export class TankGameplayController {
 
     this.initAimDebugMeshes();
     this.initTrackSystem();
+    if (this.config.debug?.showSuspensionSpheres) {
+      this.initSuspensionDebugSpheres();
+    }
     this.scene.onBeforeRenderObservable.add(this.update);
+  }
+
+  private initSuspensionDebugSpheres(): void {
+    // Always-on for now (requested for debugging).
+    const nodes = this.suspensionNodes;
+    const ordered: Array<TransformNode | AbstractMesh | null> = [
+      nodes.fl,
+      nodes.fr,
+      nodes.ml,
+      nodes.mr,
+      nodes.rl,
+      nodes.rr
+    ];
+    if (ordered.every((n) => !n)) {
+      return;
+    }
+
+    const mat = new StandardMaterial("sus_debug_red", this.scene);
+    mat.diffuseColor = new Color3(1, 0, 0);
+    mat.emissiveColor = new Color3(1, 0, 0);
+
+    const radius = 0.04;
+    for (let i = 0; i < ordered.length; i++) {
+      const s = MeshBuilder.CreateSphere(`sus_dbg_${i}`, { diameter: radius * 2 }, this.scene);
+      s.material = mat;
+      s.isPickable = false;
+      s.alwaysSelectAsActiveMesh = false;
+      s.renderingGroupId = 1;
+      this.susDebugSpheres.push(s);
+    }
   }
 
   private initTrackSystem(): void {
@@ -326,6 +361,10 @@ export class TankGameplayController {
     this.debugBarrelForwardLine?.dispose();
     this.debugTargetMarker?.dispose();
     this.debugCameraOriginMarker?.dispose();
+    for (const s of this.susDebugSpheres) {
+      s.dispose();
+    }
+    this.susDebugSpheres = [];
 
     for (const proj of this.activeProjectiles) {
       proj.body.dispose();
@@ -353,8 +392,33 @@ export class TankGameplayController {
     this.applyVisualSmoothing(dt);
     this.applyCamera(frame.zoomHeld);
     this.trackSystem?.update(dt);
+    this.updateSuspensionDebugSpheres();
     this.updateProjectiles(dt);
   };
+
+  private updateSuspensionDebugSpheres(): void {
+    if (this.susDebugSpheres.length === 0) return;
+    const nodes = this.suspensionNodes;
+    const ordered: Array<TransformNode | AbstractMesh | null> = [
+      nodes.fl,
+      nodes.fr,
+      nodes.ml,
+      nodes.mr,
+      nodes.rl,
+      nodes.rr
+    ];
+    for (let i = 0; i < this.susDebugSpheres.length; i++) {
+      const n = ordered[i] ?? null;
+      const s = this.susDebugSpheres[i];
+      if (!n) {
+        s.setEnabled(false);
+        continue;
+      }
+      s.setEnabled(true);
+      n.computeWorldMatrix(true);
+      s.position.copyFrom(n.getAbsolutePosition());
+    }
+  }
 
   private updateWeapons(dt: number): void {
     // Bullet cooldown
@@ -761,7 +825,11 @@ export class TankGameplayController {
     const physics = this.scene.getPhysicsEngine();
     let hitPoint: Vector3 | null = null;
     if (physics) {
-      const hit = physics.raycast(from, to, { ignoreBody: this.tankBody, shouldHitTriggers: false, collideWith: ~4 });
+      const hit = physics.raycast(from, to, {
+        ignoreBody: this.tankBody,
+        shouldHitTriggers: false,
+        collideWith: 0xffffffff
+      });
       if (hit.hasHit) {
         hitPoint = hit.hitPointWorld.clone();
       }
@@ -880,7 +948,7 @@ export class TankGameplayController {
       const hit = engine.raycast(from, to, {
         ignoreBody: this.tankBody,
         shouldHitTriggers: false,
-        collideWith: ~4
+        collideWith: 0xffffffff
       });
 
       if (!hit.hasHit) {
@@ -888,7 +956,16 @@ export class TankGameplayController {
       }
 
       hit.calculateHitDistance();
-      const distance = hit.hitDistance;
+      let distance = hit.hitDistance;
+      // Defensive: some physics plugins can yield undefined/NaN hitDistance.
+      // In that case, derive distance from the hit point.
+      if (!Number.isFinite(distance)) {
+        if (hit.hitPointWorld) {
+          distance = Vector3.Distance(from, hit.hitPointWorld);
+        } else {
+          continue;
+        }
+      }
       const compression = clamp(restLength - distance, 0, restLength);
       if (compression <= 0) {
         continue;

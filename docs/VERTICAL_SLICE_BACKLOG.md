@@ -51,10 +51,15 @@ Status notes below reflect the **current codebase** as of the latest documentati
 - **Aiming:** screen-space ray from gameplay camera through pointer → terrain / plane → reticle position → turret yaw + cannon pitch toward target (not independent mouse-axes-only mode).
 - **Camera:** with `CAM_pivot` + `CAM_tank`, detach camera, clear default inputs, apply **orbit** each frame from mouse deltas (`lookDeltaX` / `lookDeltaY`), then `setTarget(pivot)`.
 - clamp orbit pitch and radius via `camera.*` orbit keys in JSON
-- implement zoom hold on right mouse button (FOV)
+- implement zoom **toggle** on right mouse button using an alternative render camera (FOV via `camera.zoomViewFovDeg`)
 - apply FOV boost effect while boosting
 
-**Status:** done for orbit + ray aim + zoom + boost FOV; optional future: orbit only while RMB held, scroll zoom.
+**Status:** done for orbit + center-screen ray aim + zoom view toggle + boost FOV + orbit collision.
+
+Notes:
+
+- Orbit collision prevents the camera from clipping through world geometry (ray + padding).
+- Aiming is driven by the orbit camera (control camera) even while the zoom view is active (render-only).
 
 ## Phase 6 - Boost and Resources
 
@@ -98,6 +103,14 @@ Status notes below reflect the **current codebase** as of the latest documentati
 - validate spawn orientation, aim feel, camera comfort, reticle scale (`baseScale` in code for world scale)
 
 **Status:** ongoing tuning; collider wireframe debug is **off** by default in `hideColliderMeshes`.
+
+## Phase 10 - Tracks (visual)
+
+- spawn track marks while tank moves, using material from `TEX_tracks`
+- implementation uses spawned segment planes (not a single mesh decal)
+- currently spawned from `SUS_ML` and `SUS_MR` to reduce noise; tuning via `tracks.*` config
+
+**Status:** implemented; tuning ongoing.
 
 ## Deferred After Vertical Slice
 

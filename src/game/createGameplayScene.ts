@@ -429,7 +429,7 @@ function snapTankAnchorYToTerrain(
     const hit = engine.raycast(from, to, {
       ignoreBody: tankBody,
       shouldHitTriggers: false,
-      collideWith: ~4
+      collideWith: 0xffffffff
     });
     if (!hit.hasHit) {
       continue;
@@ -712,9 +712,14 @@ function toAnchorLocalPosition(
   node: TransformNode | AbstractMesh,
   anchor: TransformNode
 ): Vector3 {
-  const anchorRotation = anchor.absoluteRotationQuaternion ?? Quaternion.Identity();
-  const anchorPosition = anchor.getAbsolutePosition();
+  // Important: when nodes are parented under an armature/bones, their world matrices may not be
+  // evaluated yet at load time. Force an evaluation so `getAbsolutePosition()` is correct.
+  anchor.computeWorldMatrix(true);
+  node.computeWorldMatrix(true);
+
+  // Compute local position robustly using the full world matrix (includes rotation + scale).
+  const inv = anchor.getWorldMatrix().clone();
+  inv.invert();
   const worldPosition = node.getAbsolutePosition();
-  const localOffset = worldPosition.subtract(anchorPosition);
-  return localOffset.applyRotationQuaternion(Quaternion.Inverse(anchorRotation));
+  return Vector3.TransformCoordinates(worldPosition, inv);
 }

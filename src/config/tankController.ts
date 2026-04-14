@@ -1,6 +1,9 @@
 import tankControllerConfig from "../../config/TankController.json";
 
 export interface TankControllerConfig {
+  debug?: {
+    showSuspensionSpheres?: boolean;
+  };
   rig: {
     spawnYawOffsetDeg: number;
     movementForwardAxis: "x" | "y" | "z";
