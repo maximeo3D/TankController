@@ -88,7 +88,7 @@
     "barrelRayMaxDistance": 200.0
   },
   "tracks": {
-    "enabled": true,
+    "enabled": false,
     "spacing": 0.15,
     "maxPointsPerRibbon": 20,
     "segmentLength": 1.2,
