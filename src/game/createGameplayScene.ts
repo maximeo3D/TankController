@@ -227,7 +227,8 @@ export async function createGameplayScene(
     );
   }
 
-  const reticleCameraMesh = findAbstractMeshByName(tankContainer, "UI_reticle_camera");
+  // Camera reticle is now rendered as screen-space Babylon GUI (not a 3D mesh).
+  const reticleCameraMesh: AbstractMesh | null = null;
   const reticleBarrelMesh = findAbstractMeshByName(tankContainer, "UI_reticle_barrel");
   const tracksSourceMesh = findAbstractMeshByName(tankContainer, "TEX_tracks");
   if (tracksSourceMesh) {
@@ -236,32 +237,11 @@ export async function createGameplayScene(
     tracksSourceMesh.setEnabled(false);
   }
 
-  // Camera reticle = world-space marker at the camera ray hit point (billboard).
-  if (reticleCameraMesh) {
-    const pivot = new TransformNode(reticleCameraMesh.name + "_pivot", scene);
-    reticleCameraMesh.setParent(pivot);
-    reticleCameraMesh.position.setAll(0);
-    pivot.billboardMode = Mesh.BILLBOARDMODE_ALL;
-    reticleCameraMesh.rotationQuaternion = Quaternion.FromEulerAngles(0, Math.PI, 0);
-    reticleCameraMesh.renderingGroupId = 1;
-    reticleCameraMesh.isVisible = false;
-    reticleCameraMesh.isPickable = false;
-    reticleCameraMesh.alwaysSelectAsActiveMesh = true;
-    if (reticleCameraMesh.material) {
-      reticleCameraMesh.material.backFaceCulling = false;
-    }
-  }
-
-  // Barrel reticle = world element (billboard at hit point).
+  // Barrel reticle is now rendered as screen-space Babylon GUI (not a 3D mesh).
   if (reticleBarrelMesh) {
-    const pivot = new TransformNode(reticleBarrelMesh.name + "_pivot", scene);
-    reticleBarrelMesh.setParent(pivot);
-    reticleBarrelMesh.position.setAll(0); // Center the mesh on the pivot
-    pivot.billboardMode = Mesh.BILLBOARDMODE_ALL;
-    reticleBarrelMesh.rotationQuaternion = Quaternion.FromEulerAngles(0, Math.PI, 0);
-    reticleBarrelMesh.renderingGroupId = 1;
     reticleBarrelMesh.isVisible = false;
     reticleBarrelMesh.isPickable = false;
+    reticleBarrelMesh.setEnabled(false);
     reticleBarrelMesh.alwaysSelectAsActiveMesh = true;
     if (reticleBarrelMesh.material) {
       reticleBarrelMesh.material.backFaceCulling = false;

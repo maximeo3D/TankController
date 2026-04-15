@@ -24,6 +24,8 @@ import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import type { Scene } from "@babylonjs/core/scene";
 import type { TankControllerConfig } from "../config/tankController";
 import { TankInput, type WeaponType } from "./TankInput";
+import { AdvancedDynamicTexture, Rectangle, Control, Image } from "@babylonjs/gui";
+import { reticleCameraAssetUrl, reticleBarrelAssetUrl } from "../assets/assetUrls";
 import type { TrackTreadParticleBundle } from "./trackTreadParticles";
 
 interface BoneControl {
@@ -107,8 +109,6 @@ export class TankGameplayController {
   private readonly turretBaseLocalRotation: Quaternion;
   private readonly cannonBaseLocalRotation: Quaternion;
   private readonly cannonBaseLocalPosition: Vector3;
-  private readonly reticleCameraMesh: AbstractMesh | null;
-  private readonly reticleBarrelMesh: AbstractMesh | null;
   private readonly muzzleNode: TransformNode | AbstractMesh | null;
   private readonly trackMaterial: Material | null;
   private trackSystem: TrackSegmentSystem | null = null;
@@ -167,6 +167,9 @@ export class TankGameplayController {
   private debugCameraOriginMarker: Mesh | null = null;
 
   private susDebugSpheres: Mesh[] = [];
+  private hudTexture: AdvancedDynamicTexture | null = null;
+  private barrelReticle2D: Rectangle | null = null;
+  private lastBarrelAimPoint: Vector3 | null = null;
 
   public constructor(options: TankGameplayControllerOptions) {
     this.scene = options.scene;
@@ -200,8 +203,6 @@ export class TankGameplayController {
     this.tankCamera = options.tankCamera;
     this.tankZoomCamera = options.tankZoomCamera ?? null;
     this.cameraPivotNode = options.cameraPivotNode ?? null;
-    this.reticleCameraMesh = options.reticleCameraMesh;
-    this.reticleBarrelMesh = options.reticleBarrelMesh;
     this.muzzleNode = options.muzzleNode;
     this.trackMaterial = (options.tracksSourceMesh?.material as Material | null | undefined) ?? null;
     for (const m of options.tankContainer.meshes) {
@@ -264,7 +265,33 @@ export class TankGameplayController {
     if (this.config.debug?.showSuspensionSpheres) {
       this.initSuspensionDebugSpheres();
     }
+    this.initHud();
     this.scene.onBeforeRenderObservable.add(this.update);
+  }
+
+  private initHud(): void {
+    // Full-screen Babylon GUI for crosshair + future HUD.
+    this.hudTexture = AdvancedDynamicTexture.CreateFullscreenUI("hud_ui", true, this.scene);
+
+    // Camera reticle (2D PNG) fixed at screen center.
+    const cam = new Image("reticle_camera_img", reticleCameraAssetUrl);
+    cam.widthInPixels = 150;
+    cam.heightInPixels = 150;
+    cam.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
+    cam.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
+    cam.isPointerBlocker = false;
+    this.hudTexture.addControl(cam);
+
+    // Barrel reticle (2D) – moved each frame by projecting the barrel ray hit point.
+    const barrel = new Image("reticle_barrel_img", reticleBarrelAssetUrl);
+    barrel.widthInPixels = 150;
+    barrel.heightInPixels = 150;
+    barrel.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
+    barrel.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
+    barrel.isVisible = false;
+    barrel.isPointerBlocker = false;
+    this.hudTexture.addControl(barrel);
+    this.barrelReticle2D = barrel as unknown as Rectangle;
   }
 
   private initSuspensionDebugSpheres(): void {
@@ -365,6 +392,10 @@ export class TankGameplayController {
       s.dispose();
     }
     this.susDebugSpheres = [];
+
+    this.hudTexture?.dispose();
+    this.hudTexture = null;
+    this.barrelReticle2D = null;
 
     for (const proj of this.activeProjectiles) {
       proj.body.dispose();
@@ -473,8 +504,8 @@ export class TankGameplayController {
 
     // Calculate forward direction towards the reticle
     let forward = Vector3.Zero();
-    if (this.reticleBarrelMesh) {
-      forward = this.reticleBarrelMesh.getAbsolutePosition().subtract(mesh.position);
+    if (this.lastBarrelAimPoint) {
+      forward = this.lastBarrelAimPoint.subtract(mesh.position);
     }
     
     // Fallback if reticle is too close or missing
@@ -586,7 +617,7 @@ export class TankGameplayController {
       // For debug visualization, use the actual camera position as ray origin.
       // Babylon's picking ray origin can be at the near-plane, which is confusing visually.
       this.updateAimDebug(camera.globalPosition.clone(), ray.direction, targetPoint);
-      this.updateReticle(this.reticleCameraMesh, camera, targetPoint, 1);
+      // Camera reticle is now screen-space GUI; no world-space update needed.
       this.updateBarrelReticle(camera);
 
       // Transform target point to tank's local space
@@ -753,60 +784,8 @@ export class TankGameplayController {
     }
   }
 
-  /** Multiplicateur de taille écran pour le réticule canon vs celui de la caméra (même `desiredPixels` de base). */
-  private static readonly BARREL_RETICLE_SCREEN_SCALE = 3;
-
-  private updateReticle(
-    mesh: AbstractMesh | null,
-    camera: Camera,
-    worldPoint: Vector3,
-    screenSizeMultiplier = 1
-  ): void {
-    if (!mesh) {
-      return;
-    }
-    
-    // Update the position of the billboard pivot (parent) or the mesh itself if no parent
-    const target = (mesh.parent instanceof TransformNode) ? mesh.parent : mesh;
-    target.position.copyFrom(worldPoint);
-    
-    // Reticles may come from GLB as disabled/invisible; force-enable at runtime.
-    if (mesh.parent instanceof TransformNode) {
-      mesh.parent.setEnabled(true);
-    }
-    mesh.setEnabled(true);
-    mesh.isVisible = true;
-    mesh.visibility = 1;
-    // Make it visible even if its own material is culled / depth-tested poorly.
-    // (Only Mesh has overlay support; InstancedMesh inherits from AbstractMesh but not Mesh.)
-    const asAny = mesh as unknown as { renderOverlay?: boolean; overlayColor?: Color3; overlayAlpha?: number };
-    if (typeof asAny.renderOverlay === "boolean" || asAny.renderOverlay === undefined) {
-      asAny.renderOverlay = true;
-      asAny.overlayColor = new Color3(1, 1, 1);
-      asAny.overlayAlpha = 0.9;
-    }
-
-    const distToCamera = Vector3.Distance(camera.globalPosition, worldPoint);
-
-    // Keep a constant on-screen size (in pixels).
-    // Convert desired pixel size to world size at this distance and camera FOV.
-    const desiredPixels = 32;
-    const renderH = Math.max(this.scene.getEngine().getRenderHeight(), 1);
-    const worldScreenHeightAtDist = 2 * distToCamera * Math.tan(camera.fov / 2);
-    const worldUnitsPerPixel = worldScreenHeightAtDist / renderH;
-    const desiredWorldSize = desiredPixels * worldUnitsPerPixel * screenSizeMultiplier;
-
-    // Normalize by the mesh's authored size so artists don't have to match a strict unit scale.
-    const bi = mesh.getBoundingInfo();
-    const ext = bi.boundingBox.extendSize; // local-space half-extents
-    const authoredSize = Math.max(ext.x, ext.y, ext.z) * 2;
-    const uniformScale = authoredSize > 1e-6 ? desiredWorldSize / authoredSize : desiredWorldSize;
-    mesh.scaling.set(uniformScale, uniformScale, uniformScale);
-  }
-
   private updateBarrelReticle(camera: Camera): void {
-    const mesh = this.reticleBarrelMesh;
-    if (!mesh || !this.muzzleNode) {
+    if (!this.muzzleNode) {
       return;
     }
 
@@ -838,7 +817,42 @@ export class TankGameplayController {
       hitPoint = to;
     }
 
-    this.updateReticle(mesh, camera, hitPoint, TankGameplayController.BARREL_RETICLE_SCREEN_SCALE);
+    this.lastBarrelAimPoint = hitPoint.clone();
+
+    const ui = this.barrelReticle2D;
+    if (!ui) return;
+
+    // Project world point to screen pixels.
+    const engine = this.scene.getEngine();
+    const w = engine.getRenderWidth();
+    const h = engine.getRenderHeight();
+    const viewport = camera.viewport.toGlobal(w, h);
+    const projected = Vector3.Project(
+      hitPoint,
+      Matrix.Identity(),
+      this.scene.getTransformMatrix(),
+      viewport
+    );
+
+    const onScreen =
+      Number.isFinite(projected.x) &&
+      Number.isFinite(projected.y) &&
+      projected.z >= 0 &&
+      projected.z <= 1 &&
+      projected.x >= viewport.x &&
+      projected.x <= viewport.x + viewport.width &&
+      projected.y >= viewport.y &&
+      projected.y <= viewport.y + viewport.height;
+
+    if (!onScreen) {
+      ui.isVisible = false;
+      return;
+    }
+
+    ui.isVisible = true;
+    // GUI center alignment: left/top are offsets from center.
+    ui.leftInPixels = projected.x - (viewport.x + viewport.width / 2);
+    ui.topInPixels = projected.y - (viewport.y + viewport.height / 2);
   }
 
   private applyMovement(moveAxis: number, turnAxis: number, boostHeld: boolean, dt: number): void {
