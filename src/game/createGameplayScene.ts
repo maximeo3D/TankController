@@ -274,6 +274,13 @@ export async function createGameplayScene(
     ammoShellMesh.setParent(null);
   }
 
+  const ammoShellColliderMesh = findMeshByName(tankContainer, "COL_obus");
+  if (ammoShellColliderMesh) {
+    ammoShellColliderMesh.isVisible = false;
+    ammoShellColliderMesh.isPickable = false;
+    ammoShellColliderMesh.setParent(null);
+  }
+
   const ammoBulletMesh = findMeshByName(tankContainer, "AMMO_balle");
   if (ammoBulletMesh) {
     ammoBulletMesh.isVisible = false;
@@ -327,6 +334,7 @@ export async function createGameplayScene(
     muzzleNode,
     tracksSourceMesh,
     ammoShellMesh,
+    ammoShellColliderMesh,
     ammoBulletMesh,
     trackTreadParticles
   });

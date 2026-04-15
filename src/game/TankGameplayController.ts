@@ -13,7 +13,7 @@ import { Color3 } from "@babylonjs/core/Maths/math.color";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { Texture } from "@babylonjs/core/Materials/Textures/texture";
 import { PhysicsBody } from "@babylonjs/core/Physics/v2/physicsBody";
-import { PhysicsShapeSphere, type PhysicsShape } from "@babylonjs/core/Physics/v2/physicsShape";
+import { PhysicsShapeMesh, PhysicsShapeSphere, type PhysicsShape } from "@babylonjs/core/Physics/v2/physicsShape";
 import { PhysicsMotionType } from "@babylonjs/core/Physics/v2/IPhysicsEnginePlugin";
 // (raycast query type removed; using inline object literals)
 import type { Camera } from "@babylonjs/core/Cameras/camera";
@@ -22,6 +22,7 @@ import type { AssetContainer } from "@babylonjs/core/assetContainer";
 import type { Bone } from "@babylonjs/core/Bones/bone";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import type { Scene } from "@babylonjs/core/scene";
+import { ParticleSystem } from "@babylonjs/core/Particles/particleSystem";
 import type { TankControllerConfig } from "../config/tankController";
 import { TankInput, type WeaponType } from "./TankInput";
 import type { TrackTreadParticleBundle } from "./trackTreadParticles";
@@ -80,6 +81,8 @@ export interface TankGameplayControllerOptions {
   muzzleNode: TransformNode | AbstractMesh | null;
   tracksSourceMesh?: AbstractMesh | null;
   ammoShellMesh: Mesh | null;
+  /** Optional collider template mesh from GLB (ex: `COL_obus`) */
+  ammoShellColliderMesh?: Mesh | null;
   ammoBulletMesh: Mesh | null;
   physicsViewer?: PhysicsViewer;
   /** Chenilles : fumée + gravillons sur SUS_BL / SUS_BR (si chargés). */
@@ -114,6 +117,7 @@ export class TankGameplayController {
   private trackSystem: TrackSegmentSystem | null = null;
   private readonly tankMeshIdsToIgnore = new Set<number>();
   private readonly ammoShellMesh: Mesh | null;
+  private readonly ammoShellColliderMesh: Mesh | null;
   private readonly ammoBulletMesh: Mesh | null;
   private readonly movementForwardAxis: Vector3;
   private readonly movementInputSign: 1 | -1;
@@ -137,7 +141,16 @@ export class TankGameplayController {
 
   private shellReloadTimer = 0;
   private bulletCooldownTimer = 0;
-  private activeProjectiles: { mesh: Mesh; body: PhysicsBody; shape: PhysicsShape; age: number; debugMesh?: AbstractMesh | null }[] = [];
+  private activeProjectiles: {
+    collider: Mesh;
+    visual: Mesh;
+    body: PhysicsBody;
+    shape: PhysicsShape;
+    age: number;
+    lastPos: Vector3;
+    impactHandled: boolean;
+    debugMesh?: AbstractMesh | null;
+  }[] = [];
   private physicsViewer?: PhysicsViewer;
   private readonly trackTreadParticles: TrackTreadParticleBundle | null;
 
@@ -167,6 +180,8 @@ export class TankGameplayController {
   private debugCameraOriginMarker: Mesh | null = null;
 
   private susDebugSpheres: Mesh[] = [];
+
+  private explosionDefsPromise: Promise<unknown[]> | null = null;
 
   public constructor(options: TankGameplayControllerOptions) {
     this.scene = options.scene;
@@ -208,6 +223,7 @@ export class TankGameplayController {
       this.tankMeshIdsToIgnore.add(m.uniqueId);
     }
     this.ammoShellMesh = options.ammoShellMesh;
+    this.ammoShellColliderMesh = options.ammoShellColliderMesh ?? null;
     this.ammoBulletMesh = options.ammoBulletMesh;
     this.physicsViewer = options.physicsViewer;
     this.trackTreadParticles = options.trackTreadParticles ?? null;
@@ -369,7 +385,8 @@ export class TankGameplayController {
     for (const proj of this.activeProjectiles) {
       proj.body.dispose();
       proj.shape.dispose();
-      proj.mesh.dispose();
+      proj.visual.dispose();
+      proj.collider.dispose();
     }
 
     this.trackTreadParticles?.dispose();
@@ -448,16 +465,17 @@ export class TankGameplayController {
   private fireShell(): void {
     this.shellChambered = false;
     this.shellReloadTimer = this.config.weapons.shell.reloadSeconds;
-    this.spawnProjectile(this.ammoShellMesh, this.config.weapons.shell, 0.4);
+    this.spawnProjectile(this.ammoShellMesh, this.ammoShellColliderMesh, this.config.weapons.shell, 0.4);
   }
 
   private fireBullet(): void {
     this.bulletCooldownTimer = 1.0 / this.config.weapons.bullet.shotsPerSecond;
-    this.spawnProjectile(this.ammoBulletMesh, this.config.weapons.bullet, 0.1);
+    this.spawnProjectile(this.ammoBulletMesh, null, this.config.weapons.bullet, 0.1);
   }
 
   private spawnProjectile(
     baseMesh: Mesh | null,
+    colliderTemplate: Mesh | null,
     weaponConfig: { muzzleVelocity: number; gravityMultiplier: number },
     radius: number
   ): void {
@@ -465,16 +483,39 @@ export class TankGameplayController {
       return;
     }
 
-    const mesh = baseMesh.clone("projectile", null);
-    if (!mesh) return;
+    // Collider is its own mesh so physics is deterministic (independent of the visual GLB).
+    // If a template collider is provided (ex: `COL_obus`), clone and use it for physics.
+    const collider =
+      colliderTemplate?.clone("projectile_collider", null) ??
+      MeshBuilder.CreateSphere("projectile_collider", { diameter: radius * 2, segments: 8 }, this.scene);
+    if (!collider) {
+      return;
+    }
+    collider.isVisible = false;
+    collider.isPickable = false;
+    collider.position.copyFrom(this.muzzleNode.getAbsolutePosition());
+    collider.rotationQuaternion ??= Quaternion.Identity();
 
-    mesh.isVisible = true;
-    mesh.position.copyFrom(this.muzzleNode.getAbsolutePosition());
+    const visual = baseMesh.clone("projectile_visual", null);
+    if (!visual) {
+      collider.dispose();
+      return;
+    }
+    visual.isVisible = true;
+    visual.isPickable = false;
+    visual.setParent(collider);
+    visual.position.setAll(0);
+    visual.rotationQuaternion ??= Quaternion.Identity();
+    // Ensure the visual mesh doesn't scale the physics implicitly.
+    // If collider comes from a template, keep its scaling; otherwise keep the sphere at scale 1.
+    if (!colliderTemplate) {
+      collider.scaling.setAll(1);
+    }
 
     // Calculate forward direction towards the reticle
     let forward = Vector3.Zero();
     if (this.reticleBarrelMesh) {
-      forward = this.reticleBarrelMesh.getAbsolutePosition().subtract(mesh.position);
+      forward = this.reticleBarrelMesh.getAbsolutePosition().subtract(collider.position);
     }
     
     // Fallback if reticle is too close or missing
@@ -485,15 +526,13 @@ export class TankGameplayController {
     }
 
     // Rotate the projectile to face its flight direction
-    mesh.rotationQuaternion = Quaternion.FromLookDirectionRH(forward, Axis.Y);
+    collider.rotationQuaternion = Quaternion.FromLookDirectionRH(forward, Axis.Y);
 
     const velocity = forward.scale(weaponConfig.muzzleVelocity);
 
-    const body = new PhysicsBody(mesh, PhysicsMotionType.DYNAMIC, false, this.scene);
-    
-    // Adjust radius based on the mesh's scaling (in case the GLB is scaled x10)
-    const scale = mesh.absoluteScaling.x || 1;
-    const shape = new PhysicsShapeSphere(Vector3.Zero(), radius / scale, this.scene);
+    const body = new PhysicsBody(collider, PhysicsMotionType.DYNAMIC, false, this.scene);
+    const shape =
+      colliderTemplate ? new PhysicsShapeMesh(collider, this.scene) : new PhysicsShapeSphere(Vector3.Zero(), radius, this.scene);
     
     // Projectiles belong to group 4, and collide with everything EXCEPT the tank (group 2) and other projectiles (group 4)
     shape.filterMembershipMask = 4;
@@ -509,7 +548,47 @@ export class TankGameplayController {
       debugMesh = this.physicsViewer.showBody(body);
     }
 
-    this.activeProjectiles.push({ mesh, body, shape, age: 0, debugMesh });
+    const proj = {
+      collider,
+      visual,
+      body,
+      shape,
+      age: 0,
+      lastPos: collider.getAbsolutePosition().clone(),
+      impactHandled: false,
+      debugMesh
+    };
+    this.activeProjectiles.push(proj);
+
+    // Reliable impact detection (independent of render framerate): Havok collision events.
+    body.setCollisionCallbackEnabled(true);
+    body.getCollisionObservable().add((ev: unknown) => {
+      if (proj.impactHandled) return;
+      const type = String((ev as any)?.type ?? "");
+      if (type && !type.includes("COLLISION_STARTED") && !type.includes("COLLISION_CONTINUED")) {
+        return;
+      }
+
+      proj.impactHandled = true;
+      const p =
+        ((ev as any)?.point as Vector3 | undefined) ??
+        ((ev as any)?.contactPoint as Vector3 | undefined) ??
+        ((ev as any)?.collisionPoint as Vector3 | undefined) ??
+        proj.collider.getAbsolutePosition().clone();
+
+      void this.spawnExplosionAt(p.clone());
+
+      // Remove + dispose immediately on first contact.
+      const idx = this.activeProjectiles.indexOf(proj);
+      if (idx >= 0) {
+        this.activeProjectiles.splice(idx, 1);
+      }
+      proj.body.dispose();
+      proj.shape.dispose();
+      proj.visual.dispose();
+      proj.collider.dispose();
+    });
+
     this.pendingCannonRecoilKickY += this.config.cannon.recoilKickY;
     this.applyHullRecoilImpulseFromWorldForward(forward);
   }
@@ -519,6 +598,40 @@ export class TankGameplayController {
       const proj = this.activeProjectiles[i];
       proj.age += dt;
 
+      if (proj.impactHandled) {
+        this.activeProjectiles.splice(i, 1);
+        continue;
+      }
+
+      // First impact: raycast from last to current collider position.
+      const curPos = proj.collider.getAbsolutePosition();
+      const delta = curPos.subtract(proj.lastPos);
+      const dist = delta.length();
+      if (dist > 1e-5) {
+        const dir = delta.scale(1 / dist);
+        const ray = new Ray(proj.lastPos.clone(), dir, dist);
+        const hit = this.scene.pickWithRay(ray, (mesh) => {
+          if (!mesh) return false;
+          if (mesh.uniqueId === proj.collider.uniqueId || mesh.uniqueId === proj.visual.uniqueId) return false;
+          if (this.tankMeshIdsToIgnore.has(mesh.uniqueId)) return false;
+          const n = mesh.name.toLowerCase();
+          return n.startsWith("sm_") || n.startsWith("dm_") || n.startsWith("col_") || n.includes("ground");
+        });
+
+        if (hit?.hit && hit.pickedPoint) {
+          proj.impactHandled = true;
+          void this.spawnExplosionAt(hit.pickedPoint.clone());
+          proj.body.dispose();
+          proj.shape.dispose();
+          proj.visual.dispose();
+          proj.collider.dispose();
+          this.activeProjectiles.splice(i, 1);
+          continue;
+        }
+      }
+
+      proj.lastPos.copyFrom(curPos);
+
       // Despawn after 5 seconds
       if (proj.age > 5.0) {
         if (this.physicsViewer && proj.debugMesh) {
@@ -527,9 +640,48 @@ export class TankGameplayController {
         }
         proj.body.dispose();
         proj.shape.dispose();
-        proj.mesh.dispose();
+        proj.visual.dispose();
+        proj.collider.dispose();
         this.activeProjectiles.splice(i, 1);
       }
+    }
+  }
+
+  private async ensureExplosionDefs(): Promise<unknown[]> {
+    if (this.explosionDefsPromise) {
+      return this.explosionDefsPromise;
+    }
+
+    const load = async (file: string): Promise<unknown> => {
+      const url = new URL(`../../assets/effects/${file}`, import.meta.url).href;
+      const res = await fetch(url);
+      if (!res.ok) {
+        throw new Error(`Failed to load explosion effect ${file}: ${res.status}`);
+      }
+      return (await res.json()) as unknown;
+    };
+
+    this.explosionDefsPromise = Promise.all([
+      load("explosion_flash.json"),
+      load("explosion_sparkles.json"),
+      load("explosion_shockwave.json")
+    ]);
+    return this.explosionDefsPromise;
+  }
+
+  private async spawnExplosionAt(worldPos: Vector3): Promise<void> {
+    const defs = await this.ensureExplosionDefs();
+    for (const def of defs) {
+      const ps = (ParticleSystem as unknown as { Parse: (data: unknown, scene: Scene) => ParticleSystem }).Parse(
+        def,
+        this.scene
+      );
+      ps.emitter = worldPos.clone();
+      // Burst once, then auto-dispose.
+      ps.disposeOnStop = true;
+      ps.emitRate = 0;
+      ps.manualEmitCount = ps.getCapacity();
+      ps.start();
     }
   }
 
