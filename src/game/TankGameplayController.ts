@@ -25,7 +25,7 @@ import type { Scene } from "@babylonjs/core/scene";
 import type { TankControllerConfig } from "../config/tankController";
 import { TankInput, type WeaponType } from "./TankInput";
 import { AdvancedDynamicTexture, Rectangle, Control, Image } from "@babylonjs/gui";
-import { reticleCameraAssetUrl, reticleBarrelAssetUrl } from "../assets/assetUrls";
+import { reticleCameraAssetUrl, reticleBarrelAssetUrl, reticleGunAssetUrl } from "../assets/assetUrls";
 import type { TrackTreadParticleBundle } from "./trackTreadParticles";
 
 interface BoneControl {
@@ -79,7 +79,8 @@ export interface TankGameplayControllerOptions {
   initialOrbit?: { yawRad: number; pitchRad: number; radius: number } | null;
   reticleCameraMesh: AbstractMesh | null;
   reticleBarrelMesh: AbstractMesh | null;
-  muzzleNode: TransformNode | AbstractMesh | null;
+  muzzleCannonNode: TransformNode | AbstractMesh | null;
+  muzzleGunNode: TransformNode | AbstractMesh | null;
   tracksSourceMesh?: AbstractMesh | null;
   ammoShellMesh: Mesh | null;
   ammoBulletMesh: Mesh | null;
@@ -109,7 +110,8 @@ export class TankGameplayController {
   private readonly turretBaseLocalRotation: Quaternion;
   private readonly cannonBaseLocalRotation: Quaternion;
   private readonly cannonBaseLocalPosition: Vector3;
-  private readonly muzzleNode: TransformNode | AbstractMesh | null;
+  private readonly muzzleCannonNode: TransformNode | AbstractMesh | null;
+  private readonly muzzleGunNode: TransformNode | AbstractMesh | null;
   private readonly trackMaterial: Material | null;
   private trackSystem: TrackSegmentSystem | null = null;
   private readonly tankMeshIdsToIgnore = new Set<number>();
@@ -168,8 +170,11 @@ export class TankGameplayController {
 
   private susDebugSpheres: Mesh[] = [];
   private hudTexture: AdvancedDynamicTexture | null = null;
-  private barrelReticle2D: Rectangle | null = null;
-  private lastBarrelAimPoint: Vector3 | null = null;
+  private barrelShellReticle2D: Rectangle | null = null;
+  private barrelGunReticle2D: Rectangle | null = null;
+  private lastShellAimPoint: Vector3 | null = null;
+  private lastGunAimPoint: Vector3 | null = null;
+  private activeGunTracers: { mesh: Mesh; from: Vector3; to: Vector3; t: number; speed: number }[] = [];
 
   public constructor(options: TankGameplayControllerOptions) {
     this.scene = options.scene;
@@ -203,7 +208,8 @@ export class TankGameplayController {
     this.tankCamera = options.tankCamera;
     this.tankZoomCamera = options.tankZoomCamera ?? null;
     this.cameraPivotNode = options.cameraPivotNode ?? null;
-    this.muzzleNode = options.muzzleNode;
+    this.muzzleCannonNode = options.muzzleCannonNode;
+    this.muzzleGunNode = options.muzzleGunNode;
     this.trackMaterial = (options.tracksSourceMesh?.material as Material | null | undefined) ?? null;
     for (const m of options.tankContainer.meshes) {
       this.tankMeshIdsToIgnore.add(m.uniqueId);
@@ -283,15 +289,25 @@ export class TankGameplayController {
     this.hudTexture.addControl(cam);
 
     // Barrel reticle (2D) – moved each frame by projecting the barrel ray hit point.
-    const barrel = new Image("reticle_barrel_img", reticleBarrelAssetUrl);
-    barrel.widthInPixels = 150;
-    barrel.heightInPixels = 150;
-    barrel.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
-    barrel.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
-    barrel.isVisible = false;
-    barrel.isPointerBlocker = false;
-    this.hudTexture.addControl(barrel);
-    this.barrelReticle2D = barrel as unknown as Rectangle;
+    const barrelShell = new Image("reticle_barrel_shell_img", reticleBarrelAssetUrl);
+    barrelShell.widthInPixels = 150;
+    barrelShell.heightInPixels = 150;
+    barrelShell.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
+    barrelShell.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
+    barrelShell.isVisible = false;
+    barrelShell.isPointerBlocker = false;
+    this.hudTexture.addControl(barrelShell);
+    this.barrelShellReticle2D = barrelShell as unknown as Rectangle;
+
+    const barrelGun = new Image("reticle_barrel_gun_img", reticleGunAssetUrl);
+    barrelGun.widthInPixels = 150;
+    barrelGun.heightInPixels = 150;
+    barrelGun.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
+    barrelGun.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
+    barrelGun.isVisible = false;
+    barrelGun.isPointerBlocker = false;
+    this.hudTexture.addControl(barrelGun);
+    this.barrelGunReticle2D = barrelGun as unknown as Rectangle;
   }
 
   private initSuspensionDebugSpheres(): void {
@@ -395,7 +411,8 @@ export class TankGameplayController {
 
     this.hudTexture?.dispose();
     this.hudTexture = null;
-    this.barrelReticle2D = null;
+    this.barrelShellReticle2D = null;
+    this.barrelGunReticle2D = null;
 
     for (const proj of this.activeProjectiles) {
       proj.body.dispose();
@@ -425,6 +442,7 @@ export class TankGameplayController {
     this.trackSystem?.update(dt);
     this.updateSuspensionDebugSpheres();
     this.updateProjectiles(dt);
+    this.updateGunTracers(dt);
   };
 
   private updateSuspensionDebugSpheres(): void {
@@ -484,7 +502,48 @@ export class TankGameplayController {
 
   private fireBullet(): void {
     this.bulletCooldownTimer = 1.0 / this.config.weapons.bullet.shotsPerSecond;
-    this.spawnProjectile(this.ammoBulletMesh, this.config.weapons.bullet, 0.1);
+
+    if (!this.muzzleGunNode || !this.ammoBulletMesh) {
+      return;
+    }
+
+    // Base forward from gun muzzle
+    const origin = this.muzzleGunNode.getAbsolutePosition();
+    const baseForward = this.muzzleGunNode
+      .getDirection(this.movementForwardAxis)
+      .scale(-this.config.rig.movementForwardSign)
+      .normalize();
+
+    // Apply a small random bloom cone (~1°)
+    const maxAngleRad = (Math.PI / 180) * 0.5;
+    const right = Vector3.Cross(baseForward, Axis.Y).normalize();
+    const up = Vector3.Cross(right, baseForward).normalize();
+    const r = Math.random();
+    const theta = Math.random() * Math.PI * 2;
+    const radius = Math.tan(maxAngleRad) * Math.sqrt(r);
+    const offset = right.scale(Math.cos(theta) * radius).add(up.scale(Math.sin(theta) * radius));
+    const dir = baseForward.add(offset).normalize();
+
+    const maxDistance = this.config.aim.cameraMaxTargetDistance;
+    const target = origin.add(dir.scale(maxDistance));
+
+    // Visual tracer (non-physical)
+    const mesh = this.ammoBulletMesh.clone("bullet_tracer", null);
+    if (!mesh) {
+      return;
+    }
+    mesh.isVisible = true;
+    mesh.position.copyFrom(origin);
+    this.activeGunTracers.push({
+      mesh,
+      from: origin.clone(),
+      to: target.clone(),
+      t: 0,
+      speed: this.config.weapons.bullet.muzzleVelocity
+    });
+
+    // For now we only record the last gun aim point; actual damage system can be added later.
+    this.lastGunAimPoint = target.clone();
   }
 
   private spawnProjectile(
@@ -492,7 +551,7 @@ export class TankGameplayController {
     weaponConfig: { muzzleVelocity: number; gravityMultiplier: number },
     radius: number
   ): void {
-    if (!baseMesh || !this.muzzleNode) {
+    if (!baseMesh || !this.muzzleCannonNode) {
       return;
     }
 
@@ -500,17 +559,19 @@ export class TankGameplayController {
     if (!mesh) return;
 
     mesh.isVisible = true;
-    mesh.position.copyFrom(this.muzzleNode.getAbsolutePosition());
+    mesh.position.copyFrom(this.muzzleCannonNode.getAbsolutePosition());
 
-    // Calculate forward direction towards the reticle
+    // Calculate forward direction towards the reticle (shell uses cannon aim)
     let forward = Vector3.Zero();
-    if (this.lastBarrelAimPoint) {
-      forward = this.lastBarrelAimPoint.subtract(mesh.position);
+    if (this.lastShellAimPoint) {
+      forward = this.lastShellAimPoint.subtract(mesh.position);
     }
     
     // Fallback if reticle is too close or missing
     if (forward.lengthSquared() < 1e-6) {
-      forward = this.muzzleNode.getDirection(this.movementForwardAxis).scale(-this.config.rig.movementForwardSign);
+      forward = this.muzzleCannonNode
+        .getDirection(this.movementForwardAxis)
+        .scale(-this.config.rig.movementForwardSign);
     } else {
       forward.normalize();
     }
@@ -561,6 +622,24 @@ export class TankGameplayController {
         proj.mesh.dispose();
         this.activeProjectiles.splice(i, 1);
       }
+    }
+  }
+
+  private updateGunTracers(dt: number): void {
+    if (this.activeGunTracers.length === 0) return;
+    for (let i = this.activeGunTracers.length - 1; i >= 0; i--) {
+      const tracer = this.activeGunTracers[i];
+      const distance = Vector3.Distance(tracer.from, tracer.to);
+      const travelPerSecond = tracer.speed;
+      const deltaT = distance > 0 ? (travelPerSecond * dt) / distance : 1;
+      tracer.t += deltaT;
+      if (tracer.t >= 1) {
+        tracer.mesh.dispose();
+        this.activeGunTracers.splice(i, 1);
+        continue;
+      }
+      const pos = Vector3.Lerp(tracer.from, tracer.to, tracer.t);
+      tracer.mesh.position.copyFrom(pos);
     }
   }
 
@@ -618,7 +697,7 @@ export class TankGameplayController {
       // Babylon's picking ray origin can be at the near-plane, which is confusing visually.
       this.updateAimDebug(camera.globalPosition.clone(), ray.direction, targetPoint);
       // Camera reticle is now screen-space GUI; no world-space update needed.
-      this.updateBarrelReticle(camera);
+      this.updateBarrelReticles(camera);
 
       // Transform target point to tank's local space
       const invHullMatrix = this.tankAnchor.getWorldMatrix().clone().invert();
@@ -765,9 +844,11 @@ export class TankGameplayController {
     }
 
     // Barrel forward vector (from MUZZLE_tank)
-    if (this.debugBarrelForwardLine && this.muzzleNode) {
-      const from = this.muzzleNode.getAbsolutePosition();
-      const forward = this.muzzleNode.getDirection(this.movementForwardAxis).scale(-this.config.rig.movementForwardSign);
+    if (this.debugBarrelForwardLine && this.muzzleCannonNode) {
+      const from = this.muzzleCannonNode.getAbsolutePosition();
+      const forward = this.muzzleCannonNode
+        .getDirection(this.movementForwardAxis)
+        .scale(-this.config.rig.movementForwardSign);
       if (forward.lengthSquared() > 1e-6) {
         forward.normalize();
       } else {
@@ -784,75 +865,117 @@ export class TankGameplayController {
     }
   }
 
-  private updateBarrelReticle(camera: Camera): void {
-    if (!this.muzzleNode) {
+  private updateBarrelReticles(camera: Camera): void {
+    if (!this.muzzleCannonNode || !this.muzzleGunNode) {
       return;
     }
 
-    const from = this.muzzleNode.getAbsolutePosition();
-    const forward = this.muzzleNode
-      .getDirection(this.movementForwardAxis)
-      .scale(-this.config.rig.movementForwardSign);
-    if (forward.lengthSquared() <= 1e-6) {
-      return;
-    }
-    forward.normalize();
-
-    const maxDist = this.config.aim.barrelRayMaxDistance;
-    const to = from.add(forward.scale(maxDist));
-
-    const physics = this.scene.getPhysicsEngine();
-    let hitPoint: Vector3 | null = null;
-    if (physics) {
-      const hit = physics.raycast(from, to, {
-        ignoreBody: this.tankBody,
-        shouldHitTriggers: false,
-        collideWith: 0xffffffff
-      });
-      if (hit.hasHit) {
-        hitPoint = hit.hitPointWorld.clone();
-      }
-    }
-    if (!hitPoint) {
-      hitPoint = to;
-    }
-
-    this.lastBarrelAimPoint = hitPoint.clone();
-
-    const ui = this.barrelReticle2D;
-    if (!ui) return;
-
-    // Project world point to screen pixels.
     const engine = this.scene.getEngine();
     const w = engine.getRenderWidth();
     const h = engine.getRenderHeight();
     const viewport = camera.viewport.toGlobal(w, h);
-    const projected = Vector3.Project(
-      hitPoint,
-      Matrix.Identity(),
-      this.scene.getTransformMatrix(),
-      viewport
-    );
 
-    const onScreen =
-      Number.isFinite(projected.x) &&
-      Number.isFinite(projected.y) &&
-      projected.z >= 0 &&
-      projected.z <= 1 &&
-      projected.x >= viewport.x &&
-      projected.x <= viewport.x + viewport.width &&
-      projected.y >= viewport.y &&
-      projected.y <= viewport.y + viewport.height;
+    const updateUiFromHit = (hitPoint: Vector3, ui: Rectangle | null): void => {
+      if (!ui) return;
 
-    if (!onScreen) {
-      ui.isVisible = false;
-      return;
+      const projected = Vector3.Project(
+        hitPoint,
+        Matrix.Identity(),
+        this.scene.getTransformMatrix(),
+        viewport
+      );
+
+      const onScreen =
+        Number.isFinite(projected.x) &&
+        Number.isFinite(projected.y) &&
+        projected.z >= 0 &&
+        projected.z <= 1 &&
+        projected.x >= viewport.x &&
+        projected.x <= viewport.x + viewport.width &&
+        projected.y >= viewport.y &&
+        projected.y <= viewport.y + viewport.height;
+
+      if (!onScreen) {
+        ui.isVisible = false;
+        return;
+      }
+
+      ui.isVisible = true;
+      ui.leftInPixels = projected.x - (viewport.x + viewport.width / 2);
+      ui.topInPixels = projected.y - (viewport.y + viewport.height / 2);
+    };
+
+    const physics = this.scene.getPhysicsEngine();
+
+    // Shell / cannon reticle (only visible when shell is active)
+    {
+      const from = this.muzzleCannonNode.getAbsolutePosition();
+      const forward = this.muzzleCannonNode
+        .getDirection(this.movementForwardAxis)
+        .scale(-this.config.rig.movementForwardSign);
+      if (forward.lengthSquared() > 1e-6) {
+        forward.normalize();
+        const maxDist = this.config.aim.barrelRayMaxDistance;
+        const to = from.add(forward.scale(maxDist));
+
+        let hitPoint: Vector3 | null = null;
+        if (physics) {
+          const hit = physics.raycast(from, to, {
+            ignoreBody: this.tankBody,
+            shouldHitTriggers: false,
+            collideWith: 0xffffffff
+          });
+          if (hit.hasHit) {
+            hitPoint = hit.hitPointWorld.clone();
+          }
+        }
+        if (!hitPoint) {
+          hitPoint = to;
+        }
+
+        this.lastShellAimPoint = hitPoint.clone();
+        if (this.activeWeapon === "shell") {
+          updateUiFromHit(hitPoint, this.barrelShellReticle2D);
+        } else if (this.barrelShellReticle2D) {
+          this.barrelShellReticle2D.isVisible = false;
+        }
+      }
     }
 
-    ui.isVisible = true;
-    // GUI center alignment: left/top are offsets from center.
-    ui.leftInPixels = projected.x - (viewport.x + viewport.width / 2);
-    ui.topInPixels = projected.y - (viewport.y + viewport.height / 2);
+    // Gun / coaxial reticle (only visible when bullet weapon is active)
+    {
+      const from = this.muzzleGunNode.getAbsolutePosition();
+      const baseForward = this.muzzleGunNode
+        .getDirection(this.movementForwardAxis)
+        .scale(-this.config.rig.movementForwardSign);
+      if (baseForward.lengthSquared() > 1e-6) {
+        baseForward.normalize();
+        const maxDist = this.config.aim.barrelRayMaxDistance;
+        const to = from.add(baseForward.scale(maxDist));
+
+        let hitPoint: Vector3 | null = null;
+        if (physics) {
+          const hit = physics.raycast(from, to, {
+            ignoreBody: this.tankBody,
+            shouldHitTriggers: false,
+            collideWith: 0xffffffff
+          });
+          if (hit.hasHit) {
+            hitPoint = hit.hitPointWorld.clone();
+          }
+        }
+        if (!hitPoint) {
+          hitPoint = to;
+        }
+
+        this.lastGunAimPoint = hitPoint.clone();
+        if (this.activeWeapon === "bullet") {
+          updateUiFromHit(hitPoint, this.barrelGunReticle2D);
+        } else if (this.barrelGunReticle2D) {
+          this.barrelGunReticle2D.isVisible = false;
+        }
+      }
+    }
   }
 
   private applyMovement(moveAxis: number, turnAxis: number, boostHeld: boolean, dt: number): void {
@@ -1017,9 +1140,9 @@ export class TankGameplayController {
 
       // Position zoom camera near the muzzle, with a consistent "left + up + slight back" offset
       // in the cannon's forward frame (world-space). This avoids bone axis surprises.
-      if (this.muzzleNode) {
-        const muzzlePos = this.muzzleNode.getAbsolutePosition();
-        const forward = this.muzzleNode
+      if (this.muzzleCannonNode) {
+        const muzzlePos = this.muzzleCannonNode.getAbsolutePosition();
+        const forward = this.muzzleCannonNode
           .getDirection(this.movementForwardAxis)
           .scale(-this.config.rig.movementForwardSign);
         if (forward.lengthSquared() > 1e-6) {

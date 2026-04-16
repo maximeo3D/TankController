@@ -260,7 +260,8 @@ export async function createGameplayScene(
     ammoBulletMesh.setParent(null);
   }
 
-  const muzzleNode = findTransformNode(tankContainer, "MUZZLE_tank");
+  const muzzleCannonNode = findTransformNode(tankContainer, "MUZZLE_canon_tank");
+  const muzzleGunNode = findTransformNode(tankContainer, "MUZZLE_gun_tank");
 
   const suspensionNodes = {
     fl: findTransformNode(tankContainer, "SUS_FL"),
@@ -304,7 +305,8 @@ export async function createGameplayScene(
     initialOrbit,
     reticleCameraMesh,
     reticleBarrelMesh,
-    muzzleNode,
+    muzzleCannonNode,
+    muzzleGunNode,
     tracksSourceMesh,
     ammoShellMesh,
     ammoBulletMesh,
