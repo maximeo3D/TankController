@@ -192,6 +192,10 @@ export class TankGameplayController {
 
   private explosionDefsPromise: Promise<unknown[]> | null = null;
 
+  // Debug: log zoom camera vs cannon bone/muzzle on next shell shot.
+  private debugLogZoomCamOnNextShellShot = false;
+  private zoomCamFreezeSeconds = 0;
+
   public constructor(options: TankGameplayControllerOptions) {
     this.scene = options.scene;
     this.config = options.config;
@@ -448,11 +452,35 @@ export class TankGameplayController {
       return;
     }
 
+    if (this.zoomCamFreezeSeconds > 0) {
+      this.zoomCamFreezeSeconds = Math.max(this.zoomCamFreezeSeconds - dt, 0);
+    }
+
     const frame = this.input.consumeFrame();
     this.activeWeapon = frame.selectedWeapon;
     this.fireHeld = frame.fireHeld;
 
-    this.applyOrbitCamera(frame.lookDeltaX, frame.lookDeltaY);
+    // In zoom view, limit camera rotation so the turret/cannon can keep up.
+    // This prevents the barrel reticle from "catching up" to the camera reticle.
+    let lookX = frame.lookDeltaX;
+    let lookY = frame.lookDeltaY;
+    if (frame.zoomHeld) {
+      const yawDegPerPixel = Math.abs(this.config.camera.orbitYawDegPerPixel) || 0;
+      const pitchDegPerPixel = Math.abs(this.config.camera.orbitPitchDegPerPixel) || 0;
+      const maxYawDeg = Math.max(this.config.turret.yawSpeedDeg * dt, 0);
+      const maxPitchDeg = Math.max(this.config.cannon.pitchSpeedDeg * dt, 0);
+
+      if (yawDegPerPixel > 1e-6) {
+        const maxYawPixels = maxYawDeg / yawDegPerPixel;
+        lookX = clamp(lookX, -maxYawPixels, maxYawPixels);
+      }
+      if (pitchDegPerPixel > 1e-6) {
+        const maxPitchPixels = maxPitchDeg / pitchDegPerPixel;
+        lookY = clamp(lookY, -maxPitchPixels, maxPitchPixels);
+      }
+    }
+
+    this.applyOrbitCamera(lookX, lookY);
     this.updateWeapons(dt);
     this.applyTurretAndCannon(frame.pointerX, frame.pointerY, dt);
     this.applyMovement(frame.moveAxis, frame.turnAxis, frame.boostHeld, dt);
@@ -516,6 +544,11 @@ export class TankGameplayController {
   private fireShell(): void {
     this.shellChambered = false;
     this.shellReloadTimer = this.config.weapons.shell.reloadSeconds;
+    this.debugLogZoomCamOnNextShellShot = this.zoomActive;
+    // Freeze zoom camera position briefly after firing to avoid visible "snap".
+    if (this.zoomActive) {
+      this.zoomCamFreezeSeconds = Math.max(this.zoomCamFreezeSeconds, 0.12);
+    }
     this.spawnProjectile(this.ammoShellMesh, this.ammoShellColliderMesh, this.config.weapons.shell, 0.4);
   }
 
@@ -1011,6 +1044,26 @@ export class TankGameplayController {
       return;
     }
 
+    // In zoom view, keep barrel reticles locked to screen center (avoid parallax between camera ray and muzzle ray).
+    // Also keep shell aim point aligned with the camera aim target so the projectile uses the same target.
+    if (this.zoomActive) {
+      if (this.lastAimTargetPoint) {
+        this.lastShellAimPoint = this.lastAimTargetPoint.clone();
+      }
+
+      if (this.barrelShellReticle2D) {
+        this.barrelShellReticle2D.isVisible = this.activeWeapon === "shell";
+        this.barrelShellReticle2D.leftInPixels = 0;
+        this.barrelShellReticle2D.topInPixels = 0;
+      }
+      if (this.barrelGunReticle2D) {
+        this.barrelGunReticle2D.isVisible = this.activeWeapon === "bullet";
+        this.barrelGunReticle2D.leftInPixels = 0;
+        this.barrelGunReticle2D.topInPixels = 0;
+      }
+      return;
+    }
+
     const engine = this.scene.getEngine();
     const w = engine.getRenderWidth();
     const h = engine.getRenderHeight();
@@ -1284,7 +1337,18 @@ export class TankGameplayController {
       // Position zoom camera near the muzzle, with a consistent "left + up + slight back" offset
       // in the cannon's forward frame (world-space). This avoids bone axis surprises.
       if (this.muzzleCannonNode) {
-        const muzzlePos = this.muzzleCannonNode.getAbsolutePosition();
+        // `MUZZLE_canon_tank` is parented under the cannon bone, so it inherits the recoil translation.
+        // For the zoom camera, we want the cannon recoil to NOT pull the camera inside the tank.
+        // Cancel the recoil by subtracting the recoil offset along the cannon's local recoil axis (local +Y here).
+        const muzzlePosRaw = this.muzzleCannonNode.getAbsolutePosition();
+        let muzzlePos = muzzlePosRaw.clone();
+        if (this.cannonRecoilOffsetY !== 0 && this.cannonControl.transformNode) {
+          const recoilWorldAxis = this.cannonControl.transformNode.getDirection(Axis.Y);
+          if (recoilWorldAxis.lengthSquared() > 1e-8) {
+            recoilWorldAxis.normalize();
+            muzzlePos = muzzlePos.subtract(recoilWorldAxis.scale(this.cannonRecoilOffsetY));
+          }
+        }
         const forward = this.muzzleCannonNode
           .getDirection(this.movementForwardAxis)
           .scale(-this.config.rig.movementForwardSign);
@@ -1309,8 +1373,43 @@ export class TankGameplayController {
           .add(Axis.Y.scale(upOffset))
           .add(forward.scale(backOffset));
 
-        zoomCam.position.copyFrom(desiredPos);
-        zoomCam.setTarget(desiredPos.add(forward.scale(1000)));
+        if (this.debugLogZoomCamOnNextShellShot) {
+          const cannonWorldPos = this.cannonControl.transformNode
+            ? this.cannonControl.transformNode.getAbsolutePosition()
+            : this.cannonControl.bone
+              ? this.cannonControl.bone.getAbsolutePosition(this.tankAnchor)
+              : null;
+          console.log("[ZoomCam][before]", {
+            zoomCamPos: zoomCam.position.asArray(),
+            cannonWorldPos: cannonWorldPos?.asArray() ?? null,
+            zoomMinusCannon: cannonWorldPos ? zoomCam.position.subtract(cannonWorldPos).asArray() : null,
+            muzzlePosRaw: muzzlePosRaw.asArray(),
+            muzzlePosNoRecoil: muzzlePos.asArray(),
+            recoilOffsetY: this.cannonRecoilOffsetY,
+            desiredPos: desiredPos.asArray()
+          });
+        }
+
+        if (this.zoomCamFreezeSeconds <= 0) {
+          zoomCam.position.copyFrom(desiredPos);
+        }
+        // Keep aiming consistent even if position is frozen.
+        const from = zoomCam.globalPosition ?? zoomCam.position;
+        zoomCam.setTarget(from.add(forward.scale(1000)));
+
+        if (this.debugLogZoomCamOnNextShellShot) {
+          const cannonWorldPos = this.cannonControl.transformNode
+            ? this.cannonControl.transformNode.getAbsolutePosition()
+            : this.cannonControl.bone
+              ? this.cannonControl.bone.getAbsolutePosition(this.tankAnchor)
+              : null;
+          console.log("[ZoomCam][after]", {
+            zoomCamPos: zoomCam.position.asArray(),
+            cannonWorldPos: cannonWorldPos?.asArray() ?? null,
+            zoomMinusCannon: cannonWorldPos ? zoomCam.position.subtract(cannonWorldPos).asArray() : null
+          });
+          this.debugLogZoomCamOnNextShellShot = false;
+        }
       } else {
         // Fallback: keep using orbit forward vector.
         const forward = orbitCam.getForwardRay(1).direction;
