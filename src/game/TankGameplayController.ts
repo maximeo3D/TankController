@@ -791,6 +791,7 @@ export class TankGameplayController {
         def,
         this.scene
       );
+
       ps.emitter = worldPos.clone();
       ps.disposeOnStop = true;
       ps.emitRate = 0;
