@@ -90,6 +90,8 @@ export interface TankGameplayControllerOptions {
   physicsViewer?: PhysicsViewer;
   /** Chenilles : fumée + gravillons sur SUS_BL / SUS_BR (si chargés). */
   trackTreadParticles?: TrackTreadParticleBundle | null;
+  /** Chenilles (recul) : fumée + gravillons sur SUS_FL / SUS_FR (si chargés). */
+  trackTreadParticlesReverse?: TrackTreadParticleBundle | null;
 }
 
 export class TankGameplayController {
@@ -154,6 +156,7 @@ export class TankGameplayController {
   }[] = [];
   private physicsViewer?: PhysicsViewer;
   private readonly trackTreadParticles: TrackTreadParticleBundle | null;
+  private readonly trackTreadParticlesReverse: TrackTreadParticleBundle | null;
 
   /** Décalage courant sur l’axe local Y du bone canon (recul). */
   private cannonRecoilOffsetY = 0;
@@ -232,6 +235,7 @@ export class TankGameplayController {
     this.ammoBulletMesh = options.ammoBulletMesh;
     this.physicsViewer = options.physicsViewer;
     this.trackTreadParticles = options.trackTreadParticles ?? null;
+    this.trackTreadParticlesReverse = options.trackTreadParticlesReverse ?? null;
     this.input = new TankInput(options.canvas);
     this.turretControl = resolveBoneControl(options.tankContainer, "tourelle");
     this.cannonControl = resolveBoneControl(options.tankContainer, "canon");
@@ -435,6 +439,7 @@ export class TankGameplayController {
     }
 
     this.trackTreadParticles?.dispose();
+    this.trackTreadParticlesReverse?.dispose();
   }
 
   private readonly update = (): void => {
@@ -1182,17 +1187,19 @@ export class TankGameplayController {
     this.updateTrackTreadDust(forwardWorld);
   }
 
-  /** Fumée / gravillons : actifs seulement quand le tank se déplace vers l'avant (vitesse selon l'axe marche). */
+  /** Fumée / gravillons : arrière en avance, avant en recul (vitesse selon l'axe marche). */
   private updateTrackTreadDust(forwardWorld: Vector3): void {
-    if (!this.trackTreadParticles) {
+    if (!this.trackTreadParticles && !this.trackTreadParticlesReverse) {
       return;
     }
     const v = this.tankBody.getLinearVelocity();
     const vForward = Vector3.Dot(v, forwardWorld);
     const minSpeed = 0.12;
     // Traction avant = vitesse négative selon +forwardWorld (repère châssis / input inversé).
-    const advancing = this.battery > 0 && vForward < -minSpeed;
-    this.trackTreadParticles.setAdvancing(advancing);
+    const movingForward = this.battery > 0 && vForward < -minSpeed;
+    const movingReverse = this.battery > 0 && vForward > minSpeed;
+    this.trackTreadParticles?.setAdvancing(movingForward);
+    this.trackTreadParticlesReverse?.setAdvancing(movingReverse);
   }
 
   private applySuspension(): void {

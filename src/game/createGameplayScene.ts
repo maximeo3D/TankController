@@ -284,11 +284,21 @@ export async function createGameplayScene(
   const susBackRight =
     findTransformNode(tankContainer, "SUS_BR") ?? findTransformNode(tankContainer, "SUS_RR");
 
+  const susFrontLeft = findTransformNode(tankContainer, "SUS_FL");
+  const susFrontRight = findTransformNode(tankContainer, "SUS_FR");
+
   let trackTreadParticles = null;
   try {
     trackTreadParticles = await createTrackTreadParticleBundle(scene, susBackLeft, susBackRight);
   } catch (err) {
     console.warn("[TankController] Track tread particles could not be created:", err);
+  }
+
+  let trackTreadParticlesReverse = null;
+  try {
+    trackTreadParticlesReverse = await createTrackTreadParticleBundle(scene, susFrontLeft, susFrontRight);
+  } catch (err) {
+    console.warn("[TankController] Track tread particles (reverse) could not be created:", err);
   }
 
   // Only dispose the fallback camera if we successfully switched to another active camera.
@@ -318,7 +328,8 @@ export async function createGameplayScene(
     ammoShellMesh,
     ammoShellColliderMesh,
     ammoBulletMesh,
-    trackTreadParticles
+    trackTreadParticles,
+    trackTreadParticlesReverse
   });
 
 
