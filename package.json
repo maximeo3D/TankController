@@ -22,7 +22,7 @@
   "homepage": "https://github.com/maximeo3D/TankController#readme",
   "dependencies": {
     "@babylonjs/core": "^9.1.0",
-    "@babylonjs/gui": "^9.2.1",
+    "@babylonjs/gui": "^9.3.0",
     "@babylonjs/havok": "^1.3.12",
     "@babylonjs/loaders": "^9.1.0"
   },
