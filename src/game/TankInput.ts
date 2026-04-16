@@ -40,6 +40,7 @@ export class TankInput {
     this.canvas.addEventListener("pointerup", this.handlePointerUp);
     this.canvas.addEventListener("pointerleave", this.handlePointerUp);
     this.canvas.addEventListener("contextmenu", this.handleContextMenu);
+    this.canvas.addEventListener("wheel", this.handleWheel, { passive: false });
   }
 
   public consumeFrame(): TankInputFrame {
@@ -72,6 +73,7 @@ export class TankInput {
     this.canvas.removeEventListener("pointerup", this.handlePointerUp);
     this.canvas.removeEventListener("pointerleave", this.handlePointerUp);
     this.canvas.removeEventListener("contextmenu", this.handleContextMenu);
+    this.canvas.removeEventListener("wheel", this.handleWheel);
   }
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
@@ -91,6 +93,15 @@ export class TankInput {
     if (isTrackedKey(key)) {
       event.preventDefault();
     }
+  };
+
+  private readonly handleWheel = (event: WheelEvent): void => {
+    // Simple 2-weapon toggle on wheel up/down.
+    if (event.deltaY === 0) {
+      return;
+    }
+    this.selectedWeapon = this.selectedWeapon === "shell" ? "bullet" : "shell";
+    event.preventDefault();
   };
 
   private readonly handleKeyUp = (event: KeyboardEvent): void => {
