@@ -13,7 +13,7 @@
   },
   "texture": {
     "tags": null,
-    "url": "https://raw.githubusercontent.com/PatrickRyanMS/BabylonJS_Resources/master/ParticleUtils/Textures/Flare.png",
+    "url": "flare.png",
     "uOffset": 0,
     "vOffset": 0,
     "uScale": 1,
@@ -26,7 +26,7 @@
     "wRotationCenter": 0.5,
     "homogeneousRotationInUVTransform": false,
     "isBlocking": true,
-    "name": "https://raw.githubusercontent.com/PatrickRyanMS/BabylonJS_Resources/master/ParticleUtils/Textures/Flare.png",
+    "name": "flare.png",
     "hasAlpha": false,
     "getAlphaFromRGB": false,
     "level": 1,
@@ -51,7 +51,7 @@
     "invertY": true,
     "samplingMode": 3,
     "_useSRGBBuffer": false,
-    "internalTextureLabel": "https://raw.githubusercontent.com/PatrickRyanMS/BabylonJS_Re",
+    "internalTextureLabel": "flare",
     "noMipmap": false
   },
   "isLocal": false,

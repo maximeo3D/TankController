@@ -762,6 +762,52 @@ export class TankGameplayController {
     }
   }
 
+  /**
+   * Serialized particle JSON often uses `texture.url: "foo.png"` or `particleTexture` / `textureName`.
+   * Babylon resolves those relative to the page root, so they 404 unless we point at `assets/effects/`.
+   */
+  private rewriteExplosionParticleTextureUrls(def: unknown): void {
+    const effectsDirHref = new URL("../../assets/effects/track_smoke.json", import.meta.url).href.replace(
+      /[^/]+$/,
+      ""
+    );
+    const toAbsolute = (rel: string): string => {
+      const trimmed = rel.trim().replace(/^\.?\//, "");
+      if (/^(https?:|data:|blob:)/i.test(trimmed)) {
+        return trimmed;
+      }
+      return new URL(trimmed, effectsDirHref).href;
+    };
+
+    const walk = (node: unknown): void => {
+      if (node == null) return;
+      if (Array.isArray(node)) {
+        for (const item of node) walk(item);
+        return;
+      }
+      if (typeof node !== "object") return;
+      const o = node as Record<string, unknown>;
+      for (const [k, v] of Object.entries(o)) {
+        const isAssetFileName =
+          typeof v === "string" &&
+          v.length > 0 &&
+          /\.(png|jpe?g|webp|dds|ktx2?|basis)$/i.test(v) &&
+          !/^(https?:|data:|blob:)/i.test(v);
+        if (
+          (k === "particleTexture" || k === "textureName" || k === "url" || (k === "name" && isAssetFileName)) &&
+          typeof v === "string" &&
+          v.length > 0
+        ) {
+          o[k] = toAbsolute(v);
+        } else {
+          walk(v);
+        }
+      }
+    };
+
+    walk(def);
+  }
+
   private async ensureExplosionDefs(): Promise<unknown[]> {
     if (this.explosionDefsPromise) {
       return this.explosionDefsPromise;
@@ -773,12 +819,13 @@ export class TankGameplayController {
       if (!res.ok) {
         throw new Error(`Failed to load explosion effect ${file}: ${res.status}`);
       }
-      return (await res.json()) as unknown;
+      const data = (await res.json()) as unknown;
+      this.rewriteExplosionParticleTextureUrls(data);
+      return data;
     };
 
     this.explosionDefsPromise = Promise.all([
       load("explosion_flash.json"),
-      load("explosion_sparkles.json"),
       load("explosion_shockwave.json")
     ]);
     return this.explosionDefsPromise;
