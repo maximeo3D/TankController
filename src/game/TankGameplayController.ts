@@ -3,7 +3,7 @@ import { Plane } from "@babylonjs/core/Maths/math.plane";
 import { Axis, Space } from "@babylonjs/core/Maths/math.axis";
 import "@babylonjs/core/Culling/ray";
 import { Ray } from "@babylonjs/core/Culling/ray";
-import type { Material } from "@babylonjs/core/Materials/material";
+import { Material, type Material as BabylonMaterial } from "@babylonjs/core/Materials/material";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import type { LinesMesh } from "@babylonjs/core/Meshes/linesMesh";
@@ -12,6 +12,7 @@ import { Mesh as BabylonMesh } from "@babylonjs/core/Meshes/mesh";
 import { Color3 } from "@babylonjs/core/Maths/math.color";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { Texture } from "@babylonjs/core/Materials/Textures/texture";
+import { SpriteManager, Sprite } from "@babylonjs/core/Sprites";
 import { PhysicsBody } from "@babylonjs/core/Physics/v2/physicsBody";
 import { PhysicsShapeMesh, PhysicsShapeSphere, type PhysicsShape } from "@babylonjs/core/Physics/v2/physicsShape";
 import { PhysicsMotionType } from "@babylonjs/core/Physics/v2/IPhysicsEnginePlugin";
@@ -26,7 +27,12 @@ import { ParticleSystem } from "@babylonjs/core/Particles/particleSystem";
 import type { TankControllerConfig } from "../config/tankController";
 import { TankInput, type WeaponType } from "./TankInput";
 import { AdvancedDynamicTexture, Rectangle, Control, Image } from "@babylonjs/gui";
-import { reticleCameraAssetUrl, reticleBarrelAssetUrl, reticleGunAssetUrl } from "../assets/assetUrls";
+import {
+  reticleCameraAssetUrl,
+  reticleBarrelAssetUrl,
+  reticleGunAssetUrl,
+  sparkImpactAssetUrl
+} from "../assets/assetUrls";
 import type { TrackTreadParticleBundle } from "./trackTreadParticles";
 
 interface BoneControl {
@@ -117,7 +123,7 @@ export class TankGameplayController {
   private readonly cannonBaseLocalPosition: Vector3;
   private readonly muzzleCannonNode: TransformNode | AbstractMesh | null;
   private readonly muzzleGunNode: TransformNode | AbstractMesh | null;
-  private readonly trackMaterial: Material | null;
+  private readonly trackMaterial: BabylonMaterial | null;
   private trackSystem: TrackSegmentSystem | null = null;
   private readonly tankMeshIdsToIgnore = new Set<number>();
   private readonly ammoShellMesh: Mesh | null;
@@ -188,7 +194,40 @@ export class TankGameplayController {
   private barrelShellReticle2D: Rectangle | null = null;
   private barrelGunReticle2D: Rectangle | null = null;
   private lastShellAimPoint: Vector3 | null = null;
-  private activeGunTracers: { mesh: Mesh; from: Vector3; to: Vector3; t: number; speed: number }[] = [];
+  private activeGunTracers: {
+    mesh: Mesh;
+    from: Vector3;
+    to: Vector3;
+    dir: Vector3;
+    hitPoint: Vector3;
+    t: number;
+    speed: number;
+  }[] = [];
+
+  private sparkSpriteManager: SpriteManager | null = null;
+  private sparkSpritePool: Sprite[] = [];
+  private activeSparkSprites: {
+    sprite: Sprite;
+    age: number;
+    life: number;
+    grow: number;
+    maxSize: number;
+  }[] = [];
+
+  // Coax (hitscan) spread: grows while firing, shrinks when not firing.
+  private gunSpreadDeg = 0;
+  private static readonly GUN_SPREAD_GROW_DEG_PER_SEC = 1.0;
+  private static readonly GUN_SPREAD_SHRINK_DEG_PER_SEC = 5.0;
+  private static readonly GUN_SPREAD_MAX_DEG = 5.0;
+  private static readonly GUN_RETICLE_SCALE_MIN = 1.0;
+  private static readonly GUN_RETICLE_SCALE_MAX = 1.5;
+
+  // Per-shot reticle "kick" (recoil bounce) for the coax reticle.
+  private gunReticleKickTime = 999;
+  private static readonly GUN_RETICLE_KICK_OVERSHOOT = 0.15; // +15%
+  private static readonly GUN_RETICLE_KICK_SETTLE = 0.10; // +10%
+  private static readonly GUN_RETICLE_KICK_UP_SECONDS = 0.05;
+  private static readonly GUN_RETICLE_KICK_FADE_SECONDS = 0.07;
 
   private explosionDefsPromise: Promise<unknown[]> | null = null;
 
@@ -330,6 +369,29 @@ export class TankGameplayController {
     barrelGun.isPointerBlocker = false;
     this.hudTexture.addControl(barrelGun);
     this.barrelGunReticle2D = barrelGun as unknown as Rectangle;
+
+    // Spark impact sprites (for gun hitscan impacts).
+    // Using sprites avoids fragile transparent-plane shader issues on some GPUs/drivers.
+    const poolSize = 64;
+    this.sparkSpriteManager = new SpriteManager(
+      "spark_impact_sprite_mgr",
+      sparkImpactAssetUrl,
+      poolSize,
+      // IMPORTANT: cellSize must match the actual texture size, otherwise Babylon crops (treats it as a spritesheet).
+      { width: 350, height: 350 },
+      this.scene
+    );
+    this.sparkSpriteManager.isPickable = false;
+    this.sparkSpriteManager.disableDepthWrite = false;
+
+    for (let i = 0; i < poolSize; i++) {
+      const s = new Sprite(`spark_sprite_${i}`, this.sparkSpriteManager);
+      s.isVisible = false;
+      s.size = 0;
+      s.angle = 0;
+      s.color.a = 1;
+      this.sparkSpritePool.push(s);
+    }
   }
 
   private initSuspensionDebugSpheres(): void {
@@ -490,6 +552,7 @@ export class TankGameplayController {
     this.updateSuspensionDebugSpheres();
     this.updateProjectiles(dt);
     this.updateGunTracers(dt);
+    this.updateSparks(dt);
   };
 
   private updateSuspensionDebugSpheres(): void {
@@ -521,6 +584,7 @@ export class TankGameplayController {
     if (this.bulletCooldownTimer > 0) {
       this.bulletCooldownTimer -= dt;
     }
+    this.gunReticleKickTime += dt;
 
     // Shell reload
     if (!this.shellChambered && this.shellReserveAmmo > 0) {
@@ -539,6 +603,22 @@ export class TankGameplayController {
         this.fireBullet();
       }
     }
+
+    // Coax spread model (0 -> max while firing; relax back when not firing).
+    const isGunTriggerHeld = this.fireHeld && this.battery > 0 && this.activeWeapon === "bullet";
+    if (isGunTriggerHeld) {
+      this.gunSpreadDeg = clamp(
+        this.gunSpreadDeg + TankGameplayController.GUN_SPREAD_GROW_DEG_PER_SEC * dt,
+        0,
+        TankGameplayController.GUN_SPREAD_MAX_DEG
+      );
+    } else {
+      this.gunSpreadDeg = clamp(
+        this.gunSpreadDeg - TankGameplayController.GUN_SPREAD_SHRINK_DEG_PER_SEC * dt,
+        0,
+        TankGameplayController.GUN_SPREAD_MAX_DEG
+      );
+    }
   }
 
   private fireShell(): void {
@@ -554,6 +634,7 @@ export class TankGameplayController {
 
   private fireBullet(): void {
     this.bulletCooldownTimer = 1.0 / this.config.weapons.bullet.shotsPerSecond;
+    this.gunReticleKickTime = 0;
 
     if (!this.muzzleGunNode || !this.ammoBulletMesh) {
       return;
@@ -566,8 +647,8 @@ export class TankGameplayController {
       .scale(-this.config.rig.movementForwardSign)
       .normalize();
 
-    // Apply a small random bloom cone (~1°)
-    const maxAngleRad = (Math.PI / 180) * 0.5;
+    // Dynamic bloom cone: grows with sustained firing (0° -> 9°).
+    const maxAngleRad = (Math.PI / 180) * this.gunSpreadDeg;
     const right = Vector3.Cross(baseForward, Axis.Y).normalize();
     const up = Vector3.Cross(right, baseForward).normalize();
     const r = Math.random();
@@ -577,7 +658,20 @@ export class TankGameplayController {
     const dir = baseForward.add(offset).normalize();
 
     const maxDistance = this.config.aim.cameraMaxTargetDistance;
-    const target = origin.add(dir.scale(maxDistance));
+    const to = origin.add(dir.scale(maxDistance));
+
+    let hitPoint = to;
+    const physics = this.scene.getPhysicsEngine();
+    if (physics) {
+      const hit = physics.raycast(origin, to, {
+        ignoreBody: this.tankBody,
+        shouldHitTriggers: false,
+        collideWith: 0xffffffff
+      });
+      if (hit.hasHit) {
+        hitPoint = hit.hitPointWorld.clone();
+      }
+    }
 
     // Visual tracer (non-physical)
     const mesh = this.ammoBulletMesh.clone("bullet_tracer", null);
@@ -586,10 +680,13 @@ export class TankGameplayController {
     }
     mesh.isVisible = true;
     mesh.position.copyFrom(origin);
+    mesh.rotationQuaternion = Quaternion.FromLookDirectionRH(dir.scale(-1), Axis.Y);
     this.activeGunTracers.push({
       mesh,
       from: origin.clone(),
-      to: target.clone(),
+      to: hitPoint.clone(),
+      dir: dir.clone(),
+      hitPoint: hitPoint.clone(),
       t: 0,
       speed: this.config.weapons.bullet.muzzleVelocity
     });
@@ -856,30 +953,84 @@ export class TankGameplayController {
       const deltaT = distance > 0 ? (travelPerSecond * dt) / distance : 1;
       tracer.t += deltaT;
       if (tracer.t >= 1) {
+        this.spawnSparkImpact(tracer.hitPoint);
         tracer.mesh.dispose();
         this.activeGunTracers.splice(i, 1);
         continue;
       }
       const pos = Vector3.Lerp(tracer.from, tracer.to, tracer.t);
       tracer.mesh.position.copyFrom(pos);
+      tracer.mesh.rotationQuaternion = Quaternion.FromLookDirectionRH(tracer.dir.scale(-1), Axis.Y);
+    }
+  }
+
+  private spawnSparkImpact(worldPos: Vector3): void {
+    // "Volumetric" look: spawn a few sprites with slight offsets + different angles.
+    // Keeping everything pooled to avoid allocations/drawcall growth.
+    const count = 6;
+    const radius = 0.06;
+
+    // Small random offsets in world XY plane (good enough visually for now).
+    for (let i = 0; i < count; i++) {
+      const sprite = this.sparkSpritePool.pop() ?? null;
+      if (!sprite) return;
+
+      const a = Math.random() * Math.PI * 2;
+      const r = Math.random() * radius;
+      const offset = new Vector3(Math.cos(a) * r, (Math.random() - 0.5) * radius, Math.sin(a) * r);
+
+      sprite.isVisible = true;
+      sprite.position.copyFrom(worldPos.add(offset));
+      sprite.size = 0;
+      sprite.color.a = 1;
+      sprite.angle = Math.random() * Math.PI * 2;
+
+      // Speed up x2.
+      this.activeSparkSprites.push({ sprite, age: 0, life: 0.14, grow: 0.14, maxSize: 0.5 });
+    }
+  }
+
+  private updateSparks(dt: number): void {
+    if (this.activeSparkSprites.length === 0) return;
+    for (let i = this.activeSparkSprites.length - 1; i >= 0; i--) {
+      const s = this.activeSparkSprites[i];
+      s.age += dt;
+      const t = s.life > 0 ? s.age / s.life : 1;
+      if (t >= 1) {
+        s.sprite.isVisible = false;
+        s.sprite.size = 0;
+        s.sprite.color.a = 0;
+        this.sparkSpritePool.push(s.sprite);
+        this.activeSparkSprites.splice(i, 1);
+        continue;
+      }
+      const growT = s.grow > 0 ? clamp(s.age / s.grow, 0, 1) : 1;
+      const size = growT * s.maxSize;
+      s.sprite.size = size;
+      s.sprite.color.a = 1 - t;
     }
   }
 
   private applyTurretAndCannon(_pointerX: number, _pointerY: number, dt: number): void {
     // IMPORTANT: gameplay aiming must not change when switching to the alternative zoom view.
     // So we always use the orbit camera (tankCamera) as the control camera for raycasts/aim.
-    const camera = this.tankCamera ?? (this.scene.activeCamera as TargetCamera | null);
-    if (!camera) {
+    const controlCamera = this.tankCamera ?? (this.scene.activeCamera as TargetCamera | null);
+    if (!controlCamera) {
       return;
     }
 
     // Ensure the camera world matrix/globalPosition is up to date before we use it for debug + raycasting.
-    camera.computeWorldMatrix();
+    controlCamera.computeWorldMatrix();
+
+    // In zoom view, the render camera is different from the control camera.
+    // Reticle projection must use the render camera, while aiming uses control camera.
+    const renderCamera =
+      (this.scene.activeCamera as Camera | null | undefined) ?? (controlCamera as unknown as Camera);
 
     // "Camera reticle" is a fixed crosshair: raycast from screen center (not pointer position).
     const cx = this.scene.getEngine().getRenderWidth() * 0.5;
     const cy = this.scene.getEngine().getRenderHeight() * 0.5;
-    const ray = this.scene.createPickingRay(cx, cy, Matrix.Identity(), camera);
+    const ray = this.scene.createPickingRay(cx, cy, Matrix.Identity(), controlCamera);
     let targetPoint: Vector3 | null = null;
 
     const pickResult = this.scene.pickWithRay(ray, (mesh) => {
@@ -917,9 +1068,9 @@ export class TankGameplayController {
 
       // For debug visualization, use the actual camera position as ray origin.
       // Babylon's picking ray origin can be at the near-plane, which is confusing visually.
-      this.updateAimDebug(camera.globalPosition.clone(), ray.direction, targetPoint);
+      this.updateAimDebug(controlCamera.globalPosition.clone(), ray.direction, targetPoint);
       // Camera reticle is now screen-space GUI; no world-space update needed.
-      this.updateBarrelReticles(camera);
+      this.updateBarrelReticles(renderCamera);
 
       // Transform target point to tank's local space
       const invHullMatrix = this.tankAnchor.getWorldMatrix().clone().invert();
@@ -1092,6 +1243,40 @@ export class TankGameplayController {
       return;
     }
 
+    const computeGunReticleScale = (): number => {
+      const t = clamp(this.gunSpreadDeg / TankGameplayController.GUN_SPREAD_MAX_DEG, 0, 1);
+      const base = lerp(
+        TankGameplayController.GUN_RETICLE_SCALE_MIN,
+        TankGameplayController.GUN_RETICLE_SCALE_MAX,
+        t
+      );
+
+      const kickT = this.gunReticleKickTime;
+      const kick =
+        kickT <= TankGameplayController.GUN_RETICLE_KICK_UP_SECONDS
+          ? lerp(
+              TankGameplayController.GUN_RETICLE_KICK_OVERSHOOT,
+              TankGameplayController.GUN_RETICLE_KICK_SETTLE,
+              clamp(kickT / TankGameplayController.GUN_RETICLE_KICK_UP_SECONDS, 0, 1)
+            )
+          : kickT <=
+              TankGameplayController.GUN_RETICLE_KICK_UP_SECONDS +
+                TankGameplayController.GUN_RETICLE_KICK_FADE_SECONDS
+            ? lerp(
+                TankGameplayController.GUN_RETICLE_KICK_SETTLE,
+                0,
+                clamp(
+                  (kickT - TankGameplayController.GUN_RETICLE_KICK_UP_SECONDS) /
+                    TankGameplayController.GUN_RETICLE_KICK_FADE_SECONDS,
+                  0,
+                  1
+                )
+              )
+            : 0;
+
+      return base * (1 + kick);
+    };
+
     // In zoom view, keep barrel reticles locked to screen center (avoid parallax between camera ray and muzzle ray).
     // Also keep shell aim point aligned with the camera aim target so the projectile uses the same target.
     if (this.zoomActive) {
@@ -1108,6 +1293,16 @@ export class TankGameplayController {
         this.barrelGunReticle2D.isVisible = this.activeWeapon === "bullet";
         this.barrelGunReticle2D.leftInPixels = 0;
         this.barrelGunReticle2D.topInPixels = 0;
+        if (this.activeWeapon === "bullet") {
+          const s = computeGunReticleScale();
+          (this.barrelGunReticle2D as unknown as Control).scaleX = s;
+          (this.barrelGunReticle2D as unknown as Control).scaleY = s;
+        } else {
+          (this.barrelGunReticle2D as unknown as Control).scaleX =
+            TankGameplayController.GUN_RETICLE_SCALE_MIN;
+          (this.barrelGunReticle2D as unknown as Control).scaleY =
+            TankGameplayController.GUN_RETICLE_SCALE_MIN;
+        }
       }
       return;
     }
@@ -1211,10 +1406,50 @@ export class TankGameplayController {
         }
 
         // (Gun impacts/damage can be implemented later if needed.)
+        const ui = this.barrelGunReticle2D;
         if (this.activeWeapon === "bullet") {
-          updateUiFromHit(hitPoint, this.barrelGunReticle2D);
-        } else if (this.barrelGunReticle2D) {
-          this.barrelGunReticle2D.isVisible = false;
+          // Reticle scales with spread: 1.0 -> 1.5 as spread goes 0° -> 9°.
+          if (ui) {
+            const t = clamp(this.gunSpreadDeg / TankGameplayController.GUN_SPREAD_MAX_DEG, 0, 1);
+            const s = lerp(
+              TankGameplayController.GUN_RETICLE_SCALE_MIN,
+              TankGameplayController.GUN_RETICLE_SCALE_MAX,
+              t
+            );
+
+            // Per-shot kick: 15% -> 10% quickly, then fades out.
+            const kickT = this.gunReticleKickTime;
+            const kick =
+              kickT <= TankGameplayController.GUN_RETICLE_KICK_UP_SECONDS
+                ? lerp(
+                    TankGameplayController.GUN_RETICLE_KICK_OVERSHOOT,
+                    TankGameplayController.GUN_RETICLE_KICK_SETTLE,
+                    clamp(kickT / TankGameplayController.GUN_RETICLE_KICK_UP_SECONDS, 0, 1)
+                  )
+                : kickT <=
+                    TankGameplayController.GUN_RETICLE_KICK_UP_SECONDS +
+                      TankGameplayController.GUN_RETICLE_KICK_FADE_SECONDS
+                  ? lerp(
+                      TankGameplayController.GUN_RETICLE_KICK_SETTLE,
+                      0,
+                      clamp(
+                        (kickT - TankGameplayController.GUN_RETICLE_KICK_UP_SECONDS) /
+                          TankGameplayController.GUN_RETICLE_KICK_FADE_SECONDS,
+                        0,
+                        1
+                      )
+                    )
+                  : 0;
+
+            const finalScale = s * (1 + kick);
+            (ui as unknown as Control).scaleX = finalScale;
+            (ui as unknown as Control).scaleY = finalScale;
+          }
+          updateUiFromHit(hitPoint, ui);
+        } else if (ui) {
+          ui.isVisible = false;
+          (ui as unknown as Control).scaleX = TankGameplayController.GUN_RETICLE_SCALE_MIN;
+          (ui as unknown as Control).scaleY = TankGameplayController.GUN_RETICLE_SCALE_MIN;
         }
       }
     }
@@ -1921,6 +2156,10 @@ function repeat(value: number, length: number): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
 }
 
 function toRadians(valueInDegrees: number): number {

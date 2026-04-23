@@ -4,3 +4,4 @@ export const skyboxAssetUrl = new URL("../../assets/textures/skybox.env", import
 export const reticleCameraAssetUrl = new URL("../../assets/ui/reticle_camera.png", import.meta.url).href;
 export const reticleBarrelAssetUrl = new URL("../../assets/ui/reticle_barrel.png", import.meta.url).href;
 export const reticleGunAssetUrl = new URL("../../assets/ui/reticle_gun.png", import.meta.url).href;
+export const sparkImpactAssetUrl = new URL("../../assets/effects/spark.png", import.meta.url).href;
