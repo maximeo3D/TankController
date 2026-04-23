@@ -206,7 +206,13 @@ export class TankGameplayController {
 
   private sparkSpriteManager: SpriteManager | null = null;
   private sparkSpritePool: Sprite[] = [];
-  private activeSparkSprites: { sprite: Sprite; age: number; life: number; grow: number }[] = [];
+  private activeSparkSprites: {
+    sprite: Sprite;
+    age: number;
+    life: number;
+    grow: number;
+    maxSize: number;
+  }[] = [];
 
   private explosionDefsPromise: Promise<unknown[]> | null = null;
 
@@ -926,15 +932,29 @@ export class TankGameplayController {
   }
 
   private spawnSparkImpact(worldPos: Vector3): void {
-    const sprite = this.sparkSpritePool.pop() ?? null;
-    if (!sprite) return;
-    sprite.isVisible = true;
-    sprite.position.copyFrom(worldPos);
-    sprite.size = 0;
-    sprite.color.a = 1;
-    sprite.angle = Math.random() * Math.PI * 2;
-    // Speed up x2.
-    this.activeSparkSprites.push({ sprite, age: 0, life: 0.18, grow: 0.04 });
+    // "Volumetric" look: spawn a few sprites with slight offsets + different angles.
+    // Keeping everything pooled to avoid allocations/drawcall growth.
+    const count = 6;
+    const radius = 0.06;
+
+    // Small random offsets in world XY plane (good enough visually for now).
+    for (let i = 0; i < count; i++) {
+      const sprite = this.sparkSpritePool.pop() ?? null;
+      if (!sprite) return;
+
+      const a = Math.random() * Math.PI * 2;
+      const r = Math.random() * radius;
+      const offset = new Vector3(Math.cos(a) * r, (Math.random() - 0.5) * radius, Math.sin(a) * r);
+
+      sprite.isVisible = true;
+      sprite.position.copyFrom(worldPos.add(offset));
+      sprite.size = 0;
+      sprite.color.a = 1;
+      sprite.angle = Math.random() * Math.PI * 2;
+
+      // Speed up x2.
+      this.activeSparkSprites.push({ sprite, age: 0, life: 0.14, grow: 0.14, maxSize: 0.5 });
+    }
   }
 
   private updateSparks(dt: number): void {
@@ -952,7 +972,7 @@ export class TankGameplayController {
         continue;
       }
       const growT = s.grow > 0 ? clamp(s.age / s.grow, 0, 1) : 1;
-      const size = growT * 0.5;
+      const size = growT * s.maxSize;
       s.sprite.size = size;
       s.sprite.color.a = 1 - t;
     }
