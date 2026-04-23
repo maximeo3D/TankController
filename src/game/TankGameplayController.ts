@@ -3,7 +3,7 @@ import { Plane } from "@babylonjs/core/Maths/math.plane";
 import { Axis, Space } from "@babylonjs/core/Maths/math.axis";
 import "@babylonjs/core/Culling/ray";
 import { Ray } from "@babylonjs/core/Culling/ray";
-import type { Material } from "@babylonjs/core/Materials/material";
+import { Material, type Material as BabylonMaterial } from "@babylonjs/core/Materials/material";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import type { LinesMesh } from "@babylonjs/core/Meshes/linesMesh";
@@ -12,6 +12,7 @@ import { Mesh as BabylonMesh } from "@babylonjs/core/Meshes/mesh";
 import { Color3 } from "@babylonjs/core/Maths/math.color";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { Texture } from "@babylonjs/core/Materials/Textures/texture";
+import { SpriteManager, Sprite } from "@babylonjs/core/Sprites";
 import { PhysicsBody } from "@babylonjs/core/Physics/v2/physicsBody";
 import { PhysicsShapeMesh, PhysicsShapeSphere, type PhysicsShape } from "@babylonjs/core/Physics/v2/physicsShape";
 import { PhysicsMotionType } from "@babylonjs/core/Physics/v2/IPhysicsEnginePlugin";
@@ -26,7 +27,12 @@ import { ParticleSystem } from "@babylonjs/core/Particles/particleSystem";
 import type { TankControllerConfig } from "../config/tankController";
 import { TankInput, type WeaponType } from "./TankInput";
 import { AdvancedDynamicTexture, Rectangle, Control, Image } from "@babylonjs/gui";
-import { reticleCameraAssetUrl, reticleBarrelAssetUrl, reticleGunAssetUrl } from "../assets/assetUrls";
+import {
+  reticleCameraAssetUrl,
+  reticleBarrelAssetUrl,
+  reticleGunAssetUrl,
+  sparkImpactAssetUrl
+} from "../assets/assetUrls";
 import type { TrackTreadParticleBundle } from "./trackTreadParticles";
 
 interface BoneControl {
@@ -117,7 +123,7 @@ export class TankGameplayController {
   private readonly cannonBaseLocalPosition: Vector3;
   private readonly muzzleCannonNode: TransformNode | AbstractMesh | null;
   private readonly muzzleGunNode: TransformNode | AbstractMesh | null;
-  private readonly trackMaterial: Material | null;
+  private readonly trackMaterial: BabylonMaterial | null;
   private trackSystem: TrackSegmentSystem | null = null;
   private readonly tankMeshIdsToIgnore = new Set<number>();
   private readonly ammoShellMesh: Mesh | null;
@@ -188,7 +194,19 @@ export class TankGameplayController {
   private barrelShellReticle2D: Rectangle | null = null;
   private barrelGunReticle2D: Rectangle | null = null;
   private lastShellAimPoint: Vector3 | null = null;
-  private activeGunTracers: { mesh: Mesh; from: Vector3; to: Vector3; t: number; speed: number }[] = [];
+  private activeGunTracers: {
+    mesh: Mesh;
+    from: Vector3;
+    to: Vector3;
+    dir: Vector3;
+    hitPoint: Vector3;
+    t: number;
+    speed: number;
+  }[] = [];
+
+  private sparkSpriteManager: SpriteManager | null = null;
+  private sparkSpritePool: Sprite[] = [];
+  private activeSparkSprites: { sprite: Sprite; age: number; life: number; grow: number }[] = [];
 
   private explosionDefsPromise: Promise<unknown[]> | null = null;
 
@@ -330,6 +348,29 @@ export class TankGameplayController {
     barrelGun.isPointerBlocker = false;
     this.hudTexture.addControl(barrelGun);
     this.barrelGunReticle2D = barrelGun as unknown as Rectangle;
+
+    // Spark impact sprites (for gun hitscan impacts).
+    // Using sprites avoids fragile transparent-plane shader issues on some GPUs/drivers.
+    const poolSize = 64;
+    this.sparkSpriteManager = new SpriteManager(
+      "spark_impact_sprite_mgr",
+      sparkImpactAssetUrl,
+      poolSize,
+      // IMPORTANT: cellSize must match the actual texture size, otherwise Babylon crops (treats it as a spritesheet).
+      { width: 350, height: 350 },
+      this.scene
+    );
+    this.sparkSpriteManager.isPickable = false;
+    this.sparkSpriteManager.disableDepthWrite = false;
+
+    for (let i = 0; i < poolSize; i++) {
+      const s = new Sprite(`spark_sprite_${i}`, this.sparkSpriteManager);
+      s.isVisible = false;
+      s.size = 0;
+      s.angle = 0;
+      s.color.a = 1;
+      this.sparkSpritePool.push(s);
+    }
   }
 
   private initSuspensionDebugSpheres(): void {
@@ -490,6 +531,7 @@ export class TankGameplayController {
     this.updateSuspensionDebugSpheres();
     this.updateProjectiles(dt);
     this.updateGunTracers(dt);
+    this.updateSparks(dt);
   };
 
   private updateSuspensionDebugSpheres(): void {
@@ -577,7 +619,20 @@ export class TankGameplayController {
     const dir = baseForward.add(offset).normalize();
 
     const maxDistance = this.config.aim.cameraMaxTargetDistance;
-    const target = origin.add(dir.scale(maxDistance));
+    const to = origin.add(dir.scale(maxDistance));
+
+    let hitPoint = to;
+    const physics = this.scene.getPhysicsEngine();
+    if (physics) {
+      const hit = physics.raycast(origin, to, {
+        ignoreBody: this.tankBody,
+        shouldHitTriggers: false,
+        collideWith: 0xffffffff
+      });
+      if (hit.hasHit) {
+        hitPoint = hit.hitPointWorld.clone();
+      }
+    }
 
     // Visual tracer (non-physical)
     const mesh = this.ammoBulletMesh.clone("bullet_tracer", null);
@@ -586,10 +641,13 @@ export class TankGameplayController {
     }
     mesh.isVisible = true;
     mesh.position.copyFrom(origin);
+    mesh.rotationQuaternion = Quaternion.FromLookDirectionRH(dir.scale(-1), Axis.Y);
     this.activeGunTracers.push({
       mesh,
       from: origin.clone(),
-      to: target.clone(),
+      to: hitPoint.clone(),
+      dir: dir.clone(),
+      hitPoint: hitPoint.clone(),
       t: 0,
       speed: this.config.weapons.bullet.muzzleVelocity
     });
@@ -856,12 +914,47 @@ export class TankGameplayController {
       const deltaT = distance > 0 ? (travelPerSecond * dt) / distance : 1;
       tracer.t += deltaT;
       if (tracer.t >= 1) {
+        this.spawnSparkImpact(tracer.hitPoint);
         tracer.mesh.dispose();
         this.activeGunTracers.splice(i, 1);
         continue;
       }
       const pos = Vector3.Lerp(tracer.from, tracer.to, tracer.t);
       tracer.mesh.position.copyFrom(pos);
+      tracer.mesh.rotationQuaternion = Quaternion.FromLookDirectionRH(tracer.dir.scale(-1), Axis.Y);
+    }
+  }
+
+  private spawnSparkImpact(worldPos: Vector3): void {
+    const sprite = this.sparkSpritePool.pop() ?? null;
+    if (!sprite) return;
+    sprite.isVisible = true;
+    sprite.position.copyFrom(worldPos);
+    sprite.size = 0;
+    sprite.color.a = 1;
+    sprite.angle = Math.random() * Math.PI * 2;
+    // Speed up x2.
+    this.activeSparkSprites.push({ sprite, age: 0, life: 0.18, grow: 0.04 });
+  }
+
+  private updateSparks(dt: number): void {
+    if (this.activeSparkSprites.length === 0) return;
+    for (let i = this.activeSparkSprites.length - 1; i >= 0; i--) {
+      const s = this.activeSparkSprites[i];
+      s.age += dt;
+      const t = s.life > 0 ? s.age / s.life : 1;
+      if (t >= 1) {
+        s.sprite.isVisible = false;
+        s.sprite.size = 0;
+        s.sprite.color.a = 0;
+        this.sparkSpritePool.push(s.sprite);
+        this.activeSparkSprites.splice(i, 1);
+        continue;
+      }
+      const growT = s.grow > 0 ? clamp(s.age / s.grow, 0, 1) : 1;
+      const size = growT * 0.5;
+      s.sprite.size = size;
+      s.sprite.color.a = 1 - t;
     }
   }
 
