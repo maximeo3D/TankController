@@ -1014,18 +1014,23 @@ export class TankGameplayController {
   private applyTurretAndCannon(_pointerX: number, _pointerY: number, dt: number): void {
     // IMPORTANT: gameplay aiming must not change when switching to the alternative zoom view.
     // So we always use the orbit camera (tankCamera) as the control camera for raycasts/aim.
-    const camera = this.tankCamera ?? (this.scene.activeCamera as TargetCamera | null);
-    if (!camera) {
+    const controlCamera = this.tankCamera ?? (this.scene.activeCamera as TargetCamera | null);
+    if (!controlCamera) {
       return;
     }
 
     // Ensure the camera world matrix/globalPosition is up to date before we use it for debug + raycasting.
-    camera.computeWorldMatrix();
+    controlCamera.computeWorldMatrix();
+
+    // In zoom view, the render camera is different from the control camera.
+    // Reticle projection must use the render camera, while aiming uses control camera.
+    const renderCamera =
+      (this.scene.activeCamera as Camera | null | undefined) ?? (controlCamera as unknown as Camera);
 
     // "Camera reticle" is a fixed crosshair: raycast from screen center (not pointer position).
     const cx = this.scene.getEngine().getRenderWidth() * 0.5;
     const cy = this.scene.getEngine().getRenderHeight() * 0.5;
-    const ray = this.scene.createPickingRay(cx, cy, Matrix.Identity(), camera);
+    const ray = this.scene.createPickingRay(cx, cy, Matrix.Identity(), controlCamera);
     let targetPoint: Vector3 | null = null;
 
     const pickResult = this.scene.pickWithRay(ray, (mesh) => {
@@ -1063,9 +1068,9 @@ export class TankGameplayController {
 
       // For debug visualization, use the actual camera position as ray origin.
       // Babylon's picking ray origin can be at the near-plane, which is confusing visually.
-      this.updateAimDebug(camera.globalPosition.clone(), ray.direction, targetPoint);
+      this.updateAimDebug(controlCamera.globalPosition.clone(), ray.direction, targetPoint);
       // Camera reticle is now screen-space GUI; no world-space update needed.
-      this.updateBarrelReticles(camera);
+      this.updateBarrelReticles(renderCamera);
 
       // Transform target point to tank's local space
       const invHullMatrix = this.tankAnchor.getWorldMatrix().clone().invert();
@@ -1238,6 +1243,40 @@ export class TankGameplayController {
       return;
     }
 
+    const computeGunReticleScale = (): number => {
+      const t = clamp(this.gunSpreadDeg / TankGameplayController.GUN_SPREAD_MAX_DEG, 0, 1);
+      const base = lerp(
+        TankGameplayController.GUN_RETICLE_SCALE_MIN,
+        TankGameplayController.GUN_RETICLE_SCALE_MAX,
+        t
+      );
+
+      const kickT = this.gunReticleKickTime;
+      const kick =
+        kickT <= TankGameplayController.GUN_RETICLE_KICK_UP_SECONDS
+          ? lerp(
+              TankGameplayController.GUN_RETICLE_KICK_OVERSHOOT,
+              TankGameplayController.GUN_RETICLE_KICK_SETTLE,
+              clamp(kickT / TankGameplayController.GUN_RETICLE_KICK_UP_SECONDS, 0, 1)
+            )
+          : kickT <=
+              TankGameplayController.GUN_RETICLE_KICK_UP_SECONDS +
+                TankGameplayController.GUN_RETICLE_KICK_FADE_SECONDS
+            ? lerp(
+                TankGameplayController.GUN_RETICLE_KICK_SETTLE,
+                0,
+                clamp(
+                  (kickT - TankGameplayController.GUN_RETICLE_KICK_UP_SECONDS) /
+                    TankGameplayController.GUN_RETICLE_KICK_FADE_SECONDS,
+                  0,
+                  1
+                )
+              )
+            : 0;
+
+      return base * (1 + kick);
+    };
+
     // In zoom view, keep barrel reticles locked to screen center (avoid parallax between camera ray and muzzle ray).
     // Also keep shell aim point aligned with the camera aim target so the projectile uses the same target.
     if (this.zoomActive) {
@@ -1254,6 +1293,16 @@ export class TankGameplayController {
         this.barrelGunReticle2D.isVisible = this.activeWeapon === "bullet";
         this.barrelGunReticle2D.leftInPixels = 0;
         this.barrelGunReticle2D.topInPixels = 0;
+        if (this.activeWeapon === "bullet") {
+          const s = computeGunReticleScale();
+          (this.barrelGunReticle2D as unknown as Control).scaleX = s;
+          (this.barrelGunReticle2D as unknown as Control).scaleY = s;
+        } else {
+          (this.barrelGunReticle2D as unknown as Control).scaleX =
+            TankGameplayController.GUN_RETICLE_SCALE_MIN;
+          (this.barrelGunReticle2D as unknown as Control).scaleY =
+            TankGameplayController.GUN_RETICLE_SCALE_MIN;
+        }
       }
       return;
     }
