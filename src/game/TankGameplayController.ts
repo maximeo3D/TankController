@@ -214,6 +214,21 @@ export class TankGameplayController {
     maxSize: number;
   }[] = [];
 
+  // Coax (hitscan) spread: grows while firing, shrinks when not firing.
+  private gunSpreadDeg = 0;
+  private static readonly GUN_SPREAD_GROW_DEG_PER_SEC = 1.0;
+  private static readonly GUN_SPREAD_SHRINK_DEG_PER_SEC = 5.0;
+  private static readonly GUN_SPREAD_MAX_DEG = 5.0;
+  private static readonly GUN_RETICLE_SCALE_MIN = 1.0;
+  private static readonly GUN_RETICLE_SCALE_MAX = 1.5;
+
+  // Per-shot reticle "kick" (recoil bounce) for the coax reticle.
+  private gunReticleKickTime = 999;
+  private static readonly GUN_RETICLE_KICK_OVERSHOOT = 0.15; // +15%
+  private static readonly GUN_RETICLE_KICK_SETTLE = 0.10; // +10%
+  private static readonly GUN_RETICLE_KICK_UP_SECONDS = 0.05;
+  private static readonly GUN_RETICLE_KICK_FADE_SECONDS = 0.07;
+
   private explosionDefsPromise: Promise<unknown[]> | null = null;
 
   // Debug: log zoom camera vs cannon bone/muzzle on next shell shot.
@@ -569,6 +584,7 @@ export class TankGameplayController {
     if (this.bulletCooldownTimer > 0) {
       this.bulletCooldownTimer -= dt;
     }
+    this.gunReticleKickTime += dt;
 
     // Shell reload
     if (!this.shellChambered && this.shellReserveAmmo > 0) {
@@ -587,6 +603,22 @@ export class TankGameplayController {
         this.fireBullet();
       }
     }
+
+    // Coax spread model (0 -> max while firing; relax back when not firing).
+    const isGunTriggerHeld = this.fireHeld && this.battery > 0 && this.activeWeapon === "bullet";
+    if (isGunTriggerHeld) {
+      this.gunSpreadDeg = clamp(
+        this.gunSpreadDeg + TankGameplayController.GUN_SPREAD_GROW_DEG_PER_SEC * dt,
+        0,
+        TankGameplayController.GUN_SPREAD_MAX_DEG
+      );
+    } else {
+      this.gunSpreadDeg = clamp(
+        this.gunSpreadDeg - TankGameplayController.GUN_SPREAD_SHRINK_DEG_PER_SEC * dt,
+        0,
+        TankGameplayController.GUN_SPREAD_MAX_DEG
+      );
+    }
   }
 
   private fireShell(): void {
@@ -602,6 +634,7 @@ export class TankGameplayController {
 
   private fireBullet(): void {
     this.bulletCooldownTimer = 1.0 / this.config.weapons.bullet.shotsPerSecond;
+    this.gunReticleKickTime = 0;
 
     if (!this.muzzleGunNode || !this.ammoBulletMesh) {
       return;
@@ -614,8 +647,8 @@ export class TankGameplayController {
       .scale(-this.config.rig.movementForwardSign)
       .normalize();
 
-    // Apply a small random bloom cone (~1°)
-    const maxAngleRad = (Math.PI / 180) * 0.5;
+    // Dynamic bloom cone: grows with sustained firing (0° -> 9°).
+    const maxAngleRad = (Math.PI / 180) * this.gunSpreadDeg;
     const right = Vector3.Cross(baseForward, Axis.Y).normalize();
     const up = Vector3.Cross(right, baseForward).normalize();
     const r = Math.random();
@@ -1324,10 +1357,50 @@ export class TankGameplayController {
         }
 
         // (Gun impacts/damage can be implemented later if needed.)
+        const ui = this.barrelGunReticle2D;
         if (this.activeWeapon === "bullet") {
-          updateUiFromHit(hitPoint, this.barrelGunReticle2D);
-        } else if (this.barrelGunReticle2D) {
-          this.barrelGunReticle2D.isVisible = false;
+          // Reticle scales with spread: 1.0 -> 1.5 as spread goes 0° -> 9°.
+          if (ui) {
+            const t = clamp(this.gunSpreadDeg / TankGameplayController.GUN_SPREAD_MAX_DEG, 0, 1);
+            const s = lerp(
+              TankGameplayController.GUN_RETICLE_SCALE_MIN,
+              TankGameplayController.GUN_RETICLE_SCALE_MAX,
+              t
+            );
+
+            // Per-shot kick: 15% -> 10% quickly, then fades out.
+            const kickT = this.gunReticleKickTime;
+            const kick =
+              kickT <= TankGameplayController.GUN_RETICLE_KICK_UP_SECONDS
+                ? lerp(
+                    TankGameplayController.GUN_RETICLE_KICK_OVERSHOOT,
+                    TankGameplayController.GUN_RETICLE_KICK_SETTLE,
+                    clamp(kickT / TankGameplayController.GUN_RETICLE_KICK_UP_SECONDS, 0, 1)
+                  )
+                : kickT <=
+                    TankGameplayController.GUN_RETICLE_KICK_UP_SECONDS +
+                      TankGameplayController.GUN_RETICLE_KICK_FADE_SECONDS
+                  ? lerp(
+                      TankGameplayController.GUN_RETICLE_KICK_SETTLE,
+                      0,
+                      clamp(
+                        (kickT - TankGameplayController.GUN_RETICLE_KICK_UP_SECONDS) /
+                          TankGameplayController.GUN_RETICLE_KICK_FADE_SECONDS,
+                        0,
+                        1
+                      )
+                    )
+                  : 0;
+
+            const finalScale = s * (1 + kick);
+            (ui as unknown as Control).scaleX = finalScale;
+            (ui as unknown as Control).scaleY = finalScale;
+          }
+          updateUiFromHit(hitPoint, ui);
+        } else if (ui) {
+          ui.isVisible = false;
+          (ui as unknown as Control).scaleX = TankGameplayController.GUN_RETICLE_SCALE_MIN;
+          (ui as unknown as Control).scaleY = TankGameplayController.GUN_RETICLE_SCALE_MIN;
         }
       }
     }
@@ -2034,6 +2107,10 @@ function repeat(value: number, length: number): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
 }
 
 function toRadians(valueInDegrees: number): number {
