@@ -1,0 +1,317 @@
+{
+  "root": {
+    "tags": null,
+    "renderToIntermediateTexture": false,
+    "maxLayoutCycle": 3,
+    "adaptHeightToChildren": false,
+    "adaptWidthToChildren": false,
+    "background": "",
+    "isHitTestVisible": true,
+    "isPointerBlocker": false,
+    "isFocusInvisible": false,
+    "clipChildren": true,
+    "clipContent": true,
+    "useBitmapCache": false,
+    "name": "hud_root",
+    "className": "Container",
+    "width": "100%",
+    "height": "100%",
+    "alpha": 1,
+    "scaleX": 1,
+    "scaleY": 1,
+    "rotation": 0,
+    "transformCenterX": 0.5,
+    "transformCenterY": 0.5,
+    "horizontalAlignment": 2,
+    "verticalAlignment": 2,
+    "zIndex": 0,
+    "color": "",
+    "isVisible": true,
+    "children": [
+      {
+        "name": "hud_panel_left",
+        "className": "Rectangle",
+        "width": "320px",
+        "height": "190px",
+        "alpha": 1,
+        "isPointerBlocker": false,
+        "horizontalAlignment": 0,
+        "verticalAlignment": 1,
+        "left": "16px",
+        "top": "-16px",
+        "background": "rgba(0,0,0,0.45)",
+        "thickness": 0,
+        "cornerRadius": 8,
+        "zIndex": 0,
+        "isVisible": true,
+        "children": [
+          {
+            "name": "hud_panel_left_stack",
+            "className": "StackPanel",
+            "isVertical": true,
+            "width": "100%",
+            "height": "100%",
+            "isPointerBlocker": false,
+            "paddingTop": "15px",
+            "paddingBottom": "15px",
+            "paddingLeft": "15px",
+            "paddingRight": "15px",
+            "isVisible": true,
+            "children": [
+              {
+                "name": "hud_battery_label",
+                "className": "TextBlock",
+                "text": "Batterie 100%",
+                "color": "white",
+                "fontSize": "14px",
+                "fontFamily": "Arial",
+                "textHorizontalAlignment": 0,
+                "textVerticalAlignment": 2,
+                "width": "100%",
+                "height": "20px",
+                "isPointerBlocker": false,
+                "isVisible": true
+              },
+              {
+                "name": "hud_battery_bar_bg",
+                "className": "Rectangle",
+                "width": "100%",
+                "height": "12px",
+                "background": "rgba(255,255,255,0.2)",
+                "thickness": 0,
+                "cornerRadius": 4,
+                "isPointerBlocker": false,
+                "isVisible": true,
+                "children": [
+                  {
+                    "name": "hud_battery_bar_fill",
+                    "className": "Rectangle",
+                    "width": "100%",
+                    "height": "100%",
+                    "horizontalAlignment": 0,
+                    "background": "#4caf50",
+                    "thickness": 0,
+                    "cornerRadius": 4,
+                    "isPointerBlocker": false,
+                    "isVisible": true
+                  }
+                ]
+              },
+              {
+                "name": "hud_overcharge_label",
+                "className": "TextBlock",
+                "text": "Surtension 50%",
+                "color": "white",
+                "fontSize": "14px",
+                "fontFamily": "Arial",
+                "textHorizontalAlignment": 0,
+                "textVerticalAlignment": 2,
+                "width": "100%",
+                "height": "20px",
+                "paddingTop": "10px",
+                "isPointerBlocker": false,
+                "isVisible": true
+              },
+              {
+                "name": "hud_overcharge_bar_bg",
+                "className": "Rectangle",
+                "width": "100%",
+                "height": "12px",
+                "background": "rgba(255,255,255,0.2)",
+                "thickness": 0,
+                "cornerRadius": 4,
+                "isPointerBlocker": false,
+                "isVisible": true,
+                "children": [
+                  {
+                    "name": "hud_overcharge_bar_fill",
+                    "className": "Rectangle",
+                    "width": "50%",
+                    "height": "100%",
+                    "horizontalAlignment": 0,
+                    "background": "#ff9800",
+                    "thickness": 0,
+                    "cornerRadius": 4,
+                    "isPointerBlocker": false,
+                    "isVisible": true
+                  }
+                ]
+              },
+              {
+                "name": "hud_weapon_row",
+                "className": "StackPanel",
+                "isVertical": false,
+                "width": "100%",
+                "height": "30px",
+                "paddingTop": "15px",
+                "isPointerBlocker": false,
+                "isVisible": true,
+                "children": [
+                  {
+                    "name": "hud_weapon_icon_shell",
+                    "className": "TextBlock",
+                    "text": "[1] OBUS",
+                    "color": "white",
+                    "fontSize": "13px",
+                    "fontFamily": "Arial",
+                    "fontStyle": "bold",
+                    "textHorizontalAlignment": 0,
+                    "width": "80px",
+                    "isPointerBlocker": false,
+                    "isVisible": true
+                  },
+                  {
+                    "name": "hud_weapon_icon_gun",
+                    "className": "TextBlock",
+                    "text": "[2] MITRAILLEUSE",
+                    "color": "#888888",
+                    "fontSize": "13px",
+                    "fontFamily": "Arial",
+                    "textHorizontalAlignment": 0,
+                    "width": "120px",
+                    "isPointerBlocker": false,
+                    "isVisible": true
+                  },
+                  {
+                    "name": "hud_weapon_name",
+                    "className": "TextBlock",
+                    "text": "Arme : Obus",
+                    "color": "#4caf50",
+                    "fontSize": "13px",
+                    "fontFamily": "Arial",
+                    "textHorizontalAlignment": 1,
+                    "width": "90px",
+                    "isPointerBlocker": false,
+                    "isVisible": true
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "hud_panel_bottom",
+        "className": "Rectangle",
+        "width": "260px",
+        "height": "110px",
+        "alpha": 1,
+        "isPointerBlocker": false,
+        "horizontalAlignment": 1,
+        "verticalAlignment": 1,
+        "left": "-16px",
+        "top": "-16px",
+        "background": "rgba(0,0,0,0.45)",
+        "thickness": 0,
+        "cornerRadius": 8,
+        "zIndex": 0,
+        "isVisible": true,
+        "children": [
+          {
+            "name": "hud_panel_bottom_stack",
+            "className": "StackPanel",
+            "isVertical": true,
+            "width": "100%",
+            "height": "100%",
+            "isPointerBlocker": false,
+            "paddingTop": "15px",
+            "paddingBottom": "15px",
+            "paddingLeft": "15px",
+            "paddingRight": "15px",
+            "isVisible": true,
+            "children": [
+              {
+                "name": "hud_shell_ammo",
+                "className": "TextBlock",
+                "text": "Obus : 14 (chambre)",
+                "color": "white",
+                "fontSize": "16px",
+                "fontFamily": "Arial",
+                "fontStyle": "bold",
+                "textHorizontalAlignment": 1,
+                "textVerticalAlignment": 2,
+                "width": "100%",
+                "height": "26px",
+                "isPointerBlocker": false,
+                "isVisible": true
+              },
+              {
+                "name": "hud_shell_status",
+                "className": "TextBlock",
+                "text": "Prêt",
+                "color": "#4caf50",
+                "fontSize": "15px",
+                "fontFamily": "Arial",
+                "textHorizontalAlignment": 1,
+                "textVerticalAlignment": 2,
+                "width": "100%",
+                "height": "26px",
+                "isPointerBlocker": false,
+                "isVisible": true
+              },
+              {
+                "name": "hud_gun_hint",
+                "className": "TextBlock",
+                "text": "Mitrailleuse : tir continu",
+                "color": "#aaaaaa",
+                "fontSize": "13px",
+                "fontFamily": "Arial",
+                "textHorizontalAlignment": 1,
+                "textVerticalAlignment": 2,
+                "width": "100%",
+                "height": "26px",
+                "isPointerBlocker": false,
+                "isVisible": true
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "hud_indicators_container",
+        "className": "StackPanel",
+        "isVertical": true,
+        "width": "150px",
+        "height": "80px",
+        "horizontalAlignment": 1,
+        "verticalAlignment": 0,
+        "left": "-16px",
+        "top": "16px",
+        "isPointerBlocker": false,
+        "isVisible": true,
+        "children": [
+          {
+            "name": "hud_boost_indicator",
+            "className": "TextBlock",
+            "text": "BOOST : OFF",
+            "color": "white",
+            "fontSize": "14px",
+            "fontFamily": "Arial",
+            "fontStyle": "bold",
+            "textHorizontalAlignment": 1,
+            "textVerticalAlignment": 2,
+            "width": "100%",
+            "height": "24px",
+            "isPointerBlocker": false,
+            "isVisible": true
+          },
+          {
+            "name": "hud_zoom_indicator",
+            "className": "TextBlock",
+            "text": "ZOOM : OFF",
+            "color": "white",
+            "fontSize": "14px",
+            "fontFamily": "Arial",
+            "fontStyle": "bold",
+            "textHorizontalAlignment": 1,
+            "textVerticalAlignment": 2,
+            "width": "100%",
+            "height": "24px",
+            "isPointerBlocker": false,
+            "isVisible": true
+          }
+        ]
+      }
+    ]
+  }
+}

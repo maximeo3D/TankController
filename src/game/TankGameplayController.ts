@@ -26,8 +26,9 @@ import type { Scene } from "@babylonjs/core/scene";
 import { ParticleSystem } from "@babylonjs/core/Particles/particleSystem";
 import type { TankControllerConfig } from "../config/tankController";
 import { TankInput, type WeaponType } from "./TankInput";
-import { AdvancedDynamicTexture, Rectangle, Control, Image } from "@babylonjs/gui";
+import { AdvancedDynamicTexture, Rectangle, Control, Image, TextBlock } from "@babylonjs/gui";
 import {
+  hudLayoutJsonUrl,
   reticleCameraAssetUrl,
   reticleBarrelAssetUrl,
   reticleGunAssetUrl,
@@ -195,6 +196,21 @@ export class TankGameplayController {
 
   private susDebugSpheres: Mesh[] = [];
   private hudTexture: AdvancedDynamicTexture | null = null;
+  /** True once `UI_hud.json` parsed; HUD text/bars update only then. */
+  private hudJsonLoaded = false;
+  private hudBatteryLabel: TextBlock | null = null;
+  private hudBatteryFill: Rectangle | null = null;
+  private hudOverchargeLabel: TextBlock | null = null;
+  private hudOverchargeFill: Rectangle | null = null;
+  private hudWeaponIconShell: TextBlock | null = null;
+  private hudWeaponIconGun: TextBlock | null = null;
+  private hudWeaponName: TextBlock | null = null;
+  private hudShellAmmo: TextBlock | null = null;
+  private hudShellStatus: TextBlock | null = null;
+  private hudGunHint: TextBlock | null = null;
+  private hudBoostIndicator: TextBlock | null = null;
+  private hudZoomIndicator: TextBlock | null = null;
+  private hudReticlesAttached = false;
   private barrelShellReticle2D: Rectangle | null = null;
   private barrelGunReticle2D: Rectangle | null = null;
   private lastShellAimPoint: Vector3 | null = null;
@@ -495,19 +511,59 @@ export class TankGameplayController {
   }
 
   private initHud(): void {
-    // Full-screen Babylon GUI for crosshair + future HUD.
     this.hudTexture = AdvancedDynamicTexture.CreateFullscreenUI("hud_ui", true, this.scene);
+    this.hudTexture.useSmallestIdeal = true;
 
-    // Camera reticle (2D PNG) fixed at screen center.
+    void AdvancedDynamicTexture.ParseFromFileAsync(hudLayoutJsonUrl, true, this.hudTexture)
+      .then(() => {
+        this.bindHudLayoutFromJson();
+        this.attachHudReticlesIfNeeded();
+      })
+      .catch((err: unknown) => {
+        console.warn("[TankController] UI_hud.json parse failed:", err);
+        this.attachHudReticlesIfNeeded();
+      });
+
+    this.initSparkImpactSprites();
+  }
+
+  private bindHudLayoutFromJson(): void {
+    if (!this.hudTexture) {
+      return;
+    }
+    const t = this.hudTexture;
+    this.hudBatteryLabel = t.getControlByName("hud_battery_label") as TextBlock | null;
+    this.hudBatteryFill = t.getControlByName("hud_battery_bar_fill") as Rectangle | null;
+    this.hudOverchargeLabel = t.getControlByName("hud_overcharge_label") as TextBlock | null;
+    this.hudOverchargeFill = t.getControlByName("hud_overcharge_bar_fill") as Rectangle | null;
+    this.hudWeaponIconShell = t.getControlByName("hud_weapon_icon_shell") as TextBlock | null;
+    this.hudWeaponIconGun = t.getControlByName("hud_weapon_icon_gun") as TextBlock | null;
+    this.hudWeaponName = t.getControlByName("hud_weapon_name") as TextBlock | null;
+    this.hudShellAmmo = t.getControlByName("hud_shell_ammo") as TextBlock | null;
+    this.hudShellStatus = t.getControlByName("hud_shell_status") as TextBlock | null;
+    this.hudGunHint = t.getControlByName("hud_gun_hint") as TextBlock | null;
+    this.hudBoostIndicator = t.getControlByName("hud_boost_indicator") as TextBlock | null;
+    this.hudZoomIndicator = t.getControlByName("hud_zoom_indicator") as TextBlock | null;
+    this.hudJsonLoaded = true;
+  }
+
+  /** Reticles above HUD layout (`zIndex`). Idempotent. */
+  private attachHudReticlesIfNeeded(): void {
+    if (!this.hudTexture || this.hudReticlesAttached) {
+      return;
+    }
+    this.hudReticlesAttached = true;
+    const z = 50;
+
     const cam = new Image("reticle_camera_img", reticleCameraAssetUrl);
     cam.widthInPixels = 150;
     cam.heightInPixels = 150;
     cam.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
     cam.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
     cam.isPointerBlocker = false;
+    cam.zIndex = z;
     this.hudTexture.addControl(cam);
 
-    // Barrel reticle (2D) – moved each frame by projecting the barrel ray hit point.
     const barrelShell = new Image("reticle_barrel_shell_img", reticleBarrelAssetUrl);
     barrelShell.widthInPixels = 150;
     barrelShell.heightInPixels = 150;
@@ -515,6 +571,7 @@ export class TankGameplayController {
     barrelShell.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
     barrelShell.isVisible = false;
     barrelShell.isPointerBlocker = false;
+    barrelShell.zIndex = z;
     this.hudTexture.addControl(barrelShell);
     this.barrelShellReticle2D = barrelShell as unknown as Rectangle;
 
@@ -525,17 +582,17 @@ export class TankGameplayController {
     barrelGun.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
     barrelGun.isVisible = false;
     barrelGun.isPointerBlocker = false;
+    barrelGun.zIndex = z;
     this.hudTexture.addControl(barrelGun);
     this.barrelGunReticle2D = barrelGun as unknown as Rectangle;
+  }
 
-    // Spark impact sprites (for gun hitscan impacts).
-    // Using sprites avoids fragile transparent-plane shader issues on some GPUs/drivers.
+  private initSparkImpactSprites(): void {
     const poolSize = 64;
     this.sparkSpriteManager = new SpriteManager(
       "spark_impact_sprite_mgr",
       sparkImpactAssetUrl,
       poolSize,
-      // IMPORTANT: cellSize must match the actual texture size, otherwise Babylon crops (treats it as a spritesheet).
       { width: 350, height: 350 },
       this.scene
     );
@@ -549,6 +606,77 @@ export class TankGameplayController {
       s.angle = 0;
       s.color.a = 1;
       this.sparkSpritePool.push(s);
+    }
+  }
+
+  private updateGameplayHud(): void {
+    if (!this.hudJsonLoaded || !this.hudTexture) {
+      return;
+    }
+
+    const bat = clamp(this.battery, 0, 100);
+    const oc = clamp(this.overcharge, 0, 100);
+    if (this.hudBatteryLabel) {
+      this.hudBatteryLabel.text = `Batterie ${Math.round(bat)} %`;
+    }
+    if (this.hudBatteryFill) {
+      this.hudBatteryFill.width = `${Math.round(bat)}%`;
+      this.hudBatteryFill.background =
+        bat < 20 ? "#f44336" : bat < 45 ? "#ff9800" : "#4caf50";
+    }
+    if (this.hudOverchargeLabel) {
+      this.hudOverchargeLabel.text = `Surtension ${Math.round(oc)} %`;
+    }
+    if (this.hudOverchargeFill) {
+      this.hudOverchargeFill.width = `${Math.round(oc)}%`;
+    }
+
+    const shellPick = this.activeWeapon === "shell";
+    const dim = "#6d6d6d";
+    const hi = "#ffeb3b";
+    if (this.hudWeaponIconShell) {
+      this.hudWeaponIconShell.color = shellPick ? hi : dim;
+    }
+    if (this.hudWeaponIconGun) {
+      this.hudWeaponIconGun.color = !shellPick ? hi : dim;
+    }
+    if (this.hudWeaponName) {
+      this.hudWeaponName.text = shellPick ? "Arme : Obus" : "Arme : Mitrailleuse";
+      this.hudWeaponName.color = shellPick ? "#4caf50" : "#90caf9";
+    }
+
+    const reloadSec = this.config.weapons.shell.reloadSeconds;
+    if (this.hudShellAmmo) {
+      if (this.shellChambered) {
+        this.hudShellAmmo.text = `Obus : chargé · réserve ${this.shellReserveAmmo}`;
+      } else {
+        this.hudShellAmmo.text = `Obus : recharge… · réserve ${this.shellReserveAmmo}`;
+      }
+    }
+    if (this.hudShellStatus) {
+      if (this.shellChambered) {
+        this.hudShellStatus.text = "Prêt";
+        this.hudShellStatus.color = "#4caf50";
+      } else if (this.shellReserveAmmo > 0) {
+        const t = clamp(this.shellReloadTimer, 0, reloadSec);
+        this.hudShellStatus.text = `Rechargement ${t.toFixed(1)} s`;
+        this.hudShellStatus.color = "#ff9800";
+      } else {
+        this.hudShellStatus.text = "Plus de munitions";
+        this.hudShellStatus.color = "#f44336";
+      }
+    }
+    if (this.hudGunHint) {
+      this.hudGunHint.text = `Mitrailleuse · dispersion ${this.gunSpreadDeg.toFixed(1)}°`;
+    }
+
+    if (this.hudBoostIndicator) {
+      this.hudBoostIndicator.text = this.boostActive ? "BOOST : ON" : "BOOST : OFF";
+      this.hudBoostIndicator.color = this.boostActive ? "#ff9800" : "#ffffff";
+    }
+    if (this.hudZoomIndicator) {
+      this.hudZoomIndicator.text = this.zoomActive ? "ZOOM : ON" : "ZOOM : OFF";
+      this.hudZoomIndicator.color = this.zoomActive ? "#90caf9" : "#ffffff";
     }
   }
 
@@ -653,6 +781,20 @@ export class TankGameplayController {
 
     this.hudTexture?.dispose();
     this.hudTexture = null;
+    this.hudJsonLoaded = false;
+    this.hudReticlesAttached = false;
+    this.hudBatteryLabel = null;
+    this.hudBatteryFill = null;
+    this.hudOverchargeLabel = null;
+    this.hudOverchargeFill = null;
+    this.hudWeaponIconShell = null;
+    this.hudWeaponIconGun = null;
+    this.hudWeaponName = null;
+    this.hudShellAmmo = null;
+    this.hudShellStatus = null;
+    this.hudGunHint = null;
+    this.hudBoostIndicator = null;
+    this.hudZoomIndicator = null;
     this.barrelShellReticle2D = null;
     this.barrelGunReticle2D = null;
 
@@ -719,6 +861,7 @@ export class TankGameplayController {
     this.updateGunTracers(dt);
     this.updateSparks(dt);
     this.updateShockwaves(dt);
+    this.updateGameplayHud();
   };
 
   private updateSuspensionDebugSpheres(): void {
