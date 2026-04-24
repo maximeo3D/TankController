@@ -1,4 +1,9 @@
+// Ensure Babylon AudioEngine is registered before Engine init.
+import "@babylonjs/core/Audio/audioEngine";
+import "@babylonjs/core/Audio/audioSceneComponent";
 import { Engine } from "@babylonjs/core/Engines/engine";
+import { AudioEngine } from "@babylonjs/core/Audio/audioEngine";
+import { AbstractEngine } from "@babylonjs/core/Engines/abstractEngine";
 import { FreeCamera } from "@babylonjs/core/Cameras/freeCamera";
 import { Color4 } from "@babylonjs/core/Maths/math.color";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
@@ -38,6 +43,7 @@ export class GameApp {
   private readonly overlay: HTMLDivElement;
   private readonly fpsElement: HTMLDivElement;
   private readonly engine: Engine;
+  private audioUnlockButton: HTMLButtonElement | null = null;
   private currentScene: Scene;
   private menuScene: Scene;
   /** Main menu only — never load `UI_levels` into this. */
@@ -90,6 +96,45 @@ export class GameApp {
 
     rootElement.append(this.canvas, this.overlay, this.fpsElement);
 
+    // Ensure audio is created + unlocked on first user gesture.
+    // Some browsers block WebAudio until a gesture, and our UI overlay can intercept canvas events.
+    const tryUnlockAudio = (): void => {
+      const ae =
+        (AbstractEngine as any).audioEngine ??
+        ((AbstractEngine as any).audioEngine = new AudioEngine(rootElement));
+      try {
+        ae.useCustomUnlockedButton = true;
+        ae.unlock?.();
+        const p = ae.audioContext?.resume?.();
+        // If resume() returns a promise, check its result.
+        if (p && typeof (p as Promise<unknown>).then === "function") {
+          void (p as Promise<unknown>).catch(() => {
+            /* ignore */
+          });
+        }
+      } catch {
+        // ignore
+      }
+
+      const state = {
+        unlocked: ae.unlocked,
+        mp3: ae.isMP3supported,
+        ogg: ae.isOGGsupported,
+        ctx: ae.audioContext?.state ?? null
+      };
+      console.log("[TankController][audio] state:", state);
+
+      // If still suspended, show a one-time explicit button (some browser policies require it).
+      if (state.ctx === "suspended" || state.unlocked === false) {
+        this.ensureAudioUnlockButton(rootElement, tryUnlockAudio);
+      } else if (this.audioUnlockButton) {
+        this.audioUnlockButton.remove();
+        this.audioUnlockButton = null;
+      }
+    };
+    this.canvas.addEventListener("pointerdown", tryUnlockAudio, { passive: true });
+    this.overlay.addEventListener("pointerdown", tryUnlockAudio, { passive: true });
+
     this.engine = new Engine(this.canvas, true);
     this.menuScene = this.createMenuScene();
     this.currentScene = this.menuScene;
@@ -98,6 +143,29 @@ export class GameApp {
     window.addEventListener("resize", () => {
       this.engine.resize();
     });
+  }
+
+  private ensureAudioUnlockButton(rootElement: HTMLElement, onClick: () => void): void {
+    if (this.audioUnlockButton) return;
+    const btn = document.createElement("button");
+    btn.textContent = "Enable audio";
+    btn.style.position = "absolute";
+    btn.style.right = "12px";
+    btn.style.bottom = "12px";
+    btn.style.zIndex = "9999";
+    btn.style.padding = "10px 12px";
+    btn.style.borderRadius = "10px";
+    btn.style.border = "1px solid rgba(255,255,255,0.2)";
+    btn.style.background = "rgba(0,0,0,0.6)";
+    btn.style.color = "white";
+    btn.style.cursor = "pointer";
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onClick();
+    });
+    rootElement.appendChild(btn);
+    this.audioUnlockButton = btn;
   }
 
   public start(): void {

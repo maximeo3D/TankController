@@ -31,8 +31,12 @@ import {
   reticleCameraAssetUrl,
   reticleBarrelAssetUrl,
   reticleGunAssetUrl,
-  sparkImpactAssetUrl
+  sparkImpactAssetUrl,
+  tankCannonSoundAssetUrl,
+  tankGunSoundAssetUrl
 } from "../assets/assetUrls";
+import { Sound } from "@babylonjs/core/Audio/sound";
+import { AbstractEngine } from "@babylonjs/core/Engines/abstractEngine";
 import type { TrackTreadParticleBundle } from "./trackTreadParticles";
 
 interface BoneControl {
@@ -240,6 +244,13 @@ export class TankGameplayController {
   private static readonly SHOCKWAVE_FADE_END_S = 7 / 60;
   private static readonly SHOCKWAVE_SCALE_MAX = 4.0; // 400%
 
+  // Audio
+  private cannonShotSound: Sound | null = null;
+  private gunShotSoundPool: Sound[] = [];
+  private gunShotSoundPoolCursor = 0;
+  private audioUnlocked = false;
+  private gunShotAudioBuffer: AudioBuffer | null = null;
+
   private explosionDefsPromise: Promise<unknown[]> | null = null;
 
   // Debug: log zoom camera vs cannon bone/muzzle on next shell shot.
@@ -248,6 +259,8 @@ export class TankGameplayController {
 
   public constructor(options: TankGameplayControllerOptions) {
     this.scene = options.scene;
+    // Babylon `Sound.play()` is gated by `scene.audioEnabled`.
+    this.scene.audioEnabled = true;
     this.config = options.config;
     this.tracksConfig = options.config.tracks ?? {
       enabled: false,
@@ -345,7 +358,90 @@ export class TankGameplayController {
     }
     this.initHud();
     this.initShockwaveFx(options);
+    this.initWeaponSounds();
+
+    // Browsers require a user gesture to start audio.
+    options.canvas.addEventListener(
+      "pointerdown",
+      () => {
+        if (this.audioUnlocked) return;
+        this.audioUnlocked = true;
+        try {
+          // Babylon audio engine unlock (if available)
+          const ae = (AbstractEngine as any).audioEngine;
+          if (!ae) {
+            console.warn("[TankController][audio] AbstractEngine.audioEngine is missing (no WebAudio).");
+            return;
+          }
+          ae.unlock?.();
+          ae.audioContext?.resume?.();
+          // Warm-up: some browsers need a play after resume.
+          const warm = this.cannonShotSound;
+          if (warm) {
+            const prev = warm.getVolume();
+            warm.setVolume(0);
+            warm.play();
+            warm.stop();
+            warm.setVolume(prev);
+          }
+        } catch {
+          // ignore
+        }
+      },
+      { passive: true }
+    );
     this.scene.onBeforeRenderObservable.add(this.update);
+  }
+
+  private initWeaponSounds(): void {
+    // Sounds are 2D (non-spatial) for now. Pool gun shots to allow overlap at high ROF.
+    try {
+      this.cannonShotSound = new Sound(
+        "tank_cannon_shot",
+        tankCannonSoundAssetUrl,
+        this.scene,
+        () => {
+          // no-op; audio unlock happens on first click
+        },
+        { autoplay: false, loop: false, volume: 1.0 }
+      );
+      (this.cannonShotSound as any).onErrorObservable?.add((err: unknown) =>
+        console.warn("[TankController][audio] cannon sound load failed:", err)
+      );
+
+      const baseGun = new Sound(
+        "tank_gun_shot_base",
+        tankGunSoundAssetUrl,
+        this.scene,
+        () => {
+          // Build pool from decoded AudioBuffer (reliable replay at high ROF).
+          this.gunShotAudioBuffer = baseGun.getAudioBuffer();
+          this.gunShotSoundPool = [];
+          const poolSize = 10;
+          for (let i = 0; i < poolSize; i++) {
+            const s =
+              i === 0
+                ? baseGun
+                : new Sound(
+                    `tank_gun_shot_${i}`,
+                    this.gunShotAudioBuffer,
+                    this.scene,
+                    null,
+                    { autoplay: false, loop: false, volume: 0.7 }
+                  );
+            this.gunShotSoundPool.push(s);
+          }
+        },
+        { autoplay: false, loop: false, volume: 0.7 }
+      );
+      (baseGun as any).onErrorObservable?.add((err: unknown) =>
+        console.warn("[TankController][audio] gun sound load failed:", err)
+      );
+      // If audio buffer isn't ready yet, keep at least the base sound to allow early play.
+      this.gunShotSoundPool = [baseGun];
+    } catch {
+      // Audio is optional; ignore initialization failures (e.g., autoplay restrictions).
+    }
   }
 
   private initShockwaveFx(options: TankGameplayControllerOptions): void {
@@ -560,6 +656,13 @@ export class TankGameplayController {
     this.barrelShellReticle2D = null;
     this.barrelGunReticle2D = null;
 
+    this.cannonShotSound?.dispose();
+    this.cannonShotSound = null;
+    for (const s of this.gunShotSoundPool) {
+      s.dispose();
+    }
+    this.gunShotSoundPool = [];
+
     for (const proj of this.activeProjectiles) {
       proj.body.dispose();
       proj.shape.dispose();
@@ -687,6 +790,7 @@ export class TankGameplayController {
   private fireShell(): void {
     this.shellChambered = false;
     this.shellReloadTimer = this.config.weapons.shell.reloadSeconds;
+    this.cannonShotSound?.play();
     this.debugLogZoomCamOnNextShellShot = this.zoomActive;
     // Freeze zoom camera position briefly after firing to avoid visible "snap".
     if (this.zoomActive) {
@@ -698,6 +802,29 @@ export class TankGameplayController {
   private fireBullet(): void {
     this.bulletCooldownTimer = 1.0 / this.config.weapons.bullet.shotsPerSecond;
     this.gunReticleKickTime = 0;
+    if (this.gunShotSoundPool.length > 0) {
+      // Prefer a free sound so ROF stays perfectly in sync.
+      // If all are busy, reuse the next one (stop it first).
+      let s: Sound | null = null;
+      for (let i = 0; i < this.gunShotSoundPool.length; i++) {
+        const candidate = this.gunShotSoundPool[(this.gunShotSoundPoolCursor + i) % this.gunShotSoundPool.length];
+        if (!candidate.isPlaying) {
+          s = candidate;
+          this.gunShotSoundPoolCursor = (this.gunShotSoundPoolCursor + i + 1) % this.gunShotSoundPool.length;
+          break;
+        }
+      }
+      if (!s) {
+        s = this.gunShotSoundPool[this.gunShotSoundPoolCursor % this.gunShotSoundPool.length];
+        this.gunShotSoundPoolCursor++;
+        if (s.isPlaying) {
+          s.stop();
+        }
+      }
+      if (s.isReady()) {
+        s.play();
+      }
+    }
 
     if (!this.muzzleGunNode || !this.ammoBulletMesh) {
       return;
