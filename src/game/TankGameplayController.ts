@@ -229,6 +229,17 @@ export class TankGameplayController {
   private static readonly GUN_RETICLE_KICK_UP_SECONDS = 0.05;
   private static readonly GUN_RETICLE_KICK_FADE_SECONDS = 0.07;
 
+  // Shell explosion shockwave FX (pooled clones)
+  private shockwaveTemplate: BabylonMesh | null = null;
+  private shockwavePool: BabylonMesh[] = [];
+  private activeShockwaves: { mesh: BabylonMesh; age: number }[] = [];
+  private static readonly SHOCKWAVE_POOL_SIZE = 24;
+  // 8 "frames" worth of animation at 60fps, expressed in seconds.
+  private static readonly SHOCKWAVE_SCALE_END_S = 5 / 60;
+  private static readonly SHOCKWAVE_FADE_START_S = 0 / 60;
+  private static readonly SHOCKWAVE_FADE_END_S = 7 / 60;
+  private static readonly SHOCKWAVE_SCALE_MAX = 4.0; // 400%
+
   private explosionDefsPromise: Promise<unknown[]> | null = null;
 
   // Debug: log zoom camera vs cannon bone/muzzle on next shell shot.
@@ -333,7 +344,58 @@ export class TankGameplayController {
       this.initSuspensionDebugSpheres();
     }
     this.initHud();
+    this.initShockwaveFx(options);
     this.scene.onBeforeRenderObservable.add(this.update);
+  }
+
+  private initShockwaveFx(options: TankGameplayControllerOptions): void {
+    const candidates = options.tankContainer.meshes;
+    const tpl =
+      candidates.find((m) => m.name.trim().toLowerCase() === "fx_shockwave") ??
+      candidates.find((m) => m.name.trim().toLowerCase().startsWith("fx_shockwave."));
+    if (!tpl) {
+      return;
+    }
+
+    this.shockwaveTemplate = tpl as unknown as BabylonMesh;
+    // Hide template, keep as instancing source.
+    tpl.isPickable = false;
+    tpl.setEnabled(false);
+    tpl.isVisible = false;
+
+    // Make shockwave unlit + 50% opacity (without depending on scene lights).
+    // Works for both StandardMaterial-like and PBR-like materials.
+    if (tpl.material) {
+      const m = tpl.material.clone(`${tpl.material.name}_shockwave_unlit`);
+      // StandardMaterial
+      if ("disableLighting" in (m as any)) {
+        (m as any).disableLighting = true;
+      }
+      // PBRMaterial
+      if ("unlit" in (m as any)) {
+        (m as any).unlit = true;
+      }
+      if ("alpha" in (m as any)) {
+        (m as any).alpha = 0.5;
+      }
+      tpl.material = m;
+    }
+
+    // Use pooled clones (not instances) so per-shockwave `visibility` fade works.
+    for (let i = 0; i < TankGameplayController.SHOCKWAVE_POOL_SIZE; i++) {
+      const clone = (tpl as unknown as BabylonMesh).clone(`fx_shockwave_clone_${i}`, null) as
+        | BabylonMesh
+        | null;
+      if (!clone) continue;
+      clone.isPickable = false;
+      clone.setParent(null);
+      clone.setEnabled(false);
+      clone.isVisible = true;
+      clone.rotationQuaternion ??= Quaternion.Identity();
+      clone.scaling.setAll(0);
+      clone.visibility = 0;
+      this.shockwavePool.push(clone);
+    }
   }
 
   private initHud(): void {
@@ -553,6 +615,7 @@ export class TankGameplayController {
     this.updateProjectiles(dt);
     this.updateGunTracers(dt);
     this.updateSparks(dt);
+    this.updateShockwaves(dt);
   };
 
   private updateSuspensionDebugSpheres(): void {
@@ -929,6 +992,7 @@ export class TankGameplayController {
   }
 
   private async spawnExplosionAt(worldPos: Vector3): Promise<void> {
+    this.spawnShockwaveAt(worldPos);
     const defs = await this.ensureExplosionDefs();
     for (const def of defs) {
       const ps = (ParticleSystem as unknown as { Parse: (data: unknown, scene: Scene) => ParticleSystem }).Parse(
@@ -941,6 +1005,52 @@ export class TankGameplayController {
       ps.emitRate = 0;
       ps.manualEmitCount = ps.getCapacity();
       ps.start();
+    }
+  }
+
+  private spawnShockwaveAt(worldPos: Vector3): void {
+    if (!this.shockwaveTemplate) return;
+    const m = this.shockwavePool.pop() ?? null;
+    if (!m) return;
+    m.setEnabled(true);
+    m.isVisible = true;
+    m.position.copyFrom(worldPos);
+    m.scaling.setAll(0);
+    m.visibility = 1;
+    this.activeShockwaves.push({ mesh: m, age: 0 });
+  }
+
+  private updateShockwaves(dt: number): void {
+    if (this.activeShockwaves.length === 0) return;
+    const scaleEnd = TankGameplayController.SHOCKWAVE_SCALE_END_S;
+    const fadeStart = TankGameplayController.SHOCKWAVE_FADE_START_S;
+    const fadeEnd = TankGameplayController.SHOCKWAVE_FADE_END_S;
+    const maxScale = TankGameplayController.SHOCKWAVE_SCALE_MAX;
+
+    for (let i = this.activeShockwaves.length - 1; i >= 0; i--) {
+      const s = this.activeShockwaves[i];
+      s.age += dt;
+
+      // Scale 0 -> maxScale by scaleEnd
+      const st = scaleEnd > 0 ? clamp(s.age / scaleEnd, 0, 1) : 1;
+      const sc = st * maxScale;
+      s.mesh.scaling.setAll(sc);
+
+      // Fade 1 -> 0 between fadeStart and fadeEnd
+      let alpha = 1;
+      if (s.age >= fadeStart) {
+        const ft = fadeEnd > fadeStart ? clamp((s.age - fadeStart) / (fadeEnd - fadeStart), 0, 1) : 1;
+        alpha = 1 - ft;
+      }
+      s.mesh.visibility = alpha;
+
+      if (s.age >= fadeEnd) {
+        s.mesh.setEnabled(false);
+        s.mesh.scaling.setAll(0);
+        s.mesh.visibility = 0;
+        this.shockwavePool.push(s.mesh);
+        this.activeShockwaves.splice(i, 1);
+      }
     }
   }
 

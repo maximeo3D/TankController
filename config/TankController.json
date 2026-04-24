@@ -51,7 +51,7 @@
     "lateralFriction": 8.0
   },
   "turret": {
-    "yawSpeedDeg": 45.0,
+    "yawSpeedDeg": 60.0,
     "mouseSensitivityDegPerPixel": 0.35
   },
   "cannon": {
