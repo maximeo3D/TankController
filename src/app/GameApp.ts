@@ -473,6 +473,21 @@ export class GameApp {
     panel.className = GameApp.SHOW_GAMEPLAY_DEBUG_PANEL ? "panel panel-debug" : "panel panel-menu";
 
     panel.append(createButton("Back To Menu", () => this.returnToMainMenu()));
+
+    if (this.gameplayState.isLoading) {
+      const loading = document.createElement("p");
+      loading.textContent = `Chargement : ${this.gameplayState.levelName}…`;
+      panel.append(loading);
+    }
+
+    if (this.gameplayState.errorMessage) {
+      const error = document.createElement("p");
+      error.textContent = this.gameplayState.errorMessage;
+      error.style.color = "#ff6b6b";
+      error.style.marginTop = "0.75rem";
+      panel.append(error);
+    }
+
     this.overlay.append(panel);
   }
 

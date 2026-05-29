@@ -1,8 +1,29 @@
 import tankControllerConfig from "../../config/TankController.json";
 
+/** Réglages communs par type de power-up (`PU_<id>` → `mesh_<id>`). */
+export interface PowerUpTypeConfig {
+  enabled: boolean;
+  respawnSeconds: number;
+  pickedAlpha: number;
+  singleUse: boolean;
+  /** RGB 0–1 — highlight dispo ([HighlightLayer](https://doc.babylonjs.com/features/featuresDeepDive/mesh/highlightLayer/)). */
+  highlightAvailable: [number, number, number];
+  /** RGB 0–1 — highlight en recharge. */
+  highlightCooldown: [number, number, number];
+}
+
+export type PowerUpTypeId =
+  | "ammo_shell"
+  | "energy"
+  | "boost"
+  | "repair"
+  | "shield"
+  | "weapon_boost";
+
 export interface TankControllerConfig {
   debug?: {
     showSuspensionSpheres?: boolean;
+    showPowerUpBounds?: boolean;
   };
   rig: {
     spawnYawOffsetDeg: number;
@@ -115,6 +136,23 @@ export interface TankControllerConfig {
     startingOvercharge: number;
     batteryDrainMovingPerSecond: number;
     overchargeDrainBoostPerSecond: number;
+  };
+  powerUps?: {
+    enabled: boolean;
+    /** Rayon de pickup commun à tous les power-ups (m). */
+    pickupRadius: number;
+    highlight?: {
+      blurHorizontalSize?: number;
+      blurVerticalSize?: number;
+    };
+    types: {
+      ammo_shell: PowerUpTypeConfig & { shellAmmoAmount: number };
+      energy: PowerUpTypeConfig & { batteryAmount: number };
+      boost: PowerUpTypeConfig & { boostDurationSeconds: number };
+      repair: PowerUpTypeConfig & { repairAmount: number };
+      shield: PowerUpTypeConfig & { invincibilitySeconds: number };
+      weapon_boost: PowerUpTypeConfig & { damageMultiplier: number };
+    };
   };
   weapons: {
     powerUpBonusPerStack: number;

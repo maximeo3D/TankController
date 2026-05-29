@@ -28,7 +28,7 @@ import { CubeTexture } from "@babylonjs/core/Materials/Textures/cubeTexture";
 import type { AssetContainer } from "@babylonjs/core/assetContainer";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import type { TankControllerConfig } from "../config/tankController";
-import { tankAssetUrl, skyboxAssetUrl } from "../assets/assetUrls";
+import { tankAssetUrl, skyboxAssetUrl, powerUpsAssetUrl } from "../assets/assetUrls";
 import type { LevelDefinition } from "../app/levels";
 import {
   TankGameplayController,
@@ -301,6 +301,8 @@ export async function createGameplayScene(
     console.warn("[TankController] Track tread particles (reverse) could not be created:", err);
   }
 
+  const powerUpsContainer = await SceneLoader.LoadAssetContainerAsync("", powerUpsAssetUrl, scene);
+
   // Only dispose the fallback camera if we successfully switched to another active camera.
   if (scene.activeCamera !== fallbackCamera) {
     fallbackCamera.dispose();
@@ -312,6 +314,9 @@ export async function createGameplayScene(
     tankContainer,
     tankAnchor,
     tankVisualRoot,
+    terrainContainer,
+    powerUpsContainer,
+    tankColliderMesh,
     groundingInfo: groundingInfo,
     suspensionInfo,
     suspensionNodes,

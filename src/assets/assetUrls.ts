@@ -1,5 +1,6 @@
 export const terrainAssetUrl = new URL("../../assets/terrain.glb", import.meta.url).href;
 export const tankAssetUrl = new URL("../../assets/tank.glb", import.meta.url).href;
+export const powerUpsAssetUrl = new URL("../../assets/power-ups.glb", import.meta.url).href;
 export const skyboxAssetUrl = new URL("../../assets/textures/skybox.env", import.meta.url).href;
 export const hudLayoutJsonUrl = new URL("../../assets/ui/UI_hud.json", import.meta.url).href;
 export const reticleCameraAssetUrl = new URL("../../assets/ui/reticle_camera.png", import.meta.url).href;

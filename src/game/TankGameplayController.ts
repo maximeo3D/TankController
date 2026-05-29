@@ -39,6 +39,7 @@ import {
 import { Sound } from "@babylonjs/core/Audio/sound";
 import { AbstractEngine } from "@babylonjs/core/Engines/abstractEngine";
 import type { TrackTreadParticleBundle } from "./trackTreadParticles";
+import { PowerUpSystem } from "./PowerUpSystem";
 
 interface BoneControl {
   bone: Bone | null;
@@ -66,6 +67,9 @@ export interface TankGameplayControllerOptions {
   tankContainer: AssetContainer;
   tankAnchor: TransformNode;
   tankVisualRoot: TransformNode | null;
+  terrainContainer: AssetContainer;
+  powerUpsContainer: AssetContainer;
+  tankColliderMesh: Mesh | null;
   groundingInfo: {
     baseClearance: number;
     frontLeft: Vector3;
@@ -168,6 +172,7 @@ export class TankGameplayController {
   private physicsViewer?: PhysicsViewer;
   private readonly trackTreadParticles: TrackTreadParticleBundle | null;
   private readonly trackTreadParticlesReverse: TrackTreadParticleBundle | null;
+  private readonly powerUpSystem: PowerUpSystem | null;
 
   /** Décalage courant sur l’axe local Y du bone canon (recul). */
   private cannonRecoilOffsetY = 0;
@@ -319,6 +324,7 @@ export class TankGameplayController {
     this.physicsViewer = options.physicsViewer;
     this.trackTreadParticles = options.trackTreadParticles ?? null;
     this.trackTreadParticlesReverse = options.trackTreadParticlesReverse ?? null;
+    this.powerUpSystem = this.createPowerUpSystem(options);
     this.input = new TankInput(options.canvas);
     this.turretControl = resolveBoneControl(options.tankContainer, "tourelle");
     this.cannonControl = resolveBoneControl(options.tankContainer, "canon");
@@ -407,6 +413,35 @@ export class TankGameplayController {
       { passive: true }
     );
     this.scene.onBeforeRenderObservable.add(this.update);
+  }
+
+  private createPowerUpSystem(options: TankGameplayControllerOptions): PowerUpSystem | null {
+    const powerUps = options.config.powerUps;
+    if (powerUps?.enabled !== true || !powerUps.types) {
+      return null;
+    }
+
+    try {
+      return new PowerUpSystem({
+        scene: options.scene,
+        terrainContainer: options.terrainContainer,
+        powerUpsContainer: options.powerUpsContainer,
+        config: powerUps,
+        tankColliderMesh: options.tankColliderMesh,
+        showDebugBounds: options.config.debug?.showPowerUpBounds === true,
+        onAmmoShellPickup: (amount) => this.addShellReserveAmmo(amount)
+      });
+    } catch (error) {
+      console.error("[TankController] PowerUpSystem init failed:", error);
+      return null;
+    }
+  }
+
+  private addShellReserveAmmo(amount: number): void {
+    if (amount <= 0) {
+      return;
+    }
+    this.shellReserveAmmo += amount;
   }
 
   private initWeaponSounds(): void {
@@ -813,6 +848,7 @@ export class TankGameplayController {
 
     this.trackTreadParticles?.dispose();
     this.trackTreadParticlesReverse?.dispose();
+    this.powerUpSystem?.dispose();
   }
 
   private readonly update = (): void => {
@@ -856,6 +892,7 @@ export class TankGameplayController {
     this.applyVisualSmoothing(dt);
     this.applyCamera(frame.zoomHeld);
     this.trackSystem?.update(dt);
+    this.powerUpSystem?.update(dt);
     this.updateSuspensionDebugSpheres();
     this.updateProjectiles(dt);
     this.updateGunTracers(dt);
