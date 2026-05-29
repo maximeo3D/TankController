@@ -145,6 +145,14 @@ export interface TankControllerConfig {
       blurHorizontalSize?: number;
       blurVerticalSize?: number;
     };
+    animation?: {
+      /** Amplitude du mouvement haut/bas (m). */
+      bobAmplitude: number;
+      /** Durée d'un cycle complet haut/bas (s). */
+      bobPeriodSeconds: number;
+      /** Durée d'une rotation complète sur l'axe Y (s). */
+      rotationPeriodSeconds: number;
+    };
     types: {
       ammo_shell: PowerUpTypeConfig & { shellAmmoAmount: number };
       energy: PowerUpTypeConfig & { batteryAmount: number };

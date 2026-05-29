@@ -3,7 +3,8 @@ import { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
-import { Vector3 } from "@babylonjs/core/Maths/math.vector";
+import { Vector3, Quaternion } from "@babylonjs/core/Maths/math.vector";
+import { Axis } from "@babylonjs/core/Maths/math.axis";
 import { Color3 } from "@babylonjs/core/Maths/math.color";
 import { Material } from "@babylonjs/core/Materials/material";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
@@ -49,6 +50,10 @@ interface PowerUpInstance {
   pickedAlpha: number;
   available: boolean;
   cooldownRemaining: number;
+  bobBaseY: number;
+  bobPhase: number;
+  spawnRotation: Quaternion;
+  animTime: number;
 }
 
 const POWER_UP_TYPE_IDS: PowerUpTypeId[] = [
@@ -231,8 +236,8 @@ export class PowerUpSystem {
       const highlightOpts = this.config.highlight;
       return new HighlightLayer("powerup_highlight", this.scene, {
         generateStencilBuffer: true,
-        blurHorizontalSize: highlightOpts?.blurHorizontalSize ?? 0.45,
-        blurVerticalSize: highlightOpts?.blurVerticalSize ?? 0.45
+        blurHorizontalSize: highlightOpts?.blurHorizontalSize ?? 0.225,
+        blurVerticalSize: highlightOpts?.blurVerticalSize ?? 0.225
       });
     } catch (error) {
       console.error("[PowerUpSystem] HighlightLayer init failed:", error);
@@ -249,6 +254,8 @@ export class PowerUpSystem {
     const tankRadius = this.getTankPickupRadius();
 
     for (const instance of this.instances) {
+      this.updateInstanceAnimation(instance, dt);
+
       if (!instance.available) {
         if (!instance.typeConfig.singleUse) {
           instance.cooldownRemaining -= dt;
@@ -263,12 +270,32 @@ export class PowerUpSystem {
         continue;
       }
 
-      instance.root.computeWorldMatrix(true);
+      instance.anchor.computeWorldMatrix(true);
       const distance = Vector3.Distance(tankCenter, instance.anchor.getAbsolutePosition());
       if (distance <= instance.pickupRadius + tankRadius) {
         this.pickup(instance);
       }
     }
+  }
+
+  private updateInstanceAnimation(instance: PowerUpInstance, dt: number): void {
+    const anim = this.config.animation;
+    if (!anim) {
+      return;
+    }
+
+    instance.animTime += dt;
+
+    const bobPeriod = Math.max(anim.bobPeriodSeconds, 0.001);
+    const bobAmplitude = anim.bobAmplitude;
+    const bobOmega = (Math.PI * 2) / bobPeriod;
+    instance.anchor.position.y =
+      instance.bobBaseY + Math.sin(instance.animTime * bobOmega + instance.bobPhase) * bobAmplitude;
+
+    const rotPeriod = Math.max(anim.rotationPeriodSeconds, 0.001);
+    const spinAngle = (instance.animTime / rotPeriod) * Math.PI * 2;
+    const spinQuat = Quaternion.RotationAxis(Axis.Y, spinAngle);
+    instance.anchor.rotationQuaternion = instance.spawnRotation.multiply(spinQuat);
   }
 
   public dispose(): void {
@@ -376,6 +403,10 @@ export class PowerUpSystem {
         ? createPickupZoneDebug(this.scene, anchor, root, this.config.pickupRadius, instanceLabel)
         : [];
 
+      const spawnRotation =
+        anchor.rotationQuaternion?.clone() ??
+        Quaternion.FromEulerAngles(anchor.rotation.x, anchor.rotation.y, anchor.rotation.z);
+
       const instance: PowerUpInstance = {
         typeId: typeId as PowerUpTypeId,
         typeConfig,
@@ -390,7 +421,11 @@ export class PowerUpSystem {
         respawnSeconds: typeConfig.respawnSeconds,
         pickedAlpha: typeConfig.pickedAlpha,
         available: true,
-        cooldownRemaining: 0
+        cooldownRemaining: 0,
+        bobBaseY: anchor.position.y,
+        bobPhase: this.instances.length * 0.85,
+        spawnRotation,
+        animTime: 0
       };
 
       this.instances.push(instance);

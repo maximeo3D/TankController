@@ -111,10 +111,15 @@
   },
   "powerUps": {
     "enabled": true,
-    "pickupRadius": 0.375,
+    "pickupRadius": 0.35,
     "highlight": {
-      "blurHorizontalSize": 0.45,
-      "blurVerticalSize": 0.45
+      "blurHorizontalSize": 0.1,
+      "blurVerticalSize": 0.1
+    },
+    "animation": {
+      "bobAmplitude": 0.12,
+      "bobPeriodSeconds": 2.5,
+      "rotationPeriodSeconds": 10.0
     },
     "types": {
       "ammo_shell": {
