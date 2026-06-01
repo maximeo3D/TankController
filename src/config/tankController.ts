@@ -14,7 +14,7 @@ export interface PowerUpTypeConfig {
 
 export type PowerUpTypeId =
   | "ammo_shell"
-  | "energy"
+  | "fuel"
   | "boost"
   | "repair"
   | "shield"
@@ -155,7 +155,7 @@ export interface TankControllerConfig {
     };
     types: {
       ammo_shell: PowerUpTypeConfig & { shellAmmoAmount: number };
-      energy: PowerUpTypeConfig & { batteryAmount: number };
+      fuel: PowerUpTypeConfig & { batteryAmount: number };
       boost: PowerUpTypeConfig & { boostDurationSeconds: number };
       repair: PowerUpTypeConfig & { repairAmount: number };
       shield: PowerUpTypeConfig & { invincibilitySeconds: number };

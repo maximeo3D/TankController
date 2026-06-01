@@ -27,6 +27,7 @@ export interface PowerUpSystemOptions {
   tankColliderMesh: Mesh | null;
   showDebugBounds?: boolean;
   onAmmoShellPickup: (amount: number) => void;
+  onFuelPickup: (batteryAmount: number) => void;
 }
 
 interface MaterialAlphaState {
@@ -58,7 +59,7 @@ interface PowerUpInstance {
 
 const POWER_UP_TYPE_IDS: PowerUpTypeId[] = [
   "ammo_shell",
-  "energy",
+  "fuel",
   "boost",
   "repair",
   "shield",
@@ -213,6 +214,7 @@ export class PowerUpSystem {
   private readonly tankColliderMesh: Mesh | null;
   private readonly showDebugBounds: boolean;
   private readonly onAmmoShellPickup: (amount: number) => void;
+  private readonly onFuelPickup: (batteryAmount: number) => void;
   private readonly highlightLayer: HighlightLayer | null;
   private readonly instances: PowerUpInstance[] = [];
 
@@ -222,6 +224,7 @@ export class PowerUpSystem {
     this.tankColliderMesh = options.tankColliderMesh;
     this.showDebugBounds = options.showDebugBounds ?? false;
     this.onAmmoShellPickup = options.onAmmoShellPickup;
+    this.onFuelPickup = options.onFuelPickup;
     this.highlightLayer = this.createHighlightLayer();
 
     if (!this.config.enabled || !this.config.types) {
@@ -474,6 +477,11 @@ export class PowerUpSystem {
       case "ammo_shell": {
         const cfg = this.config.types.ammo_shell;
         this.onAmmoShellPickup(cfg.shellAmmoAmount);
+        break;
+      }
+      case "fuel": {
+        const cfg = this.config.types.fuel;
+        this.onFuelPickup(cfg.batteryAmount);
         break;
       }
       default:

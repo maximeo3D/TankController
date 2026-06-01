@@ -429,7 +429,8 @@ export class TankGameplayController {
         config: powerUps,
         tankColliderMesh: options.tankColliderMesh,
         showDebugBounds: options.config.debug?.showPowerUpBounds === true,
-        onAmmoShellPickup: (amount) => this.addShellReserveAmmo(amount)
+        onAmmoShellPickup: (amount) => this.addShellReserveAmmo(amount),
+        onFuelPickup: (amount) => this.addBattery(amount)
       });
     } catch (error) {
       console.error("[TankController] PowerUpSystem init failed:", error);
@@ -442,6 +443,13 @@ export class TankGameplayController {
       return;
     }
     this.shellReserveAmmo += amount;
+  }
+
+  private addBattery(amount: number): void {
+    if (amount <= 0) {
+      return;
+    }
+    this.battery = Math.min(this.battery + amount, this.config.energy.batteryMax);
   }
 
   private initWeaponSounds(): void {

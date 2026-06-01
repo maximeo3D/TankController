@@ -131,8 +131,8 @@
         "highlightCooldown": [1.0, 0.2, 0.15],
         "shellAmmoAmount": 9
       },
-      "energy": {
-        "enabled": false,
+      "fuel": {
+        "enabled": true,
         "respawnSeconds": 30.0,
         "pickedAlpha": 0.25,
         "singleUse": false,
