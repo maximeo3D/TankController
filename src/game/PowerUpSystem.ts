@@ -28,6 +28,8 @@ export interface PowerUpSystemOptions {
   showDebugBounds?: boolean;
   onAmmoShellPickup: (amount: number) => void;
   onFuelPickup: (batteryAmount: number) => void;
+  onRepairPickup: (healthAmount: number) => void;
+  onShieldPickup: (durationSeconds: number, damageReduction: number) => void;
 }
 
 interface MaterialAlphaState {
@@ -215,6 +217,8 @@ export class PowerUpSystem {
   private readonly showDebugBounds: boolean;
   private readonly onAmmoShellPickup: (amount: number) => void;
   private readonly onFuelPickup: (batteryAmount: number) => void;
+  private readonly onRepairPickup: (healthAmount: number) => void;
+  private readonly onShieldPickup: (durationSeconds: number, damageReduction: number) => void;
   private readonly highlightLayer: HighlightLayer | null;
   private readonly instances: PowerUpInstance[] = [];
 
@@ -225,6 +229,8 @@ export class PowerUpSystem {
     this.showDebugBounds = options.showDebugBounds ?? false;
     this.onAmmoShellPickup = options.onAmmoShellPickup;
     this.onFuelPickup = options.onFuelPickup;
+    this.onRepairPickup = options.onRepairPickup;
+    this.onShieldPickup = options.onShieldPickup;
     this.highlightLayer = this.createHighlightLayer();
 
     if (!this.config.enabled || !this.config.types) {
@@ -482,6 +488,16 @@ export class PowerUpSystem {
       case "fuel": {
         const cfg = this.config.types.fuel;
         this.onFuelPickup(cfg.batteryAmount);
+        break;
+      }
+      case "repair": {
+        const cfg = this.config.types.repair;
+        this.onRepairPickup(cfg.repairAmount);
+        break;
+      }
+      case "shield": {
+        const cfg = this.config.types.shield;
+        this.onShieldPickup(cfg.shieldDurationSeconds, cfg.damageReduction);
         break;
       }
       default:

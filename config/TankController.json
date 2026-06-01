@@ -101,6 +101,10 @@
     "raycastLength": 2.5,
     "opacityMultiplier": 0.1
   },
+  "vehicle": {
+    "healthMax": 400,
+    "startingHealth": 200
+  },
   "energy": {
     "batteryMax": 100.0,
     "overchargeMax": 100.0,
@@ -150,22 +154,23 @@
         "boostDurationSeconds": 5.0
       },
       "repair": {
-        "enabled": false,
+        "enabled": true,
         "respawnSeconds": 45.0,
         "pickedAlpha": 0.25,
         "singleUse": false,
         "highlightAvailable": [0.35, 1.0, 0.55],
         "highlightCooldown": [1.0, 0.2, 0.15],
-        "repairAmount": 50
+        "repairAmount": 100
       },
       "shield": {
         "enabled": false,
         "respawnSeconds": 40.0,
         "pickedAlpha": 0.25,
-        "singleUse": true,
+        "singleUse": false,
         "highlightAvailable": [0.55, 0.75, 1.0],
         "highlightCooldown": [1.0, 0.2, 0.15],
-        "invincibilitySeconds": 8.0
+        "shieldDurationSeconds": 8.0,
+        "damageReduction": 1.0
       },
       "weapon_boost": {
         "enabled": false,

@@ -47,6 +47,10 @@ interface BoneControl {
 }
 
 export interface TankGameplayDebugState {
+  health: number;
+  healthMax: number;
+  healthPercent: number;
+  shieldTimeRemaining: number;
   battery: number;
   overcharge: number;
   boostActive: boolean;
@@ -143,6 +147,10 @@ export class TankGameplayController {
   private readonly turretYawAxis: Vector3;
   private readonly cannonPitchAxis: Vector3;
 
+  private health: number;
+  private readonly healthMax: number;
+  private shieldTimeRemaining = 0;
+  private shieldDamageReduction = 0;
   private battery: number;
   private overcharge: number;
   private activeWeapon: WeaponType = "shell";
@@ -203,10 +211,10 @@ export class TankGameplayController {
   private hudTexture: AdvancedDynamicTexture | null = null;
   /** True once `UI_hud.json` parsed; HUD text/bars update only then. */
   private hudJsonLoaded = false;
-  private hudBatteryLabel: TextBlock | null = null;
-  private hudBatteryFill: Rectangle | null = null;
-  private hudOverchargeLabel: TextBlock | null = null;
-  private hudOverchargeFill: Rectangle | null = null;
+  private hudHealthFill: Rectangle | null = null;
+  private hudFuelLabel: TextBlock | null = null;
+  private hudFuelFill: Rectangle | null = null;
+  private hudBoostFill: Rectangle | null = null;
   private hudWeaponIconShell: TextBlock | null = null;
   private hudWeaponIconGun: TextBlock | null = null;
   private hudWeaponName: TextBlock | null = null;
@@ -345,6 +353,10 @@ export class TankGameplayController {
       options.config.rig.cannonPitchSign
     );
 
+    const vehicle = options.config.vehicle;
+    this.healthMax = Math.max(1, vehicle.healthMax);
+    this.health = clamp(vehicle.startingHealth, 0, this.healthMax);
+
     this.battery = options.config.energy.startingBattery;
     this.overcharge = options.config.energy.startingOvercharge;
     this.shellReserveAmmo = options.config.weapons.shell.startingReserveAmmo;
@@ -430,7 +442,10 @@ export class TankGameplayController {
         tankColliderMesh: options.tankColliderMesh,
         showDebugBounds: options.config.debug?.showPowerUpBounds === true,
         onAmmoShellPickup: (amount) => this.addShellReserveAmmo(amount),
-        onFuelPickup: (amount) => this.addBattery(amount)
+        onFuelPickup: (amount) => this.addBattery(amount),
+        onRepairPickup: (amount) => this.repairHealth(amount),
+        onShieldPickup: (durationSeconds, damageReduction) =>
+          this.applyShield(durationSeconds, damageReduction)
       });
     } catch (error) {
       console.error("[TankController] PowerUpSystem init failed:", error);
@@ -450,6 +465,35 @@ export class TankGameplayController {
       return;
     }
     this.battery = Math.min(this.battery + amount, this.config.energy.batteryMax);
+  }
+
+  /** Dégâts (projectiles, etc.). Les collisions tank↔murs n’appellent pas cette méthode. */
+  public takeDamage(amount: number): void {
+    if (amount <= 0 || this.health <= 0) {
+      return;
+    }
+    if (this.shieldTimeRemaining > 0) {
+      amount *= 1 - clamp(this.shieldDamageReduction, 0, 1);
+      if (amount <= 1e-6) {
+        return;
+      }
+    }
+    this.health = Math.max(0, this.health - amount);
+  }
+
+  private repairHealth(amount: number): void {
+    if (amount <= 0) {
+      return;
+    }
+    this.health = Math.min(this.health + amount, this.healthMax);
+  }
+
+  private applyShield(durationSeconds: number, damageReduction: number): void {
+    if (durationSeconds <= 0) {
+      return;
+    }
+    this.shieldTimeRemaining = durationSeconds;
+    this.shieldDamageReduction = clamp(damageReduction, 0, 1);
   }
 
   private initWeaponSounds(): void {
@@ -575,10 +619,10 @@ export class TankGameplayController {
       return;
     }
     const t = this.hudTexture;
-    this.hudBatteryLabel = t.getControlByName("hud_battery_label") as TextBlock | null;
-    this.hudBatteryFill = t.getControlByName("hud_battery_bar_fill") as Rectangle | null;
-    this.hudOverchargeLabel = t.getControlByName("hud_overcharge_label") as TextBlock | null;
-    this.hudOverchargeFill = t.getControlByName("hud_overcharge_bar_fill") as Rectangle | null;
+    this.hudHealthFill = t.getControlByName("hud_health_bar_fill") as Rectangle | null;
+    this.hudFuelLabel = t.getControlByName("hud_fuel_label") as TextBlock | null;
+    this.hudFuelFill = t.getControlByName("hud_fuel_bar_fill") as Rectangle | null;
+    this.hudBoostFill = t.getControlByName("hud_boost_bar_fill") as Rectangle | null;
     this.hudWeaponIconShell = t.getControlByName("hud_weapon_icon_shell") as TextBlock | null;
     this.hudWeaponIconGun = t.getControlByName("hud_weapon_icon_gun") as TextBlock | null;
     this.hudWeaponName = t.getControlByName("hud_weapon_name") as TextBlock | null;
@@ -657,21 +701,27 @@ export class TankGameplayController {
       return;
     }
 
+    const hpPct = clamp((this.health / this.healthMax) * 100, 0, 100);
+    if (this.hudHealthFill) {
+      this.hudHealthFill.width = `${Math.round(hpPct)}%`;
+      this.hudHealthFill.background =
+        hpPct < 20 ? "#f44336" : hpPct < 45 ? "#ff9800" : "#4caf50";
+    }
+
     const bat = clamp(this.battery, 0, 100);
     const oc = clamp(this.overcharge, 0, 100);
-    if (this.hudBatteryLabel) {
-      this.hudBatteryLabel.text = `Batterie ${Math.round(bat)} %`;
+    if (this.hudFuelLabel) {
+      this.hudFuelLabel.text = "Fuel";
     }
-    if (this.hudBatteryFill) {
-      this.hudBatteryFill.width = `${Math.round(bat)}%`;
-      this.hudBatteryFill.background =
+    if (this.hudFuelFill) {
+      this.hudFuelFill.width = `${Math.round(bat)}%`;
+      this.hudFuelFill.background =
         bat < 20 ? "#f44336" : bat < 45 ? "#ff9800" : "#4caf50";
     }
-    if (this.hudOverchargeLabel) {
-      this.hudOverchargeLabel.text = `Surtension ${Math.round(oc)} %`;
-    }
-    if (this.hudOverchargeFill) {
-      this.hudOverchargeFill.width = `${Math.round(oc)}%`;
+    if (this.hudBoostFill) {
+      this.hudBoostFill.width = `${Math.round(oc)}%`;
+      this.hudBoostFill.background =
+        oc < 20 ? "#f44336" : oc < 45 ? "#ff9800" : "#ffeb3b";
     }
 
     const shellPick = this.activeWeapon === "shell";
@@ -797,6 +847,10 @@ export class TankGameplayController {
 
   public getDebugState(): TankGameplayDebugState {
     return {
+      health: this.health,
+      healthMax: this.healthMax,
+      healthPercent: clamp((this.health / this.healthMax) * 100, 0, 100),
+      shieldTimeRemaining: this.shieldTimeRemaining,
       battery: this.battery,
       overcharge: this.overcharge,
       boostActive: this.boostActive,
@@ -826,10 +880,10 @@ export class TankGameplayController {
     this.hudTexture = null;
     this.hudJsonLoaded = false;
     this.hudReticlesAttached = false;
-    this.hudBatteryLabel = null;
-    this.hudBatteryFill = null;
-    this.hudOverchargeLabel = null;
-    this.hudOverchargeFill = null;
+    this.hudHealthFill = null;
+    this.hudFuelLabel = null;
+    this.hudFuelFill = null;
+    this.hudBoostFill = null;
     this.hudWeaponIconShell = null;
     this.hudWeaponIconGun = null;
     this.hudWeaponName = null;
@@ -894,6 +948,9 @@ export class TankGameplayController {
     }
 
     this.applyOrbitCamera(lookX, lookY);
+    if (this.shieldTimeRemaining > 0) {
+      this.shieldTimeRemaining = Math.max(0, this.shieldTimeRemaining - dt);
+    }
     this.updateWeapons(dt);
     this.applyTurretAndCannon(frame.pointerX, frame.pointerY, dt);
     this.applyMovement(frame.moveAxis, frame.turnAxis, frame.boostHeld, dt);

@@ -129,6 +129,10 @@ export interface TankControllerConfig {
     raycastLength: number;
     opacityMultiplier: number;
   };
+  vehicle: {
+    healthMax: number;
+    startingHealth: number;
+  };
   energy: {
     batteryMax: number;
     overchargeMax: number;
@@ -158,7 +162,11 @@ export interface TankControllerConfig {
       fuel: PowerUpTypeConfig & { batteryAmount: number };
       boost: PowerUpTypeConfig & { boostDurationSeconds: number };
       repair: PowerUpTypeConfig & { repairAmount: number };
-      shield: PowerUpTypeConfig & { invincibilitySeconds: number };
+      shield: PowerUpTypeConfig & {
+        shieldDurationSeconds: number;
+        /** 0–1 : 1 = aucun dégât (bouclier 100 %). */
+        damageReduction: number;
+      };
       weapon_boost: PowerUpTypeConfig & { damageMultiplier: number };
     };
   };
