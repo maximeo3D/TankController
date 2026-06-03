@@ -701,11 +701,17 @@ export class TankGameplayController {
       return;
     }
 
+    const shieldActive = this.shieldTimeRemaining > 0;
     const hpPct = clamp((this.health / this.healthMax) * 100, 0, 100);
     if (this.hudHealthFill) {
-      this.hudHealthFill.width = `${Math.round(hpPct)}%`;
-      this.hudHealthFill.background =
-        hpPct < 20 ? "#f44336" : hpPct < 45 ? "#ff9800" : "#4caf50";
+      if (shieldActive) {
+        this.hudHealthFill.width = "100%";
+        this.hudHealthFill.background = "#42a5f5";
+      } else {
+        this.hudHealthFill.width = `${Math.round(hpPct)}%`;
+        this.hudHealthFill.background =
+          hpPct < 20 ? "#f44336" : hpPct < 45 ? "#ff9800" : "#4caf50";
+      }
     }
 
     const bat = clamp(this.battery, 0, 100);

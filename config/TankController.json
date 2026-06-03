@@ -140,9 +140,9 @@
         "respawnSeconds": 30.0,
         "pickedAlpha": 0.25,
         "singleUse": false,
-        "highlightAvailable": [0.2, 0.65, 1.0],
+        "highlightAvailable": [1, 0.85, 0],
         "highlightCooldown": [1.0, 0.2, 0.15],
-        "batteryAmount": 25
+        "batteryAmount": 100
       },
       "boost": {
         "enabled": false,
@@ -158,16 +158,16 @@
         "respawnSeconds": 45.0,
         "pickedAlpha": 0.25,
         "singleUse": false,
-        "highlightAvailable": [0.35, 1.0, 0.55],
+        "highlightAvailable": [1, 1, 1],
         "highlightCooldown": [1.0, 0.2, 0.15],
         "repairAmount": 100
       },
       "shield": {
-        "enabled": false,
+        "enabled": true,
         "respawnSeconds": 40.0,
         "pickedAlpha": 0.25,
         "singleUse": false,
-        "highlightAvailable": [0.55, 0.75, 1.0],
+        "highlightAvailable": [0.2, 0.65, 1.0],
         "highlightCooldown": [1.0, 0.2, 0.15],
         "shieldDurationSeconds": 8.0,
         "damageReduction": 1.0
