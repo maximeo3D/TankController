@@ -40,9 +40,9 @@
     "maxGroundSlopeDeg": 60.0,
     "visualTiltSharpness": 10.0,
     "positionSharpness": 14.0,
-    "drivePitchMaxDeg": 3.5,
+    "drivePitchMaxDeg": 2.625,
     "drivePitchInputRateScale": 0.4,
-    "drivePitchSharpness": 12.0
+    "drivePitchSharpness": 6.0
   },
   "suspension": {
     "rayStartHeight": 0.05,
