@@ -19,12 +19,14 @@ Status notes below reflect the **current codebase** as of the latest documentati
 
 - load `assets/terrain.glb`
 - load `assets/tank.glb`
+- load `assets/power-ups.glb`
 - resolve required nodes by exact name (with limited Blender suffix tolerance where implemented)
 - hide all `COL_*` nodes in gameplay (optional debug wireframe path exists in `hideColliderMeshes`)
 - resolve `SPAWN_tank` and spawn the tank there
 - verify `MUZZLE_tank`, `CAM_tank`, `COL_tank`, **`CAM_pivot`**, **`SUS_*`**
+- resolve `PU_*` spawn empties on terrain
 
-**Status:** done; tank uses physics anchor + visual root; `CAM_pivot` + orbit when present.
+**Status:** done; tank uses physics anchor + visual root; `CAM_pivot` + orbit when present; power-up templates cloned from `power-ups.glb`.
 
 ## Phase 3 - Menu Flow
 
@@ -34,15 +36,15 @@ Status notes below reflect the **current codebase** as of the latest documentati
 - implement back navigation
 - connect one level entry to gameplay startup
 
-**Status:** per app implementation (unchanged from project plan).
+**Status:** per app implementation (unchanged from project plan). See `docs/GUI_MENU_SYSTEM.md`.
 
 ## Phase 4 - Tank Locomotion
 
 - implement `ZQSD` input
 - implement chassis movement (physics-driven: traction / lateral damping / suspension)
 - implement chassis rotation
-- block movement when battery reaches `0`
-- implement battery drain only while moving
+- block movement when fuel (battery) reaches `0`
+- implement fuel drain only while moving
 
 **Status:** done; suspension uses Havok raycasts from `SUS_*` points; values in `suspension` + `movement` JSON.
 
@@ -63,12 +65,12 @@ Notes:
 
 ## Phase 6 - Boost and Resources
 
-- implement overcharge system
-- enable boost while `Shift` is held
-- stop boost when overcharge is empty
-- apply overcharge drain during boost
+- implement boost gauge (overcharge) with auto-recharge
+- enable boost traction + FOV while moving with `Shift` held and gauge > 0
+- drain boost at `overchargeDrainBoostPerSecond` **while `Shift` is held**
+- recharge boost at `overchargeRechargePerSecond` when `Shift` is released
 
-**Status:** done (see `TankGameplayController` + JSON).
+**Status:** done (see `TankGameplayController.applyMovement` + `energy` in JSON). No boost refill power-up — gauge is self-managed.
 
 ## Phase 7 - Weapons
 
@@ -91,20 +93,31 @@ Notes:
 
 **Status:** done for world + tank + projectiles; ongoing tuning via JSON.
 
-## Phase 9 - Debug and Feel
+## Phase 9 - Health, Power-Ups, and HUD
+
+- vehicle health (`vehicle.healthMax`, `startingHealth`)
+- `takeDamage` with shield damage reduction (no wall collision damage)
+- power-up system: spawn, pickup, highlight, respawn / singleUse hide
+- types: `ammo_shell`, `fuel`, `repair`, `shield` (enabled in config)
+- gameplay HUD from `UI_hud.json`: health, fuel, boost bars
+- shield UX: blue full health bar + blue tank glow while active
+
+**Status:** done for listed types; enemy damage sources and death state not implemented yet.
+
+## Phase 10 - Debug and Feel
 
 - display temporary debug info for:
-  - battery
-  - overcharge
+  - health / shield timer
+  - fuel and boost gauges
   - current weapon
   - shell ammo
   - reload/chamber state
-- tune values from `TankController.json` (including **camera orbit**, **suspension**, **grounding**)
+- tune values from `TankController.json` (including **camera orbit**, **suspension**, **grounding**, **powerUps**)
 - validate spawn orientation, aim feel, camera comfort, reticle scale (`baseScale` in code for world scale)
 
 **Status:** ongoing tuning; collider wireframe debug is **off** by default in `hideColliderMeshes`.
 
-## Phase 10 - Tracks (visual)
+## Phase 11 - Tracks (visual)
 
 - spawn track marks while tank moves, using material from `TEX_tracks`
 - implementation uses spawned segment planes (not a single mesh decal)
@@ -114,15 +127,13 @@ Notes:
 
 ## Deferred After Vertical Slice
 
-- battery pickups
-- overcharge pickups
-- shell crate pickups
-- weapon upgrade pickups
-- enemies
-- health and damage feedback
-- HUD polish
-- audio
-- VFX polish
+- `boost` and `weapon_boost` power-up pickups (logic / art direction TBD)
+- enemies and AI
+- damage from enemy weapons hitting the player tank
+- death / game over when health reaches 0
+- HUD polish (shield timer text, fuel low warning, etc.)
+- audio polish beyond baseline weapon sounds
+- VFX polish beyond impacts / shockwaves / sparks
 - pointer lock / RMB-only orbit (if desired)
 
 ## Acceptance Checklist
@@ -136,8 +147,10 @@ The vertical slice is successful when:
 - turret and cannon track the **aiming ray** / reticle target correctly
 - camera orbits around **`CAM_pivot`** when configured, without fighting default camera inputs
 - zoom hold works
-- boost works and changes FOV
+- boost drains on `Shift`, refills when released, and affects traction/FOV while moving
 - shell firing respects ammo and chamber timing
 - bullet firing works while left click is held
+- power-ups spawn at `PU_*` and apply configured effects
+- health bar and shield feedback behave as documented
 - `SM_*`, `DM_*`, and `COL_*` behave correctly
-- tuning can be changed through `config/TankController.json` (including orbit and suspension)
+- tuning can be changed through `config/TankController.json` (including orbit, suspension, vehicle, energy, powerUps)

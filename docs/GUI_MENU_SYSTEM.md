@@ -82,8 +82,23 @@ Flux typique :
 
 Dans `GameApp`, le flag `DEBUG_MENU_NAV` (lorsqu’il est à `true`) trace dans la console les messages « menu » / « niveau » et peut brancher `onControlPickedObservable` sur chaque ADT pour voir **quel** contrôle reçoit vraiment le clic.
 
+## HUD gameplay (hors menus)
+
+Le HUD en partie utilise une **troisième** texture GUI, sur la **scène de gameplay** (pas `menuScene`) :
+
+| Texture | Fichier | Rôle |
+|---------|---------|------|
+| HUD gameplay | `assets/ui/UI_hud.json` | Barres santé / fuel / boost, armes, indicateurs |
+
+Chargement dans `TankGameplayController.initHud()` via `AdvancedDynamicTexture.ParseFromFileAsync`. Les réticules 2D (caméra / canon) sont ajoutés **en code** par-dessus cette texture.
+
+**Contrôles nommés** attendus par le code : `hud_health_bar_fill`, `hud_fuel_bar_fill`, `hud_boost_bar_fill`, etc. Voir `docs/ASSET_CONTRACT.md` (section HUD gameplay) et `docs/TECHNICAL_SPEC.md` (section Gameplay HUD).
+
+Ne pas fusionner `UI_hud.json` avec les JSON menu : scène et cycle de vie différents.
+
 ## Résumé
 
 - **Deux ADT** : menu et niveaux sur la même `menuScene`, jamais deux JSON dans le même arbre.
+- **HUD gameplay** : `UI_hud.json` sur la scène de jeu, câblé dans `TankGameplayController`.
 - **Un seul endroit** par écran : `rootContainer` visible ou non, `isForeground` pour le calque actif.
-- **Données de liste** dans `menuData.ts` ; **mise en page** dans les JSON ; **câblage** dans `GameApp.ts`.
+- **Données de liste** dans `menuData.ts` ; **mise en page** dans les JSON ; **câblage** dans `GameApp.ts` (menus) ou `TankGameplayController` (HUD).

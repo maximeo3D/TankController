@@ -30,6 +30,7 @@ The goal is to make asset integration deterministic in code.
 - `SPAWN_*`: spawn points
 - `MUZZLE_*`: projectile spawn points
 - `CAM_*`: gameplay camera and camera-related helpers
+- `PU_<typeId>`: power-up spawn points on terrain (e.g. `PU_fuel`, `PU_shield`; Blender duplicates `PU_fuel.001` are accepted)
 
 ### Suspension (tank)
 
@@ -65,6 +66,29 @@ The goal is to make asset integration deterministic in code.
 - `SM_*` are loaded as visible static environment meshes
 - `DM_*` are loaded as visible dynamic environment meshes
 - `COL_*` are hidden and used as collision sources only
+- `PU_*` empties define where the game spawns pickup visuals (see **Power-ups GLB** below)
+
+### Power-ups GLB (`assets/power-ups.glb`)
+
+Templates are **not** placed in the terrain file. Terrain only holds `PU_*` transforms.
+
+| Terrain node | GLB mesh template | Config type id |
+|--------------|-------------------|----------------|
+| `PU_ammo_shell` | `mesh_ammo_shell` | `ammo_shell` |
+| `PU_fuel` | `mesh_fuel` | `fuel` |
+| `PU_repair` | `mesh_repair` | `repair` |
+| `PU_shield` | `mesh_shield` | `shield` |
+| `PU_boost` | `mesh_boost` | `boost` (optional, disabled in config today) |
+| `PU_weapon_boost` | `mesh_weapon_boost` | `weapon_boost` (optional) |
+
+**Authoring notes (current art direction):**
+
+- `repair` — flat tool key (gear + screwdriver)
+- `ammo_shell` — crate with shells
+- `fuel` — jerrican
+- `shield` — geodesic energy dome
+
+Meshes in `power-ups.glb` are disabled at load; clones appear only at `PU_*` positions.
 
 ### Recommended Terrain Authoring
 
@@ -153,9 +177,23 @@ Before an asset is considered valid:
 - `tourelle` rotates correctly without unintended pitch or roll
 - `canon` rotates correctly without unintended yaw or roll
 
+## Gameplay HUD JSON (`assets/ui/UI_hud.json`)
+
+Separate from menu JSON files (`UI_mainmenu.json`, `UI_levels.json`). Parsed on the gameplay scene HUD texture.
+
+**Stable control names** (code binds via `getControlByName`):
+
+- `hud_health_bar_fill` — health 0–100% (no percent label)
+- `hud_fuel_label`, `hud_fuel_bar_fill` — fuel gauge
+- `hud_boost_bar_fill` — boost gauge (bar only)
+- `hud_weapon_*`, `hud_shell_*`, `hud_gun_hint`, `hud_boost_indicator`, `hud_zoom_indicator`
+
+Renaming these in the JSON without updating `TankGameplayController.bindHudLayoutFromJson()` will break the HUD.
+
 ## Non-Goals For v0
 
 - destructible asset pipelines
 - animation retargeting
 - multiple unrelated camera rigs per tank (single `CAM_tank` + `CAM_pivot` is the standard)
 - editable controls authored in assets
+- per-power-up collider meshes (pickup uses distance to `COL_tank` + configured radius)

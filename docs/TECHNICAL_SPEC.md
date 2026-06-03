@@ -10,7 +10,8 @@ The player controls a toy tank on a terrain loaded from `GLB` assets. The first 
 - tank movement and aiming
 - ballistic weapons
 - camera orbit and zoom
-- battery and overcharge resources
+- fuel (battery) and boost (overcharge) resources
+- vehicle health, power-ups, and HUD feedback
 - asset loading conventions stable enough to support later content
 
 ## Engine and Runtime
@@ -74,6 +75,7 @@ The terrain file contains:
 - visible dynamic meshes prefixed `DM_`
 - invisible collider meshes prefixed `COL_`
 - an empty `SPAWN_tank` used as the player spawn point
+- empties `PU_<typeId>` (and Blender duplicates such as `PU_ammo_shell.001`) defining power-up spawn locations
 
 ### Tank
 
@@ -116,25 +118,44 @@ The tank file contains:
 
 ### Power-Ups
 
-- power-ups are collected when `COL_tank` overlaps the power-up collider
-- power-up implementation is postponed until tank control is validated
+Implemented in `src/game/PowerUpSystem.ts` (wired from `TankGameplayController`).
+
+- **Spawn:** for each `PU_<typeId>` node in the terrain container, clone `mesh_<typeId>` from `assets/power-ups.glb` at that transform (anchor in scene).
+- **Pickup:** distance test between `COL_tank` center and pickup anchor, using global `powerUps.pickupRadius` plus tank bounding radius (not physics overlap events).
+- **Visual:** bob + slow Y rotation; `HighlightLayer` (green = available, red = on cooldown). Materials are cloned per instance so fade/respawn are independent.
+- **`singleUse: true`:** on pickup the instance is **fully hidden** (meshes disabled) until the level is reloaded — no respawn in-session.
+- **`singleUse: false`:** mesh fades to `pickedAlpha`, then respawns after `respawnSeconds`.
+
+**Enabled types (config-driven):**
+
+| Type | Effect |
+|------|--------|
+| `ammo_shell` | +reserve shells (`shellAmmoAmount`) |
+| `fuel` | +fuel / battery (`batteryAmount` on `energy.batteryMax`) |
+| `repair` | +HP (`repairAmount`, capped at `vehicle.healthMax`) |
+| `shield` | timed invulnerability (`shieldDurationSeconds`, `damageReduction` 0–1) |
+| `boost` | not wired to pickup yet (`enabled: false` in JSON) |
+| `weapon_boost` | not wired yet |
+
+**Authoring metaphor (current art):** repair = tool key; ammo = shell crate; fuel = jerrican; shield = geodesic energy dome.
 
 ## Controls
 
 ### Movement
 
 - `ZQSD`: chassis movement
-- `Shift`: boost while held
+- `Shift`: boost while held (drains the boost gauge; see **Boost** below)
 
-If battery is `0%`:
+If fuel (battery) is `0%`:
 
 - tank movement is disabled
 - turret aiming remains available (subject to camera / reticle)
 - firing remains available
 
-If overcharge is `0%`:
+If boost gauge (overcharge) is `0%`:
 
-- boost input has no effect
+- boost has no effect (no traction multiplier, no boost FOV)
+- holding `Shift` still drains nothing further once empty
 
 ### Aiming (current implementation)
 
@@ -222,28 +243,65 @@ Key config values live under `tracks` in `TankController.json`:
 - min/max pitch from `cannon.minPitchDeg` / `cannon.maxPitchDeg` in JSON
 - pitch speed from `cannon.pitchSpeedDeg`
 
+## Vehicle Health
+
+Configured under `vehicle` in `TankController.json`:
+
+- `healthMax` — maximum HP (e.g. `400` for the current tank)
+- `startingHealth` — HP at level load (may be set below max for testing, e.g. `200`)
+
+Runtime API on `TankGameplayController`:
+
+- `takeDamage(amount)` — applies damage; respects active shield (`damageReduction`)
+- **No damage** from tank ↔ static world / wall collisions (only explicit damage sources should call `takeDamage`)
+
+Projectile vs. player tank filtering is unchanged (player shells ignore the tank collider group).
+
 ## Energy System
 
-### Battery
+JSON section `energy` drives two resources. The HUD labels them **Fuel** and **Boost** (bars only, no `%` text on health or boost).
 
-- maximum: `100`
-- starts at `100`
-- drains at `1%/s` while tank movement input is producing movement
+### Fuel (internal: `battery`)
+
+- maximum: `batteryMax` (default `100`)
+- starts at `startingBattery`
+- drains at `batteryDrainMovingPerSecond` while movement input is producing movement
 - reaching `0` disables chassis movement only
+- **`fuel` power-up** adds `batteryAmount` (capped at max)
 
-### Overcharge
+### Boost (internal: `overcharge`)
 
-- maximum: `100`
-- starts at `50`
-- drains at `5%/s` while boost is active
-- if empty, boost stops naturally
+- maximum: `overchargeMax` (default `100`)
+- starts at `startingOvercharge`
+- **While `Shift` is held:** drains at `overchargeDrainBoostPerSecond` (default `5` %/s), even when stationary
+- **When `Shift` is released:** recharges at `overchargeRechargePerSecond` (default `5` %/s) up to max
+- **Gameplay effect** (traction × `movement.boostMultiplier`, wider FOV via `camera.boostFovMultiplier`) only applies when moving, `Shift` held, and gauge > `0`
+- There is **no** boost refill power-up in the current design; the gauge is self-managed
 
-### Planned Pickups
+### Shield feedback (active shield)
 
-- battery pickup: restores base battery
-- overcharge pickup: restores overcharge
-- weapon power-up: increases damage and projectile velocity
-- shell crate: restores shell reserve
+While `shieldTimeRemaining > 0`:
+
+- HUD health bar shows **100% fill** in **blue** (actual HP unchanged underneath)
+- Tank visual meshes get a blue `HighlightLayer` glow (`tank_shield_highlight`)
+
+## Gameplay HUD (`assets/ui/UI_hud.json`)
+
+Loaded by `TankGameplayController` via `AdvancedDynamicTexture.ParseFromFileAsync`. Key control names:
+
+| Control | Role |
+|---------|------|
+| `hud_health_bar_fill` | Health 0–100% (green/orange/red; blue + full while shield active) |
+| `hud_fuel_label` / `hud_fuel_bar_fill` | Fuel gauge |
+| `hud_boost_bar_fill` | Boost gauge (bar only, no label) |
+| Weapon / ammo / boost indicator texts | Shell/gun selection, ammo count, optional `hud_boost_indicator` |
+
+World reticles (`reticle_camera`, `reticle_barrel`, `reticle_gun`) are still created in code on top of the parsed HUD texture.
+
+## Planned / Deferred Pickups
+
+- `boost` type in JSON (disabled; boost is auto-recharge only)
+- `weapon_boost` — damage/velocity stacks (config exists, pickup not implemented)
 
 ## Weapon Power-Ups
 
@@ -259,11 +317,12 @@ All tank gameplay tuning must be externalized in `config/TankController.json`.
 This file is the source of truth for:
 
 - movement, suspension, grounding
+- `vehicle` health
 - turn rates, pitch limits
 - camera FOV and **orbit** parameters
-- battery and overcharge values
+- fuel (`energy` battery) and boost (`energy` overcharge) drain/recharge
 - weapon values
-- power-up multipliers
+- `powerUps` global + per-type settings (`types.*`)
 
 The game code should avoid hardcoding gameplay numbers except for small glue constants (e.g. reticle `baseScale` in `TankGameplayController.ts` until moved to JSON).
 
@@ -272,11 +331,12 @@ The game code should avoid hardcoding gameplay numbers except for small glue con
 Optional debug visuals can be enabled via `debug` in `config/TankController.json`:
 
 - `debug.showSuspensionSpheres`: shows small red spheres at the `SUS_*` empty positions (used to validate suspension probe placement after GLB export).
+- `debug.showPowerUpBounds`: wireframe pickup spheres around power-up instances.
 
 ## Recommended Module Layout (actual)
 
 - `src/app/` — bootstrap, state transitions
-- `src/game/` — `createGameplayScene`, `TankGameplayController`, `TankInput`
+- `src/game/` — `createGameplayScene`, `TankGameplayController`, `TankInput`, `PowerUpSystem`
 - `src/config/` — typed config + JSON import
 - `src/assets/` — asset URLs
 
