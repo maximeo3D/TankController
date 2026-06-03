@@ -2027,17 +2027,27 @@ export class TankGameplayController {
     }
     const rightWorld = Vector3.Cross(Axis.Y, forwardWorld).normalize();
 
+    const overchargeMax = this.config.energy.overchargeMax;
+    if (boostHeld && this.overcharge > 0) {
+      this.overcharge = clamp(
+        this.overcharge - this.config.energy.overchargeDrainBoostPerSecond * dt,
+        0,
+        overchargeMax
+      );
+    } else if (!boostHeld && this.overcharge < overchargeMax) {
+      this.overcharge = clamp(
+        this.overcharge + this.config.energy.overchargeRechargePerSecond * dt,
+        0,
+        overchargeMax
+      );
+    }
+
     let tractionMultiplier = 1;
     if (isMoving) {
       const canBoost = boostHeld && this.overcharge > 0;
       if (canBoost) {
         tractionMultiplier *= this.config.movement.boostMultiplier;
-        this.overcharge = clamp(
-          this.overcharge - this.config.energy.overchargeDrainBoostPerSecond * dt,
-          0,
-          this.config.energy.overchargeMax
-        );
-        this.boostActive = this.overcharge > 0;
+        this.boostActive = true;
       }
 
       this.battery = clamp(

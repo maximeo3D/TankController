@@ -111,7 +111,8 @@
     "startingBattery": 100.0,
     "startingOvercharge": 50.0,
     "batteryDrainMovingPerSecond": 1.0,
-    "overchargeDrainBoostPerSecond": 5.0
+    "overchargeDrainBoostPerSecond": 5.0,
+    "overchargeRechargePerSecond": 5.0
   },
   "powerUps": {
     "enabled": true,

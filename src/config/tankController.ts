@@ -140,6 +140,8 @@ export interface TankControllerConfig {
     startingOvercharge: number;
     batteryDrainMovingPerSecond: number;
     overchargeDrainBoostPerSecond: number;
+    /** Recharge de la jauge boost (%) par seconde quand Maj n'est pas maintenue. */
+    overchargeRechargePerSecond: number;
   };
   powerUps?: {
     enabled: boolean;
