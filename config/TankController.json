@@ -50,6 +50,8 @@
     "restLength": 0.05,
     "springStrength": 2200.0,
     "damperStrength": 120.0,
+    "reboundDampingScale": 0.72,
+    "extensionSpringScale": 0.0,
     "maxForce": 6000.0,
     "tractionForce": 600.0,
     "lateralFriction": 4.0
@@ -105,11 +107,14 @@
     "opacityMultiplier": 0.1,
     "suspensionVisual": {
       "enabled": true,
-      "maxDropMeters": 0.06,
+      "maxDropMeters": 0.04,
       "maxTrackPitchDeg": 8.0,
       "maxHullPitchDeg": 4.0,
       "maxHullRollDeg": 5.0,
-      "smoothness": 14.0
+      "springStiffness": 200.0,
+      "springDamping": 16.0,
+      "springBounceDamping": 11.0,
+      "maxBodyBobMeters": 0.0
     }
   },
   "vehicle": {

@@ -142,12 +142,13 @@ export class TankGameplayController {
   private readonly trackLeftBaseLocalRotation: Quaternion;
   private readonly trackRightBaseLocalRotation: Quaternion;
   private readonly wheelAnchorLocal = new Map<TrackNodeKey, Vector3>();
-  private trackLeftDropSmoothed = 0;
-  private trackRightDropSmoothed = 0;
-  private trackLeftPitchSmoothed = 0;
-  private trackRightPitchSmoothed = 0;
-  private hullSuspensionPitchSmoothed = 0;
-  private hullSuspensionRollSmoothed = 0;
+  private readonly trackLeftDropSpring: SpringScalarState = { value: 0, velocity: 0 };
+  private readonly trackRightDropSpring: SpringScalarState = { value: 0, velocity: 0 };
+  private readonly trackLeftPitchSpring: SpringScalarState = { value: 0, velocity: 0 };
+  private readonly trackRightPitchSpring: SpringScalarState = { value: 0, velocity: 0 };
+  private readonly hullSuspensionPitchSpring: SpringScalarState = { value: 0, velocity: 0 };
+  private readonly hullSuspensionRollSpring: SpringScalarState = { value: 0, velocity: 0 };
+  private readonly bodyBobSpring: SpringScalarState = { value: 0, velocity: 0 };
   private hullDrivePitchTarget = 0;
   private hullDrivePitchSmoothed = 0;
   private prevSmoothedMoveAxis = 0;
@@ -2185,16 +2186,20 @@ export class TankGameplayController {
         continue;
       }
 
-      // Point velocity along suspension axis (up).
       const r = hit.hitPointWorld.subtract(center);
       const pointVel = linearVel.add(Vector3.Cross(angularVel, r));
       const velAlongUp = Vector3.Dot(pointVel, Axis.Y);
 
-      let forceMag = k * compression - c * velAlongUp;
+      const reboundScale = clamp(this.config.suspension.reboundDampingScale ?? 1, 0.35, 1);
+      const damper = velAlongUp > 0 ? c * reboundScale : c;
+      let forceMag = k * compression - damper * velAlongUp;
       forceMag = clamp(forceMag, 0, maxForce);
 
-      const force = Axis.Y.scale(forceMag);
-      this.tankBody.applyForce(force, hit.hitPointWorld);
+      if (forceMag <= 1e-4) {
+        continue;
+      }
+
+      this.tankBody.applyForce(Axis.Y.scale(forceMag), hit.hitPointWorld);
     }
   }
 
@@ -2484,7 +2489,11 @@ export class TankGameplayController {
       return;
     }
 
-    const smooth = 1 - Math.exp(-vis.smoothness * dt);
+    const stiffness = vis.springStiffness ?? (vis.smoothness ?? 14) * 17;
+    const bounceDamping =
+      vis.springBounceDamping ?? vis.springDamping ?? (vis.smoothness ?? 14) * 0.68;
+    const dropDamping =
+      vis.springDropDamping ?? Math.max(bounceDamping * 1.6, 2 * Math.sqrt(stiffness));
 
     const compFl = this.wheelAnchorLocal.has("fl") ? this.sampleWheelCompression(this.wheelAnchorLocal.get("fl")!) : 0;
     const compFr = this.wheelAnchorLocal.has("fr") ? this.sampleWheelCompression(this.wheelAnchorLocal.get("fr")!) : 0;
@@ -2503,35 +2512,56 @@ export class TankGameplayController {
     const targetHullPitch = toRadians((frontAvg - rearAvg) * vis.maxHullPitchDeg);
     const targetHullRoll = toRadians((leftAvg - rightAvg) * vis.maxHullRollDeg);
 
-    this.trackLeftDropSmoothed += (targetLeftDrop - this.trackLeftDropSmoothed) * smooth;
-    this.trackRightDropSmoothed += (targetRightDrop - this.trackRightDropSmoothed) * smooth;
-    this.trackLeftPitchSmoothed += (targetLeftPitch - this.trackLeftPitchSmoothed) * smooth;
-    this.trackRightPitchSmoothed += (targetRightPitch - this.trackRightPitchSmoothed) * smooth;
-    this.hullSuspensionPitchSmoothed += (targetHullPitch - this.hullSuspensionPitchSmoothed) * smooth;
-    this.hullSuspensionRollSmoothed += (targetHullRoll - this.hullSuspensionRollSmoothed) * smooth;
+    stepSpringScalar(this.trackLeftDropSpring, targetLeftDrop, dt, stiffness, dropDamping);
+    stepSpringScalar(this.trackRightDropSpring, targetRightDrop, dt, stiffness, dropDamping);
+    clampSpringScalar(this.trackLeftDropSpring, 0, vis.maxDropMeters);
+    clampSpringScalar(this.trackRightDropSpring, 0, vis.maxDropMeters);
+
+    const maxTrackPitch = toRadians(vis.maxTrackPitchDeg);
+    const maxHullPitch = toRadians(vis.maxHullPitchDeg);
+    const maxHullRoll = toRadians(vis.maxHullRollDeg);
+
+    stepSpringScalar(this.trackLeftPitchSpring, targetLeftPitch, dt, stiffness, bounceDamping);
+    stepSpringScalar(this.trackRightPitchSpring, targetRightPitch, dt, stiffness, bounceDamping);
+    stepSpringScalar(this.hullSuspensionPitchSpring, targetHullPitch, dt, stiffness, bounceDamping);
+    stepSpringScalar(this.hullSuspensionRollSpring, targetHullRoll, dt, stiffness, bounceDamping);
+    clampSpringScalar(this.trackLeftPitchSpring, -maxTrackPitch, maxTrackPitch);
+    clampSpringScalar(this.trackRightPitchSpring, -maxTrackPitch, maxTrackPitch);
+    clampSpringScalar(this.hullSuspensionPitchSpring, -maxHullPitch, maxHullPitch);
+    clampSpringScalar(this.hullSuspensionRollSpring, -maxHullRoll, maxHullRoll);
+
+    const bodyBobMax = vis.maxBodyBobMeters ?? 0;
+    if (bodyBobMax > 1e-6) {
+      const avgCompression = (leftAvg + rightAvg) * 0.5;
+      stepSpringScalar(this.bodyBobSpring, -avgCompression * bodyBobMax, dt, stiffness, dropDamping);
+      clampSpringScalar(this.bodyBobSpring, -bodyBobMax, bodyBobMax);
+    } else {
+      this.bodyBobSpring.value = 0;
+      this.bodyBobSpring.velocity = 0;
+    }
 
     if (this.trackLeftControl.bone || this.trackLeftControl.transformNode) {
       const pos = this.trackLeftBaseLocalPosition.clone();
-      pos.y -= this.trackLeftDropSmoothed;
+      pos.y -= clamp(this.trackLeftDropSpring.value, 0, vis.maxDropMeters);
       setControlLocalPosition(this.trackLeftControl, pos);
       setControlAxisAngle(
         this.trackLeftControl,
         this.trackLeftBaseLocalRotation,
         this.cannonPitchAxis,
-        this.trackLeftPitchSmoothed,
+        this.trackLeftPitchSpring.value,
         this.tankAnchor
       );
     }
 
     if (this.trackRightControl.bone || this.trackRightControl.transformNode) {
       const pos = this.trackRightBaseLocalPosition.clone();
-      pos.y -= this.trackRightDropSmoothed;
+      pos.y -= clamp(this.trackRightDropSpring.value, 0, vis.maxDropMeters);
       setControlLocalPosition(this.trackRightControl, pos);
       setControlAxisAngle(
         this.trackRightControl,
         this.trackRightBaseLocalRotation,
         this.cannonPitchAxis,
-        this.trackRightPitchSmoothed,
+        this.trackRightPitchSpring.value,
         this.tankAnchor
       );
     }
@@ -2557,8 +2587,8 @@ export class TankGameplayController {
     this.hullDrivePitchSmoothed += (this.hullDrivePitchTarget - this.hullDrivePitchSmoothed) * driveSmooth;
 
     const hullPitch =
-      this.hullRecoilPitch + this.hullSuspensionPitchSmoothed + this.hullDrivePitchSmoothed;
-    const hullRoll = this.hullRecoilRoll + this.hullSuspensionRollSmoothed;
+      this.hullRecoilPitch + this.hullSuspensionPitchSpring.value + this.hullDrivePitchSmoothed;
+    const hullRoll = this.hullRecoilRoll + this.hullSuspensionRollSpring.value;
     if (this.caisseControl.bone || this.caisseControl.transformNode) {
       const hullRot = this.caisseBaseLocalRotation.multiply(
         Quaternion.RotationYawPitchRoll(0, hullPitch, hullRoll)
@@ -2576,6 +2606,7 @@ export class TankGameplayController {
 
     const positionLerp = 1 - Math.exp(-this.config.grounding.positionSharpness * dt);
     const nextLocalPosition = Vector3.Lerp(this.tankVisualRoot.position, Vector3.Zero(), positionLerp);
+    nextLocalPosition.y += this.bodyBobSpring.value;
     this.tankVisualRoot.position.copyFrom(nextLocalPosition);
   }
 
@@ -2609,6 +2640,11 @@ export class TankGameplayController {
     this.pendingHullRecoilRoll += K * dir.x;
   }
 
+}
+
+interface SpringScalarState {
+  value: number;
+  velocity: number;
 }
 
 type TrackNodeKey = "fl" | "fr" | "ml" | "mr" | "rl" | "rr";
@@ -2908,6 +2944,36 @@ function setControlAxisAngle(
 
   if (control.bone) {
     control.bone.setRotationQuaternion(local, Space.LOCAL, tankAnchor);
+  }
+}
+
+/** Ressort amorti (sous-amorti si damping trop bas → rebond visuel). */
+function stepSpringScalar(
+  state: SpringScalarState,
+  target: number,
+  dt: number,
+  stiffness: number,
+  damping: number
+): void {
+  if (dt <= 0) {
+    return;
+  }
+  const accel = stiffness * (target - state.value) - damping * state.velocity;
+  state.velocity += accel * dt;
+  state.value += state.velocity * dt;
+}
+
+function clampSpringScalar(state: SpringScalarState, min: number, max: number): void {
+  if (state.value < min) {
+    state.value = min;
+    if (state.velocity < 0) {
+      state.velocity = 0;
+    }
+  } else if (state.value > max) {
+    state.value = max;
+    if (state.velocity > 0) {
+      state.velocity = 0;
+    }
   }
 }
 

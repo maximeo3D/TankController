@@ -76,6 +76,10 @@ export interface TankControllerConfig {
     springStrength: number;
     damperStrength: number;
     maxForce: number;
+    /** Amortissement réduit à la détente (rebond). 0–1, typ. 0.45–0.65. */
+    reboundDampingScale?: number;
+    /** Rigidité ressort en extension (fraction de `springStrength`). */
+    extensionSpringScale?: number;
     tractionForce: number;
     lateralFriction: number;
   };
@@ -145,8 +149,18 @@ export interface TankControllerConfig {
       maxHullPitchDeg: number;
       /** Roll max du bone `caisse` (degrés). */
       maxHullRollDeg: number;
-      /** Lissage (plus haut = plus réactif). */
-      smoothness: number;
+      /** @deprecated Préférer `springStiffness` / `springDamping`. */
+      smoothness?: number;
+      /** Ressort visuel (réactivité). */
+      springStiffness?: number;
+      /** Amortissement visuel des inclinaisons (plus bas = plus de rebond). */
+      springDamping?: number;
+      /** Amortissement des affaissements chenille (plus haut = pas d’enfoncement). */
+      springDropDamping?: number;
+      /** Amortissement rebond pitch/roll ; défaut = `springBounceDamping` ou `springDamping`. */
+      springBounceDamping?: number;
+      /** Oscillation verticale du `tank_visual_root` (m) ; 0 = désactivé. */
+      maxBodyBobMeters?: number;
     };
   };
   vehicle: {
