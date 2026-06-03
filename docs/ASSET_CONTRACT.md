@@ -102,6 +102,7 @@ Meshes in `power-ups.glb` are disabled at load; clones appear only at `PU_*` pos
 
 - armature: `tank_armature`
 - bone chain: `main > caisse > tourelle > canon`
+- **track bones (recommended):** `track_L`, `track_R` — children of `main`, placed at mid-track (`SUS_ML` / `SUS_MR`); chenille meshes weighted/parented to these bones
 - muzzle socket: `MUZZLE_tank`
 - gameplay camera: `CAM_tank`
 - **orbit pivot (recommended):** `CAM_pivot` — empty placed above the turret (or at the intended orbit center); moves with the hull / rig
@@ -112,7 +113,8 @@ Meshes in `power-ups.glb` are disabled at load; clones appear only at `PU_*` pos
 ### Functional Meaning
 
 - `main`: top-level rig root
-- `caisse`: chassis reference for movement and hull orientation
+- `caisse`: chassis reference for movement and hull orientation (visual pitch/roll suspension + recoil au tir)
+- `track_L` / `track_R`: left/right track banks — driven in code from `SUS_*` compression (`tracks.suspensionVisual` in JSON)
 - `tourelle`: yaw pivot
 - `canon`: pitch pivot
 - `MUZZLE_tank`: origin and forward reference for projectile spawning

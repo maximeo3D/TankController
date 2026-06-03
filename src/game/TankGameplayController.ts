@@ -133,6 +133,24 @@ export class TankGameplayController {
   private readonly input: TankInput;
   private readonly turretControl: BoneControl;
   private readonly cannonControl: BoneControl;
+  private readonly caisseControl: BoneControl;
+  private readonly trackLeftControl: BoneControl;
+  private readonly trackRightControl: BoneControl;
+  private readonly caisseBaseLocalRotation: Quaternion;
+  private readonly trackLeftBaseLocalPosition: Vector3;
+  private readonly trackRightBaseLocalPosition: Vector3;
+  private readonly trackLeftBaseLocalRotation: Quaternion;
+  private readonly trackRightBaseLocalRotation: Quaternion;
+  private readonly wheelAnchorLocal = new Map<TrackNodeKey, Vector3>();
+  private trackLeftDropSmoothed = 0;
+  private trackRightDropSmoothed = 0;
+  private trackLeftPitchSmoothed = 0;
+  private trackRightPitchSmoothed = 0;
+  private hullSuspensionPitchSmoothed = 0;
+  private hullSuspensionRollSmoothed = 0;
+  private hullDrivePitchTarget = 0;
+  private hullDrivePitchSmoothed = 0;
+  private prevSmoothedMoveAxis = 0;
   private readonly turretBaseLocalRotation: Quaternion;
   private readonly cannonBaseLocalRotation: Quaternion;
   private readonly cannonBaseLocalPosition: Vector3;
@@ -344,9 +362,26 @@ export class TankGameplayController {
     this.input = new TankInput(options.canvas);
     this.turretControl = resolveBoneControl(options.tankContainer, "tourelle");
     this.cannonControl = resolveBoneControl(options.tankContainer, "canon");
+    this.caisseControl = resolveBoneControl(options.tankContainer, "caisse");
+    this.trackLeftControl = resolveBoneControl(options.tankContainer, "track_L");
+    this.trackRightControl = resolveBoneControl(options.tankContainer, "track_R");
+    this.initWheelAnchorLocalPositions();
+    if (this.tracksConfig.suspensionVisual?.enabled) {
+      if (!this.trackLeftControl.bone && !this.trackLeftControl.transformNode) {
+        console.warn("[TankController] track_L bone missing; track suspension visual disabled.");
+      }
+      if (!this.trackRightControl.bone && !this.trackRightControl.transformNode) {
+        console.warn("[TankController] track_R bone missing; track suspension visual disabled.");
+      }
+    }
     this.turretBaseLocalRotation = getControlLocalRotation(this.turretControl, this.tankAnchor);
     this.cannonBaseLocalRotation = getControlLocalRotation(this.cannonControl, this.tankAnchor);
     this.cannonBaseLocalPosition = getControlLocalPosition(this.cannonControl);
+    this.caisseBaseLocalRotation = getControlLocalRotation(this.caisseControl, this.tankAnchor);
+    this.trackLeftBaseLocalPosition = getControlLocalPosition(this.trackLeftControl);
+    this.trackRightBaseLocalPosition = getControlLocalPosition(this.trackRightControl);
+    this.trackLeftBaseLocalRotation = getControlLocalRotation(this.trackLeftControl, this.tankAnchor);
+    this.trackRightBaseLocalRotation = getControlLocalRotation(this.trackRightControl, this.tankAnchor);
     this.movementForwardAxis = axisFromConfig(
       options.config.rig.movementForwardAxis,
       options.config.rig.movementForwardSign
@@ -2005,6 +2040,19 @@ export class TankGameplayController {
     this.smoothedMoveAxis = moveTowards(this.smoothedMoveAxis, desiredMoveAxis, inputRate * dt);
     const isMoving = canMove && Math.abs(this.smoothedMoveAxis) > 0.001;
 
+    const g = this.config.grounding;
+    const moveRate = (this.smoothedMoveAxis - this.prevSmoothedMoveAxis) / Math.max(dt, 1e-6);
+    this.prevSmoothedMoveAxis = this.smoothedMoveAxis;
+    if (canMove) {
+      const scale = g.drivePitchInputRateScale ?? 0.4;
+      const maxRad = toRadians(g.drivePitchMaxDeg ?? 3.5);
+      // Accélération (input qui monte) → tangage arrière ; freinage → tangage avant.
+      this.hullDrivePitchTarget = clamp(-moveRate * scale, -1, 1) * maxRad;
+    } else {
+      this.hullDrivePitchTarget = 0;
+      this.prevSmoothedMoveAxis = 0;
+    }
+
     this.boostActive = false;
 
     // Steering: drive the rigidbody (not the node transform).
@@ -2353,6 +2401,142 @@ export class TankGameplayController {
     this.tankCamera.setTarget(pivotWorld);
   }
 
+  private initWheelAnchorLocalPositions(): void {
+    const entries: Array<[TrackNodeKey, TransformNode | AbstractMesh | null]> = [
+      ["fl", this.suspensionNodes.fl],
+      ["fr", this.suspensionNodes.fr],
+      ["ml", this.suspensionNodes.ml],
+      ["mr", this.suspensionNodes.mr],
+      ["rl", this.suspensionNodes.rl],
+      ["rr", this.suspensionNodes.rr]
+    ];
+    for (const [key, node] of entries) {
+      if (node) {
+        this.wheelAnchorLocal.set(key, toAnchorLocalPosition(node, this.tankAnchor));
+      }
+    }
+  }
+
+  /** Compression normalisée 0–1 au point d’ancrage (même raycast que la suspension physique). */
+  private sampleWheelCompression(anchorLocal: Vector3): number {
+    const engine = this.scene.getPhysicsEngine();
+    if (!engine) {
+      return 0;
+    }
+
+    const restLength = this.config.suspension.restLength;
+    if (restLength <= 1e-6) {
+      return 0;
+    }
+
+    const q =
+      this.tankAnchor.absoluteRotationQuaternion ??
+      this.tankAnchor.rotationQuaternion ??
+      Quaternion.Identity();
+    const worldPoint = this.tankAnchor
+      .getAbsolutePosition()
+      .add(anchorLocal.clone().applyRotationQuaternion(q));
+
+    const rayStartHeight = this.config.suspension.rayStartHeight;
+    const rayLength = this.config.suspension.rayLength;
+    const from = worldPoint.add(Axis.Y.scale(rayStartHeight));
+    const to = from.add(Axis.Y.scale(-rayLength));
+    const hit = engine.raycast(from, to, {
+      ignoreBody: this.tankBody,
+      shouldHitTriggers: false,
+      collideWith: 0xffffffff
+    });
+
+    if (!hit.hasHit) {
+      return 0;
+    }
+
+    hit.calculateHitDistance();
+    let distance = hit.hitDistance;
+    if (!Number.isFinite(distance)) {
+      if (!hit.hitPointWorld) {
+        return 0;
+      }
+      distance = Vector3.Distance(from, hit.hitPointWorld);
+    }
+
+    const compression = clamp(restLength - distance, 0, restLength);
+    return compression / restLength;
+  }
+
+  private averageCompression(keys: TrackNodeKey[]): number {
+    let sum = 0;
+    let count = 0;
+    for (const key of keys) {
+      const local = this.wheelAnchorLocal.get(key);
+      if (!local) {
+        continue;
+      }
+      sum += this.sampleWheelCompression(local);
+      count++;
+    }
+    return count > 0 ? sum / count : 0;
+  }
+
+  private applyTrackSuspensionVisual(dt: number): void {
+    const vis = this.tracksConfig.suspensionVisual;
+    if (!vis?.enabled || dt <= 0) {
+      return;
+    }
+
+    const smooth = 1 - Math.exp(-vis.smoothness * dt);
+
+    const compFl = this.wheelAnchorLocal.has("fl") ? this.sampleWheelCompression(this.wheelAnchorLocal.get("fl")!) : 0;
+    const compFr = this.wheelAnchorLocal.has("fr") ? this.sampleWheelCompression(this.wheelAnchorLocal.get("fr")!) : 0;
+    const compRl = this.wheelAnchorLocal.has("rl") ? this.sampleWheelCompression(this.wheelAnchorLocal.get("rl")!) : 0;
+    const compRr = this.wheelAnchorLocal.has("rr") ? this.sampleWheelCompression(this.wheelAnchorLocal.get("rr")!) : 0;
+
+    const leftAvg = this.averageCompression(["fl", "ml", "rl"]);
+    const rightAvg = this.averageCompression(["fr", "mr", "rr"]);
+    const frontAvg = (compFl + compFr) * 0.5;
+    const rearAvg = (compRl + compRr) * 0.5;
+
+    const targetLeftDrop = leftAvg * vis.maxDropMeters;
+    const targetRightDrop = rightAvg * vis.maxDropMeters;
+    const targetLeftPitch = toRadians((compFl - compRl) * vis.maxTrackPitchDeg);
+    const targetRightPitch = toRadians((compFr - compRr) * vis.maxTrackPitchDeg);
+    const targetHullPitch = toRadians((frontAvg - rearAvg) * vis.maxHullPitchDeg);
+    const targetHullRoll = toRadians((leftAvg - rightAvg) * vis.maxHullRollDeg);
+
+    this.trackLeftDropSmoothed += (targetLeftDrop - this.trackLeftDropSmoothed) * smooth;
+    this.trackRightDropSmoothed += (targetRightDrop - this.trackRightDropSmoothed) * smooth;
+    this.trackLeftPitchSmoothed += (targetLeftPitch - this.trackLeftPitchSmoothed) * smooth;
+    this.trackRightPitchSmoothed += (targetRightPitch - this.trackRightPitchSmoothed) * smooth;
+    this.hullSuspensionPitchSmoothed += (targetHullPitch - this.hullSuspensionPitchSmoothed) * smooth;
+    this.hullSuspensionRollSmoothed += (targetHullRoll - this.hullSuspensionRollSmoothed) * smooth;
+
+    if (this.trackLeftControl.bone || this.trackLeftControl.transformNode) {
+      const pos = this.trackLeftBaseLocalPosition.clone();
+      pos.y -= this.trackLeftDropSmoothed;
+      setControlLocalPosition(this.trackLeftControl, pos);
+      setControlAxisAngle(
+        this.trackLeftControl,
+        this.trackLeftBaseLocalRotation,
+        this.cannonPitchAxis,
+        this.trackLeftPitchSmoothed,
+        this.tankAnchor
+      );
+    }
+
+    if (this.trackRightControl.bone || this.trackRightControl.transformNode) {
+      const pos = this.trackRightBaseLocalPosition.clone();
+      pos.y -= this.trackRightDropSmoothed;
+      setControlLocalPosition(this.trackRightControl, pos);
+      setControlAxisAngle(
+        this.trackRightControl,
+        this.trackRightBaseLocalRotation,
+        this.cannonPitchAxis,
+        this.trackRightPitchSmoothed,
+        this.tankAnchor
+      );
+    }
+  }
+
   private applyVisualSmoothing(dt: number): void {
     if (!this.tankVisualRoot || !this.tankAnchor.absoluteRotationQuaternion) {
       return;
@@ -2366,10 +2550,29 @@ export class TankGameplayController {
     this.pendingHullRecoilPitch = 0;
     this.pendingHullRecoilRoll = 0;
 
+    this.applyTrackSuspensionVisual(dt);
+
+    const driveSharp = this.config.grounding.drivePitchSharpness ?? this.config.grounding.visualTiltSharpness;
+    const driveSmooth = 1 - Math.exp(-driveSharp * dt);
+    this.hullDrivePitchSmoothed += (this.hullDrivePitchTarget - this.hullDrivePitchSmoothed) * driveSmooth;
+
+    const hullPitch =
+      this.hullRecoilPitch + this.hullSuspensionPitchSmoothed + this.hullDrivePitchSmoothed;
+    const hullRoll = this.hullRecoilRoll + this.hullSuspensionRollSmoothed;
+    if (this.caisseControl.bone || this.caisseControl.transformNode) {
+      const hullRot = this.caisseBaseLocalRotation.multiply(
+        Quaternion.RotationYawPitchRoll(0, hullPitch, hullRoll)
+      );
+      setControlLocalRotation(this.caisseControl, hullRot, this.tankAnchor);
+    } else {
+      this.tankVisualRoot.rotationQuaternion ??= Quaternion.Identity();
+      this.tankVisualRoot.rotationQuaternion.copyFrom(
+        Quaternion.RotationYawPitchRoll(0, hullPitch, hullRoll)
+      );
+    }
+
     this.tankVisualRoot.rotationQuaternion ??= Quaternion.Identity();
-    this.tankVisualRoot.rotationQuaternion.copyFrom(
-      Quaternion.RotationYawPitchRoll(0, this.hullRecoilPitch, this.hullRecoilRoll)
-    );
+    this.tankVisualRoot.rotationQuaternion.copyFrom(Quaternion.Identity());
 
     const positionLerp = 1 - Math.exp(-this.config.grounding.positionSharpness * dt);
     const nextLocalPosition = Vector3.Lerp(this.tankVisualRoot.position, Vector3.Zero(), positionLerp);
@@ -2381,7 +2584,7 @@ export class TankGameplayController {
    * `worldForward` = direction du tir (monde), même logique que le projectile.
    */
   private applyHullRecoilImpulseFromWorldForward(worldForward: Vector3): void {
-    if (!this.tankVisualRoot) {
+    if (!this.tankVisualRoot && !this.caisseControl.bone && !this.caisseControl.transformNode) {
       return;
     }
 
@@ -2653,6 +2856,31 @@ function setControlLocalPosition(control: BoneControl, position: Vector3): void 
   if (control.bone) {
     control.bone.position.copyFrom(position);
   }
+}
+
+function setControlLocalRotation(
+  control: BoneControl,
+  rotation: Quaternion,
+  tankAnchor: TransformNode
+): void {
+  if (control.transformNode) {
+    control.transformNode.rotationQuaternion ??= Quaternion.Identity();
+    control.transformNode.rotationQuaternion.copyFrom(rotation);
+    return;
+  }
+
+  if (control.bone) {
+    control.bone.setRotationQuaternion(rotation, Space.LOCAL, tankAnchor);
+  }
+}
+
+function toAnchorLocalPosition(
+  node: TransformNode | AbstractMesh,
+  anchor: TransformNode
+): Vector3 {
+  node.computeWorldMatrix(true);
+  const inv = anchor.getWorldMatrix().clone().invert();
+  return Vector3.TransformCoordinates(node.getAbsolutePosition(), inv);
 }
 
 function setControlAxisAngle(

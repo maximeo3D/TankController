@@ -62,6 +62,12 @@ export interface TankControllerConfig {
     maxGroundSlopeDeg: number;
     visualTiltSharpness: number;
     positionSharpness: number;
+    /** Tangage visuel au changement d’input (accélération / freinage), degrés max. */
+    drivePitchMaxDeg?: number;
+    /** Sensibilité au taux de variation de `smoothedMoveAxis` (input lissé). */
+    drivePitchInputRateScale?: number;
+    /** Lissage du tangage conduite ; défaut = `visualTiltSharpness`. */
+    drivePitchSharpness?: number;
   };
   suspension: {
     rayStartHeight: number;
@@ -128,6 +134,20 @@ export interface TankControllerConfig {
     raycastStartHeight: number;
     raycastLength: number;
     opacityMultiplier: number;
+    /** Bones `track_L` / `track_R` : affaissement et twist visuel depuis les `SUS_*`. */
+    suspensionVisual?: {
+      enabled: boolean;
+      /** Déplacement local Y max des bones chenille (m). */
+      maxDropMeters: number;
+      /** Pitch max d’un train (degrés, avant/arrière selon FL↔RL ou FR↔RR). */
+      maxTrackPitchDeg: number;
+      /** Pitch max du bone `caisse` (degrés). */
+      maxHullPitchDeg: number;
+      /** Roll max du bone `caisse` (degrés). */
+      maxHullRollDeg: number;
+      /** Lissage (plus haut = plus réactif). */
+      smoothness: number;
+    };
   };
   vehicle: {
     healthMax: number;

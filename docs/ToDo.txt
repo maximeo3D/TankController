@@ -1,0 +1,45 @@
+Boucler la boucle de jeu (priorité haute)
+Sans ça, santé / shield / repair restent des démos.
+
+Dégâts entrants sur le joueur
+Obus ennemis (ou zones de test) qui appellent takeDamage(). Aujourd’hui rien ne baisse la vie en combat réel.
+
+Mort + fin de partie
+HP à 0 → arrêt du tank (ou écran Game Over / retour menu). Le HUD santé devient alors utile au-delà du test repair.
+
+Ennemis simples
+Un ou deux tanks statiques ou qui patrouillent, tirent lentement, COL_* + même système de projectiles. C’est le plus gros morceau, mais ça valide tout le reste.
+
+Gameplay / ressources (rapide à moyen)
+weapon_boost — config déjà là (damageMultiplier, stacks) : brancher le pickup + effet sur obus/balle.
+
+Objectifs de niveau
+Détruire N cibles DM_*, atteindre une zone, survivre X secondes — même sans IA sophistiquée.
+
+Pause / restart
+État PauseMenu, recharger le niveau sans relancer l’app.
+
+HUD
+Timer shield, flash fuel bas, son ou pulse quand boost vide — petit polish, gros confort.
+
+Monde et assets
+DM_* destructibles
+Obus qui cassent des props (déjà en physique dynamique) + feedback (particules, disparition).
+
+Second niveau
+Autre terrain dans LevelSelect + menuData.ts — prouve que le pipeline scale.
+
+Chenilles
+Pistes sur les 4 SUS_* latéraux, fade plus propre — déjà en backlog tuning.
+
+Confort joueur
+Pointer lock ou orbit uniquement au clic droit — moins de conflit souris / UI.
+
+Audio
+Pickup, shield actif, low fuel, impact selon matériau.
+
+Power-up boost
+Soit supprimer du JSON, soit un effet ponctuel (ex. recharge instantanée 100 % une fois) — distinct de la jauge auto-recharge.
+
+Plus tard
+IA pathfinding, vagues, score, multijoueur, sauvegarde progression, éditeur de niveaux.

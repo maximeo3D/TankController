@@ -53,6 +53,7 @@ export interface GameplaySceneBundle {
 }
 
 const REQUIRED_BONES = ["main", "caisse", "tourelle", "canon"] as const;
+const OPTIONAL_TRACK_BONES = ["track_L", "track_R"] as const;
 
 interface PhysicsResourceGroup {
   bodies: PhysicsBody[];
@@ -497,7 +498,8 @@ function countNamedMeshes(container: AssetContainer, prefix: string): number {
 }
 
 function collectBoneMatches(container: AssetContainer): string[] {
-  return REQUIRED_BONES.filter((boneName) =>
+  const names = [...REQUIRED_BONES, ...OPTIONAL_TRACK_BONES] as const;
+  return names.filter((boneName) =>
     container.skeletons.some((skeleton) => skeleton.bones.some((bone) => bone.name === boneName))
   );
 }
