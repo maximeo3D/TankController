@@ -38,6 +38,8 @@ import {
 } from "../assets/assetUrls";
 import { Sound } from "@babylonjs/core/Audio/sound";
 import { AbstractEngine } from "@babylonjs/core/Engines/abstractEngine";
+import "@babylonjs/core/Layers/effectLayerSceneComponent";
+import { HighlightLayer } from "@babylonjs/core/Layers/highlightLayer";
 import type { TrackTreadParticleBundle } from "./trackTreadParticles";
 import { PowerUpSystem } from "./PowerUpSystem";
 
@@ -151,6 +153,10 @@ export class TankGameplayController {
   private readonly healthMax: number;
   private shieldTimeRemaining = 0;
   private shieldDamageReduction = 0;
+  private readonly shieldHighlightMeshes: Mesh[] = [];
+  private shieldHighlightLayer: HighlightLayer | null = null;
+  private shieldHighlightVisualActive = false;
+  private static readonly SHIELD_GLOW_COLOR = new Color3(0.26, 0.65, 0.96);
   private battery: number;
   private overcharge: number;
   private activeWeapon: WeaponType = "shell";
@@ -326,6 +332,8 @@ export class TankGameplayController {
     for (const m of options.tankContainer.meshes) {
       this.tankMeshIdsToIgnore.add(m.uniqueId);
     }
+    this.shieldHighlightMeshes.push(...collectTankHighlightMeshes(options.tankContainer));
+    this.shieldHighlightLayer = this.createShieldHighlightLayer();
     this.ammoShellMesh = options.ammoShellMesh;
     this.ammoShellColliderMesh = options.ammoShellColliderMesh ?? null;
     this.ammoBulletMesh = options.ammoBulletMesh;
@@ -494,6 +502,44 @@ export class TankGameplayController {
     }
     this.shieldTimeRemaining = durationSeconds;
     this.shieldDamageReduction = clamp(damageReduction, 0, 1);
+    this.syncShieldHighlight();
+  }
+
+  private createShieldHighlightLayer(): HighlightLayer | null {
+    try {
+      const highlightOpts = this.config.powerUps?.highlight;
+      return new HighlightLayer("tank_shield_highlight", this.scene, {
+        generateStencilBuffer: true,
+        blurHorizontalSize: highlightOpts?.blurHorizontalSize ?? 0.1,
+        blurVerticalSize: highlightOpts?.blurVerticalSize ?? 0.1
+      });
+    } catch (error) {
+      console.error("[TankController] Shield HighlightLayer init failed:", error);
+      return null;
+    }
+  }
+
+  private syncShieldHighlight(): void {
+    const active = this.shieldTimeRemaining > 0;
+    if (active === this.shieldHighlightVisualActive) {
+      return;
+    }
+    this.shieldHighlightVisualActive = active;
+
+    const layer = this.shieldHighlightLayer;
+    if (!layer) {
+      return;
+    }
+
+    for (const mesh of this.shieldHighlightMeshes) {
+      if (active) {
+        if (!layer.hasMesh(mesh)) {
+          layer.addMesh(mesh, TankGameplayController.SHIELD_GLOW_COLOR);
+        }
+      } else if (layer.hasMesh(mesh)) {
+        layer.removeMesh(mesh);
+      }
+    }
   }
 
   private initWeaponSounds(): void {
@@ -916,6 +962,11 @@ export class TankGameplayController {
 
     this.trackTreadParticles?.dispose();
     this.trackTreadParticlesReverse?.dispose();
+    this.shieldHighlightLayer?.removeAllMeshes();
+    this.shieldHighlightLayer?.dispose();
+    this.shieldHighlightLayer = null;
+    this.shieldHighlightVisualActive = false;
+
     this.powerUpSystem?.dispose();
   }
 
@@ -957,6 +1008,7 @@ export class TankGameplayController {
     if (this.shieldTimeRemaining > 0) {
       this.shieldTimeRemaining = Math.max(0, this.shieldTimeRemaining - dt);
     }
+    this.syncShieldHighlight();
     this.updateWeapons(dt);
     this.applyTurretAndCannon(frame.pointerX, frame.pointerY, dt);
     this.applyMovement(frame.moveAxis, frame.turnAxis, frame.boostHeld, dt);
@@ -2636,6 +2688,21 @@ function moveTowardsAngle(current: number, target: number, maxDelta: number): nu
   }
 
   return current + Math.sign(delta) * maxDelta;
+}
+
+function collectTankHighlightMeshes(container: AssetContainer): Mesh[] {
+  const meshes: Mesh[] = [];
+  for (const mesh of container.meshes) {
+    if (!(mesh instanceof BabylonMesh)) {
+      continue;
+    }
+    const name = mesh.name.trim().toLowerCase();
+    if (name.startsWith("col_")) {
+      continue;
+    }
+    meshes.push(mesh);
+  }
+  return meshes;
 }
 
 function repeat(value: number, length: number): number {

@@ -474,8 +474,14 @@ export class PowerUpSystem {
 
     instance.available = false;
     instance.cooldownRemaining = instance.respawnSeconds;
-    this.setPickedVisual(instance);
-    this.setHighlightState(instance, false);
+
+    if (instance.typeConfig.singleUse) {
+      this.setInstanceVisible(instance, false);
+      this.removeHighlight(instance);
+    } else {
+      this.setPickedVisual(instance);
+      this.setHighlightState(instance, false);
+    }
   }
 
   private applyPickupEffect(instance: PowerUpInstance): void {
@@ -519,6 +525,31 @@ export class PowerUpSystem {
     }
   }
 
+  private removeHighlight(instance: PowerUpInstance): void {
+    if (!this.highlightLayer) {
+      return;
+    }
+
+    for (const mesh of instance.highlightMeshes) {
+      if (this.highlightLayer.hasMesh(mesh)) {
+        this.highlightLayer.removeMesh(mesh);
+      }
+    }
+  }
+
+  private setInstanceVisible(instance: PowerUpInstance, visible: boolean): void {
+    instance.root.setEnabled(visible);
+    instance.root.isVisible = visible;
+    for (const mesh of instance.root.getChildMeshes(false)) {
+      mesh.setEnabled(visible);
+      mesh.isVisible = visible;
+    }
+    for (const debugMesh of instance.debugMeshes) {
+      debugMesh.setEnabled(visible);
+      debugMesh.isVisible = visible;
+    }
+  }
+
   private setPickedVisual(instance: PowerUpInstance): void {
     for (const state of instance.materialStates) {
       state.material.alpha = instance.pickedAlpha;
@@ -531,6 +562,8 @@ export class PowerUpSystem {
   private setAvailable(instance: PowerUpInstance): void {
     instance.available = true;
     instance.cooldownRemaining = 0;
+
+    this.setInstanceVisible(instance, true);
 
     for (const state of instance.materialStates) {
       state.material.alpha = state.baseAlpha;
