@@ -45,7 +45,7 @@
     "drivePitchSharpness": 6.0
   },
   "suspension": {
-    "rayStartHeight": 0.05,
+    "rayStartHeight": 1,
     "rayLength": 3.5,
     "restLength": 0.05,
     "springStrength": 2200.0,
@@ -67,8 +67,8 @@
     "maxPitchDeg": 80.0,
     "recoilKickY": -0.15,
     "recoilReturnSpeed": 0.25,
-    "hullRecoilReturnSpeed": 0.2,
-    "hullRecoilKickDeg": 4,
+    "hullRecoilReturnSpeed": 0.1,
+    "hullRecoilKickDeg": 1,
     "hullRecoilSign": 1
   },
   "camera": {
@@ -111,9 +111,9 @@
       "maxTrackPitchDeg": 8.0,
       "maxHullPitchDeg": 4.0,
       "maxHullRollDeg": 5.0,
-      "springStiffness": 200.0,
+      "springStiffness": 100.0,
       "springDamping": 16.0,
-      "springBounceDamping": 11.0,
+      "springBounceDamping": 6.0,
       "maxBodyBobMeters": 0.0
     }
   },
