@@ -179,18 +179,62 @@ Before an asset is considered valid:
 - `tourelle` rotates correctly without unintended pitch or roll
 - `canon` rotates correctly without unintended yaw or roll
 
+## 2D UI assets (`assets/ui/`)
+
+Raster and font files used by menus and gameplay HUD (URLs centralized in `src/assets/assetUrls.ts` where applicable).
+
+| Asset | Role |
+|-------|------|
+| `UI_hud.json` | Gameplay HUD layout (see below) |
+| `UI_mainmenu.json`, `UI_levels.json` | Menu ADTs (see `docs/GUI_MENU_SYSTEM.md`) |
+| `Square.ttf` | Default GUI font (`UI_FONT_FAMILY`) |
+| `digital.ttf` | Session timer font (`TIMER_FONT_FAMILY`); prefer tabular/monospace digits |
+| `shell.png`, `machinegun.png` | Weapon HUD icons |
+| `health.png`, `fuel.png`, `boost.png` | Vehicle status row icons |
+| `reticle_camera.png`, `reticle_barrel.png`, `reticle_gun.png` | 2D aim reticles (also spawned in code) |
+
 ## Gameplay HUD JSON (`assets/ui/UI_hud.json`)
 
-Separate from menu JSON files (`UI_mainmenu.json`, `UI_levels.json`). Parsed on the gameplay scene HUD texture.
+Separate from menu JSON files. Parsed on the **gameplay** scene HUD texture (`TankGameplayController.initHud()`). Reload the game after JSON edits.
 
-**Stable control names** (code binds via `getControlByName`):
+### Stable control names
 
-- `hud_health_bar_fill` — health 0–100% (no percent label)
-- `hud_fuel_label`, `hud_fuel_bar_fill` — fuel gauge
-- `hud_boost_bar_fill` — boost gauge (bar only)
-- `hud_weapon_*`, `hud_shell_*`, `hud_gun_hint`, `hud_boost_indicator`, `hud_zoom_indicator`
+Code binds via `getControlByName` in `bindHudLayoutFromJson()`. Renaming without updating `TankGameplayController.ts` breaks the HUD.
 
-Renaming these in the JSON without updating `TankGameplayController.bindHudLayoutFromJson()` will break the HUD.
+**Root**
+
+- `hud_root` — fullscreen container; code forces center alignment for bottom status panel
+
+**Status panel (bottom center)**
+
+- `hud_panel_status`, `hud_status_stack`
+- `hud_health_row`, `hud_health_icon`, `hud_health_bar_bg`
+- `hud_fuel_row`, `hud_fuel_icon`, `hud_fuel_bar_bg`
+- `hud_boost_row`, `hud_boost_icon`, `hud_boost_bar_fill`
+
+Segment fills for health/fuel are **spawned in code** (`hud_health_seg_*`, `hud_fuel_seg_*`). Legacy children `hud_health_bar_fill` / `hud_fuel_bar_fill` are stripped if present.
+
+**Weapons (bottom right)**
+
+- `hud_panel_bottom`
+- `hud_weapon_primary`, `hud_weapon_primary_icon`, `hud_weapon_primary_ammo`
+- `hud_weapon_secondary`, `hud_weapon_secondary_icon`, `hud_weapon_secondary_ammo`
+
+Reload gauge rectangles are added in code on the primary slot.
+
+**Session timer (top right)**
+
+- `hud_panel_timer`, `hud_timer_label`
+
+**Indicators (top center)**
+
+- `hud_indicators_container`, `hud_boost_indicator`, `hud_zoom_indicator`
+
+### Authoring notes
+
+- Panel chrome (corner brackets, segment bars, weapon grids, reload gauges) is completed in code after parse.
+- Timer `fontSize` / panel dimensions are safe to tune in JSON; font family for the timer is forced to `Digital` in code.
+- Most other text blocks receive `Square` via `applyUiFontToTexture()` except `hud_timer_label`.
 
 ## Non-Goals For v0
 

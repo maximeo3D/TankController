@@ -88,11 +88,36 @@ Le HUD en partie utilise une **troisième** texture GUI, sur la **scène de game
 
 | Texture | Fichier | Rôle |
 |---------|---------|------|
-| HUD gameplay | `assets/ui/UI_hud.json` | Barres santé / fuel / boost, armes, indicateurs |
+| HUD gameplay | `assets/ui/UI_hud.json` | Statut véhicule, armes, chrono, indicateurs boost/zoom |
 
-Chargement dans `TankGameplayController.initHud()` via `AdvancedDynamicTexture.ParseFromFileAsync`. Les réticules 2D (caméra / canon) sont ajoutés **en code** par-dessus cette texture.
+Chargement dans `TankGameplayController.initHud()` via `AdvancedDynamicTexture.ParseFromFileAsync`, puis câblage dans `bindHudLayoutFromJson()`. **Après modification du JSON, relancer la partie ou recharger la page** (le HUD n’est pas rechargé à chaud en cours de jeu).
 
-**Contrôles nommés** attendus par le code : `hud_health_bar_fill`, `hud_fuel_bar_fill`, `hud_boost_bar_fill`, etc. Voir `docs/ASSET_CONTRACT.md` (section HUD gameplay) et `docs/TECHNICAL_SPEC.md` (section Gameplay HUD).
+### Zones du HUD
+
+| Zone | Contrôles principaux | Position |
+|------|----------------------|----------|
+| Statut véhicule | `hud_panel_status`, barres segmentées santé/fuel, `hud_boost_bar_fill` | bas centre |
+| Armes | `hud_weapon_primary` / `hud_weapon_secondary`, icônes, munitions | bas droite |
+| Chrono | `hud_panel_timer`, `hud_timer_label` | haut droite |
+| Indicateurs | `hud_boost_indicator`, `hud_zoom_indicator` | haut centre |
+
+Les trois panneaux principaux partagent le même style (fond gris semi-transparent + crochets d’angle ajoutés en code). Les barres santé/fuel sont découpées en segments en code ; les jauges de rechargement obus et la grille munitions aussi.
+
+### Polices
+
+| Fichier | Usage |
+|---------|--------|
+| `assets/ui/Square.ttf` | Texte HUD/menus par défaut (`applyUiFontToTexture`) |
+| `assets/ui/digital.ttf` | Chrono uniquement (`hud_timer_label`) — chiffres à chasse fixe recommandés |
+
+La taille du chrono (`fontSize`, dimensions du panneau) se règle dans `UI_hud.json`. Le code impose la famille `Digital` et le centrage, pas la taille.
+
+### Overlays hors ADT
+
+- **Réticules 2D** (caméra / canon / mitrailleuse) : `Image` ajoutées en code sur la texture HUD.
+- **Compteur FPS** : élément HTML `.fps-counter` dans `GameApp` (`src/styles.css`), en **haut à gauche** pour ne pas masquer le chrono.
+
+Voir `docs/ASSET_CONTRACT.md` (contrôles nommés + assets 2D) et `docs/TECHNICAL_SPEC.md` (détail comportement barres, armes, timer).
 
 Ne pas fusionner `UI_hud.json` avec les JSON menu : scène et cycle de vie différents.
 

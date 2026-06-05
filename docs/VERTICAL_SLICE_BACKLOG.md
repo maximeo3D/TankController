@@ -99,8 +99,14 @@ Notes:
 - `takeDamage` with shield damage reduction (no wall collision damage)
 - power-up system: spawn, pickup, highlight, respawn / singleUse hide
 - types: `ammo_shell`, `fuel`, `repair`, `shield` (enabled in config)
-- gameplay HUD from `UI_hud.json`: health, fuel, boost bars
+- gameplay HUD from `UI_hud.json`:
+  - bottom-center status panel (`hud_panel_status`): segmented health / fuel bars, boost bar, row icons
+  - bottom-right weapon panel: primary/secondary slots, ammo, shell reload gauge, switch animation
+  - top-right session timer (`hud_panel_timer`, `MM:SS:CC`, `digital.ttf`)
+  - top-center boost/zoom indicator labels
+  - shared panel chrome (grey fill + corner brackets)
 - shield UX: blue full health bar + blue tank glow while active
+- fuel low UX: left fuel segment blinks red at ≤ 20%
 
 **Status:** done for listed types; enemy damage sources and death state not implemented yet.
 
@@ -112,6 +118,7 @@ Notes:
   - current weapon
   - shell ammo
   - reload/chamber state
+- HTML FPS overlay (`GameApp`, top-left) for runtime perf readout
 - tune values from `TankController.json` (including **camera orbit**, **suspension**, **grounding**, **powerUps**)
 - validate spawn orientation, aim feel, camera comfort, reticle scale (`baseScale` in code for world scale)
 
@@ -131,7 +138,7 @@ Notes:
 - enemies and AI
 - damage from enemy weapons hitting the player tank
 - death / game over when health reaches 0
-- HUD polish (shield timer text, fuel low warning, etc.)
+- HUD polish (shield countdown text, audio/pulse when boost empty, etc.)
 - audio polish beyond baseline weapon sounds
 - VFX polish beyond impacts / shockwaves / sparks
 - pointer lock / RMB-only orbit (if desired)

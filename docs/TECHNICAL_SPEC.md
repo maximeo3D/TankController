@@ -287,16 +287,69 @@ While `shieldTimeRemaining > 0`:
 
 ## Gameplay HUD (`assets/ui/UI_hud.json`)
 
-Loaded by `TankGameplayController` via `AdvancedDynamicTexture.ParseFromFileAsync`. Key control names:
+Loaded once per match by `TankGameplayController.initHud()` via `AdvancedDynamicTexture.ParseFromFileAsync`, then wired in `bindHudLayoutFromJson()`. **Reload the page / restart a level** after editing the JSON to see layout changes.
+
+### Layout (panels)
+
+| Panel / region | Position | Role |
+|----------------|----------|------|
+| `hud_panel_status` | bottom center | Vehicle status: health, fuel, boost rows with icons |
+| `hud_panel_bottom` | bottom right | Active / inactive weapon slots |
+| `hud_panel_timer` | top right | Session elapsed time (`00:00:00`) |
+| `hud_indicators_container` | top center | Debug-style `BOOST : ON/OFF` and `ZOOM : ON/OFF` labels |
+
+All three main panels share the same chrome: semi-transparent grey background (`rgba(72,72,72,0.58)`) and **L-shaped corner brackets** added in code (`addWeaponCornerBrackets`).
+
+### Status panel (`hud_panel_status`)
+
+- Icons (set in code from `assetUrls.ts`): `health.png`, `fuel.png`, `boost.png`
+- **Health bar** — `hud_health_bar_bg`: four equal segments (25% each) spawned in `setupHealthBarSegments()`. Fill is grey by default, **red** below 25% HP, **blue** and forced to 100% while shield is active.
+- **Fuel bar** — `hud_fuel_bar_bg`: two segments (20% / 80%). The left segment **blinks red** when fuel ≤ 20%.
+- **Boost bar** — `hud_boost_bar_fill`: simple width-based fill tied to overcharge % (no segments).
+- Row spacing uses explicit spacer rectangles in code (`setupStatusHudSpacing()`); panel height is computed from constants in `TankGameplayController.ts`.
+
+Legacy JSON child `hud_health_bar_fill` / `hud_fuel_bar_fill` are removed at runtime if still present.
+
+### Weapons panel (`hud_panel_bottom`)
 
 | Control | Role |
 |---------|------|
-| `hud_health_bar_fill` | Health 0–100% (green/orange/red; blue + full while shield active) |
-| `hud_fuel_label` / `hud_fuel_bar_fill` | Fuel gauge |
-| `hud_boost_bar_fill` | Boost gauge (bar only, no label) |
-| Weapon / ammo / boost indicator texts | Shell/gun selection, ammo count, optional `hud_boost_indicator` |
+| `hud_weapon_primary` | Active weapon frame (larger, full opacity) |
+| `hud_weapon_secondary` | Inactive weapon frame (~75% size, 50% opacity) |
+| `hud_weapon_primary_icon` / `hud_weapon_secondary_icon` | `shell.png` or `machinegun.png` |
+| `hud_weapon_primary_ammo` / `hud_weapon_secondary_ammo` | `1/14` or `∞`; Square font |
+| Reload fill rects | Spawned in code on the primary slot for shell reload progress |
 
-World reticles (`reticle_camera`, `reticle_barrel`, `reticle_gun`) are still created in code on top of the parsed HUD texture.
+Weapon switch uses a short animated transition (`updateWeaponHud`). Ammo layout is rebuilt as a `Grid` in `buildWeaponHudGrid()` so text aligns to the right of the icon.
+
+### Session timer (`hud_panel_timer`)
+
+| Control | Role |
+|---------|------|
+| `hud_timer_label` | Elapsed time text, format `MM:SS:CC` (centiseconds on the last two digits) |
+
+- Counter resets to `0` when the HUD finishes loading (`sessionElapsedSeconds` in `bindHudLayoutFromJson()`).
+- Updated every frame in `updateGameplayHud(dt)`.
+- **Font:** `assets/ui/digital.ttf` (`TIMER_FONT_FAMILY = "Digital"`), loaded by `ensureDigitalFontLoaded()` in `src/ui/applyUiFont.ts`. Use a **monospaced / tabular** digit font to avoid horizontal jitter when digits change.
+- **Typography from JSON:** `fontSize` and panel size are authored in `UI_hud.json`; code only forces font family and alignment (not `fontSize`).
+
+### Top indicators
+
+- `hud_boost_indicator`, `hud_zoom_indicator` — optional on-screen state for boost and zoom cameras.
+
+### 2D reticles and overlays
+
+- World reticles (`reticle_camera`, `reticle_barrel`, `reticle_gun`) are **Image** controls created in code on top of the parsed HUD texture (`attachHudReticlesIfNeeded`).
+- **FPS counter** — HTML overlay (`.fps-counter` in `src/styles.css`), created in `GameApp`, positioned **top left** so it does not overlap the session timer.
+
+### HUD fonts (`assets/ui/`)
+
+| File | Family name | Usage |
+|------|-------------|--------|
+| `Square.ttf` | `Square` | Default GUI text (menus + most HUD labels) via `applyUiFontToTexture()` |
+| `digital.ttf` | `Digital` | Session timer only (`hud_timer_label`); excluded from the global Square pass |
+
+Fonts are injected as `@font-face` rules in `src/ui/applyUiFont.ts`. In dev, `digital.ttf` is cache-busted so replacing the file picks up after HMR or hard refresh.
 
 ## Planned / Deferred Pickups
 
