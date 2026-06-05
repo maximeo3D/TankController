@@ -51,7 +51,7 @@ export class TankInput {
       lookDeltaY: this.lookDeltaY,
       pointerX: this.pointerX,
       pointerY: this.pointerY,
-      boostHeld: this.pressedKeys.has("shift"),
+      boostHeld: this.isBoostHeld(),
       zoomHeld: this.zoomToggled,
       fireHeld: this.isPrimaryFireHeld,
       selectedWeapon: this.selectedWeapon
@@ -79,6 +79,7 @@ export class TankInput {
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
     const key = normalizeKey(event.key);
     this.pressedKeys.add(key);
+    this.trackShiftCode(event.code, true);
 
     if (key === "1") {
       this.selectedWeapon = "shell";
@@ -105,7 +106,9 @@ export class TankInput {
   };
 
   private readonly handleKeyUp = (event: KeyboardEvent): void => {
-    this.pressedKeys.delete(normalizeKey(event.key));
+    const key = normalizeKey(event.key);
+    this.pressedKeys.delete(key);
+    this.trackShiftCode(event.code, false);
   };
 
   private readonly handleBlur = (): void => {
@@ -170,6 +173,26 @@ export class TankInput {
   private readonly handleContextMenu = (event: MouseEvent): void => {
     event.preventDefault();
   };
+
+  private isBoostHeld(): boolean {
+    return (
+      this.pressedKeys.has("shift") ||
+      this.pressedKeys.has("shiftleft") ||
+      this.pressedKeys.has("shiftright")
+    );
+  }
+
+  private trackShiftCode(code: string, down: boolean): void {
+    const normalized = code.trim().toLowerCase();
+    if (normalized !== "shiftleft" && normalized !== "shiftright") {
+      return;
+    }
+    if (down) {
+      this.pressedKeys.add(normalized);
+    } else {
+      this.pressedKeys.delete(normalized);
+    }
+  }
 
   private readAxis(positive: string, negative: string): number {
     const positiveDown = this.pressedKeys.has(positive);

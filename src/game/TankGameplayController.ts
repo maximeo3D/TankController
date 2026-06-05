@@ -29,6 +29,8 @@ import { TankInput, type WeaponType } from "./TankInput";
 import { AdvancedDynamicTexture, Rectangle, Control, Image, TextBlock } from "@babylonjs/gui";
 import {
   hudLayoutJsonUrl,
+  shellWeaponIconUrl,
+  machinegunWeaponIconUrl,
   reticleCameraAssetUrl,
   reticleBarrelAssetUrl,
   reticleGunAssetUrl,
@@ -36,6 +38,7 @@ import {
   tankCannonSoundAssetUrl,
   tankGunSoundAssetUrl
 } from "../assets/assetUrls";
+import { applyUiFontToTexture } from "../ui/applyUiFont";
 import { Sound } from "@babylonjs/core/Audio/sound";
 import { AbstractEngine } from "@babylonjs/core/Engines/abstractEngine";
 import "@babylonjs/core/Layers/effectLayerSceneComponent";
@@ -182,6 +185,7 @@ export class TankGameplayController {
   private boostActive = false;
   private zoomActive = false;
   private fireHeld = false;
+  private boostInputHeld = false;
   private shellReserveAmmo: number;
   private shellChambered: boolean;
 
@@ -240,12 +244,13 @@ export class TankGameplayController {
   private hudFuelLabel: TextBlock | null = null;
   private hudFuelFill: Rectangle | null = null;
   private hudBoostFill: Rectangle | null = null;
-  private hudWeaponIconShell: TextBlock | null = null;
-  private hudWeaponIconGun: TextBlock | null = null;
-  private hudWeaponName: TextBlock | null = null;
-  private hudShellAmmo: TextBlock | null = null;
-  private hudShellStatus: TextBlock | null = null;
-  private hudGunHint: TextBlock | null = null;
+  private hudWeaponPrimary: Rectangle | null = null;
+  private hudWeaponSecondary: Rectangle | null = null;
+  private hudWeaponPrimaryIcon: Image | null = null;
+  private hudWeaponSecondaryIcon: Image | null = null;
+  private hudWeaponPrimaryAmmo: TextBlock | null = null;
+  private hudWeaponSecondaryAmmo: TextBlock | null = null;
+  private weaponHudChromeReady = false;
   private hudBoostIndicator: TextBlock | null = null;
   private hudZoomIndicator: TextBlock | null = null;
   private hudReticlesAttached = false;
@@ -705,12 +710,16 @@ export class TankGameplayController {
     this.hudFuelLabel = t.getControlByName("hud_fuel_label") as TextBlock | null;
     this.hudFuelFill = t.getControlByName("hud_fuel_bar_fill") as Rectangle | null;
     this.hudBoostFill = t.getControlByName("hud_boost_bar_fill") as Rectangle | null;
-    this.hudWeaponIconShell = t.getControlByName("hud_weapon_icon_shell") as TextBlock | null;
-    this.hudWeaponIconGun = t.getControlByName("hud_weapon_icon_gun") as TextBlock | null;
-    this.hudWeaponName = t.getControlByName("hud_weapon_name") as TextBlock | null;
-    this.hudShellAmmo = t.getControlByName("hud_shell_ammo") as TextBlock | null;
-    this.hudShellStatus = t.getControlByName("hud_shell_status") as TextBlock | null;
-    this.hudGunHint = t.getControlByName("hud_gun_hint") as TextBlock | null;
+    this.hudWeaponPrimary = t.getControlByName("hud_weapon_primary") as Rectangle | null;
+    this.hudWeaponSecondary = t.getControlByName("hud_weapon_secondary") as Rectangle | null;
+    this.hudWeaponPrimaryIcon = t.getControlByName("hud_weapon_primary_icon") as Image | null;
+    this.hudWeaponSecondaryIcon = t.getControlByName("hud_weapon_secondary_icon") as Image | null;
+    this.hudWeaponPrimaryAmmo = t.getControlByName("hud_weapon_primary_ammo") as TextBlock | null;
+    this.hudWeaponSecondaryAmmo = t.getControlByName("hud_weapon_secondary_ammo") as TextBlock | null;
+    this.setupWeaponHudImages();
+    this.setupWeaponHudLayout();
+    this.initWeaponHudChrome();
+    applyUiFontToTexture(t);
     this.hudBoostIndicator = t.getControlByName("hud_boost_indicator") as TextBlock | null;
     this.hudZoomIndicator = t.getControlByName("hud_zoom_indicator") as TextBlock | null;
     this.hudJsonLoaded = true;
@@ -796,60 +805,26 @@ export class TankGameplayController {
       }
     }
 
-    const bat = clamp(this.battery, 0, 100);
-    const oc = clamp(this.overcharge, 0, 100);
+    const batteryMax = this.config.energy.batteryMax;
+    const overchargeMax = this.config.energy.overchargeMax;
+    const batPct = clamp((this.battery / batteryMax) * 100, 0, 100);
+    const ocPct = clamp((this.overcharge / overchargeMax) * 100, 0, 100);
+    const ocHud = this.boostInputHeld ? Math.floor(ocPct) : Math.round(ocPct);
     if (this.hudFuelLabel) {
       this.hudFuelLabel.text = "Fuel";
     }
     if (this.hudFuelFill) {
-      this.hudFuelFill.width = `${Math.round(bat)}%`;
+      this.hudFuelFill.width = `${Math.round(batPct)}%`;
       this.hudFuelFill.background =
-        bat < 20 ? "#f44336" : bat < 45 ? "#ff9800" : "#4caf50";
+        batPct < 20 ? "#f44336" : batPct < 45 ? "#ff9800" : "#4caf50";
     }
     if (this.hudBoostFill) {
-      this.hudBoostFill.width = `${Math.round(oc)}%`;
+      this.hudBoostFill.width = `${ocHud}%`;
       this.hudBoostFill.background =
-        oc < 20 ? "#f44336" : oc < 45 ? "#ff9800" : "#ffeb3b";
+        ocPct < 20 ? "#f44336" : ocPct < 45 ? "#ff9800" : "#ffeb3b";
     }
 
-    const shellPick = this.activeWeapon === "shell";
-    const dim = "#6d6d6d";
-    const hi = "#ffeb3b";
-    if (this.hudWeaponIconShell) {
-      this.hudWeaponIconShell.color = shellPick ? hi : dim;
-    }
-    if (this.hudWeaponIconGun) {
-      this.hudWeaponIconGun.color = !shellPick ? hi : dim;
-    }
-    if (this.hudWeaponName) {
-      this.hudWeaponName.text = shellPick ? "Arme : Obus" : "Arme : Mitrailleuse";
-      this.hudWeaponName.color = shellPick ? "#4caf50" : "#90caf9";
-    }
-
-    const reloadSec = this.config.weapons.shell.reloadSeconds;
-    if (this.hudShellAmmo) {
-      if (this.shellChambered) {
-        this.hudShellAmmo.text = `Obus : chargé · réserve ${this.shellReserveAmmo}`;
-      } else {
-        this.hudShellAmmo.text = `Obus : recharge… · réserve ${this.shellReserveAmmo}`;
-      }
-    }
-    if (this.hudShellStatus) {
-      if (this.shellChambered) {
-        this.hudShellStatus.text = "Prêt";
-        this.hudShellStatus.color = "#4caf50";
-      } else if (this.shellReserveAmmo > 0) {
-        const t = clamp(this.shellReloadTimer, 0, reloadSec);
-        this.hudShellStatus.text = `Rechargement ${t.toFixed(1)} s`;
-        this.hudShellStatus.color = "#ff9800";
-      } else {
-        this.hudShellStatus.text = "Plus de munitions";
-        this.hudShellStatus.color = "#f44336";
-      }
-    }
-    if (this.hudGunHint) {
-      this.hudGunHint.text = `Mitrailleuse · dispersion ${this.gunSpreadDeg.toFixed(1)}°`;
-    }
+    this.updateWeaponHudPanels();
 
     if (this.hudBoostIndicator) {
       this.hudBoostIndicator.text = this.boostActive ? "BOOST : ON" : "BOOST : OFF";
@@ -858,6 +833,126 @@ export class TankGameplayController {
     if (this.hudZoomIndicator) {
       this.hudZoomIndicator.text = this.zoomActive ? "ZOOM : ON" : "ZOOM : OFF";
       this.hudZoomIndicator.color = this.zoomActive ? "#90caf9" : "#ffffff";
+    }
+  }
+
+  private setupWeaponHudImages(): void {
+    for (const icon of [this.hudWeaponPrimaryIcon, this.hudWeaponSecondaryIcon]) {
+      if (!icon) {
+        continue;
+      }
+      icon.stretch = Image.STRETCH_UNIFORM;
+      icon.isPointerBlocker = false;
+    }
+  }
+
+  private setupWeaponHudLayout(): void {
+    if (this.hudWeaponPrimary) {
+      this.hudWeaponPrimary.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_RIGHT;
+      this.hudWeaponPrimary.verticalAlignment = Control.VERTICAL_ALIGNMENT_TOP;
+      this.hudWeaponPrimary.clipChildren = false;
+      this.hudWeaponPrimary.clipContent = false;
+    }
+    if (this.hudWeaponSecondary) {
+      this.hudWeaponSecondary.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_RIGHT;
+      this.hudWeaponSecondary.verticalAlignment = Control.VERTICAL_ALIGNMENT_TOP;
+      this.hudWeaponSecondary.clipChildren = false;
+      this.hudWeaponSecondary.clipContent = false;
+    }
+
+    this.layoutWeaponHudAmmo(
+      this.hudWeaponPrimaryIcon,
+      this.hudWeaponPrimaryAmmo,
+      { iconLeft: 16, iconWidth: 120, iconHeight: 48, ammoRight: 26, ammoWidth: 88 }
+    );
+    this.layoutWeaponHudAmmo(
+      this.hudWeaponSecondaryIcon,
+      this.hudWeaponSecondaryAmmo,
+      { iconLeft: 12, iconWidth: 88, iconHeight: 36, ammoRight: 20, ammoWidth: 52 }
+    );
+  }
+
+  private layoutWeaponHudAmmo(
+    icon: Image | null,
+    ammo: TextBlock | null,
+    layout: {
+      iconLeft: number;
+      iconWidth: number;
+      iconHeight: number;
+      ammoRight: number;
+      ammoWidth: number;
+    }
+  ): void {
+    if (icon) {
+      icon.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_LEFT;
+      icon.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
+      icon.left = `${layout.iconLeft}px`;
+      icon.width = `${layout.iconWidth}px`;
+      icon.height = `${layout.iconHeight}px`;
+    }
+    if (ammo) {
+      ammo.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_RIGHT;
+      ammo.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
+      ammo.left = `${layout.ammoRight}px`;
+      ammo.width = `${layout.ammoWidth}px`;
+      ammo.paddingRight = "4px";
+      ammo.textHorizontalAlignment = Control.HORIZONTAL_ALIGNMENT_RIGHT;
+      ammo.textVerticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
+    }
+  }
+
+  private initWeaponHudChrome(): void {
+    if (this.weaponHudChromeReady || !this.hudTexture) {
+      return;
+    }
+    this.weaponHudChromeReady = true;
+
+    if (this.hudWeaponPrimary) {
+      addWeaponCornerBrackets(this.hudWeaponPrimary, "hud_weapon_primary", 1);
+    }
+    if (this.hudWeaponSecondary) {
+      addWeaponCornerBrackets(this.hudWeaponSecondary, "hud_weapon_secondary", 0.55);
+    }
+  }
+
+  private updateWeaponHudPanels(): void {
+    const shellAmmoText = `${this.shellChambered ? 1 : 0}/${this.shellReserveAmmo}`;
+    const shellIsActive = this.activeWeapon === "shell";
+
+    if (shellIsActive) {
+      if (this.hudWeaponPrimaryIcon) {
+        this.hudWeaponPrimaryIcon.source = shellWeaponIconUrl;
+        this.hudWeaponPrimaryIcon.alpha = 1;
+      }
+      if (this.hudWeaponPrimaryAmmo) {
+        this.hudWeaponPrimaryAmmo.text = shellAmmoText;
+        this.hudWeaponPrimaryAmmo.color = "white";
+      }
+      if (this.hudWeaponSecondaryIcon) {
+        this.hudWeaponSecondaryIcon.source = machinegunWeaponIconUrl;
+        this.hudWeaponSecondaryIcon.alpha = 0.9;
+      }
+      if (this.hudWeaponSecondaryAmmo) {
+        this.hudWeaponSecondaryAmmo.text = "∞";
+        this.hudWeaponSecondaryAmmo.color = "#d8d8d8";
+      }
+    } else {
+      if (this.hudWeaponPrimaryIcon) {
+        this.hudWeaponPrimaryIcon.source = machinegunWeaponIconUrl;
+        this.hudWeaponPrimaryIcon.alpha = 1;
+      }
+      if (this.hudWeaponPrimaryAmmo) {
+        this.hudWeaponPrimaryAmmo.text = "∞";
+        this.hudWeaponPrimaryAmmo.color = "white";
+      }
+      if (this.hudWeaponSecondaryIcon) {
+        this.hudWeaponSecondaryIcon.source = shellWeaponIconUrl;
+        this.hudWeaponSecondaryIcon.alpha = 0.9;
+      }
+      if (this.hudWeaponSecondaryAmmo) {
+        this.hudWeaponSecondaryAmmo.text = shellAmmoText;
+        this.hudWeaponSecondaryAmmo.color = "#d8d8d8";
+      }
     }
   }
 
@@ -972,12 +1067,13 @@ export class TankGameplayController {
     this.hudFuelLabel = null;
     this.hudFuelFill = null;
     this.hudBoostFill = null;
-    this.hudWeaponIconShell = null;
-    this.hudWeaponIconGun = null;
-    this.hudWeaponName = null;
-    this.hudShellAmmo = null;
-    this.hudShellStatus = null;
-    this.hudGunHint = null;
+    this.hudWeaponPrimary = null;
+    this.hudWeaponSecondary = null;
+    this.hudWeaponPrimaryIcon = null;
+    this.hudWeaponSecondaryIcon = null;
+    this.hudWeaponPrimaryAmmo = null;
+    this.hudWeaponSecondaryAmmo = null;
+    this.weaponHudChromeReady = false;
     this.hudBoostIndicator = null;
     this.hudZoomIndicator = null;
     this.barrelShellReticle2D = null;
@@ -1019,6 +1115,7 @@ export class TankGameplayController {
     const frame = this.input.consumeFrame();
     this.activeWeapon = frame.selectedWeapon;
     this.fireHeld = frame.fireHeld;
+    this.boostInputHeld = frame.boostHeld;
 
     // In zoom view, limit camera rotation so the turret/cannon can keep up.
     // This prevents the barrel reticle from "catching up" to the camera reticle.
@@ -2077,17 +2174,15 @@ export class TankGameplayController {
     const rightWorld = Vector3.Cross(Axis.Y, forwardWorld).normalize();
 
     const overchargeMax = this.config.energy.overchargeMax;
-    if (boostHeld && this.overcharge > 0) {
-      this.overcharge = clamp(
-        this.overcharge - this.config.energy.overchargeDrainBoostPerSecond * dt,
+    if (boostHeld) {
+      this.overcharge = Math.max(
         0,
-        overchargeMax
+        this.overcharge - this.config.energy.overchargeDrainBoostPerSecond * dt
       );
-    } else if (!boostHeld && this.overcharge < overchargeMax) {
-      this.overcharge = clamp(
-        this.overcharge + this.config.energy.overchargeRechargePerSecond * dt,
-        0,
-        overchargeMax
+    } else if (this.overcharge < overchargeMax) {
+      this.overcharge = Math.min(
+        overchargeMax,
+        this.overcharge + this.config.energy.overchargeRechargePerSecond * dt
       );
     }
 
@@ -2974,6 +3069,53 @@ function clampSpringScalar(state: SpringScalarState, min: number, max: number): 
     if (state.velocity > 0) {
       state.velocity = 0;
     }
+  }
+}
+
+function addWeaponCornerBrackets(frame: Rectangle, idPrefix: string, alpha: number): void {
+  const arm = 14;
+  const thick = 2;
+  const color = `rgba(255,255,255,${alpha})`;
+  const z = 4;
+
+  const corners: Array<{ name: string; w: string; h: string; left?: string; top?: string; right?: string; bottom?: string }> = [
+    { name: "tl_h", w: `${arm}px`, h: `${thick}px`, left: "0px", top: "0px" },
+    { name: "tl_v", w: `${thick}px`, h: `${arm}px`, left: "0px", top: "0px" },
+    { name: "tr_h", w: `${arm}px`, h: `${thick}px`, right: "0px", top: "0px" },
+    { name: "tr_v", w: `${thick}px`, h: `${arm}px`, right: "0px", top: "0px" },
+    { name: "bl_h", w: `${arm}px`, h: `${thick}px`, left: "0px", bottom: "0px" },
+    { name: "bl_v", w: `${thick}px`, h: `${arm}px`, left: "0px", bottom: "0px" },
+    { name: "br_h", w: `${arm}px`, h: `${thick}px`, right: "0px", bottom: "0px" },
+    { name: "br_v", w: `${thick}px`, h: `${arm}px`, right: "0px", bottom: "0px" }
+  ];
+
+  for (const corner of corners) {
+    const rect = new Rectangle(`${idPrefix}_bracket_${corner.name}`);
+    rect.width = corner.w;
+    rect.height = corner.h;
+    rect.thickness = 0;
+    rect.background = color;
+    rect.isPointerBlocker = false;
+    rect.zIndex = z;
+    rect.horizontalAlignment = corner.right
+      ? Control.HORIZONTAL_ALIGNMENT_RIGHT
+      : Control.HORIZONTAL_ALIGNMENT_LEFT;
+    rect.verticalAlignment = corner.bottom
+      ? Control.VERTICAL_ALIGNMENT_BOTTOM
+      : Control.VERTICAL_ALIGNMENT_TOP;
+    if (corner.left) {
+      rect.left = corner.left;
+    }
+    if (corner.right) {
+      rect.left = corner.right;
+    }
+    if (corner.top) {
+      rect.top = corner.top;
+    }
+    if (corner.bottom) {
+      rect.top = corner.bottom;
+    }
+    frame.addControl(rect);
   }
 }
 

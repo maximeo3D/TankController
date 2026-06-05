@@ -6,6 +6,7 @@ import "@babylonjs/core/Rendering/prePassRendererSceneComponent";
 import "@babylonjs/core/Rendering/geometryBufferRendererSceneComponent";
 import "./styles.css";
 import { GameApp } from "./app/GameApp";
+import { ensureSquareFontLoaded } from "./ui/applyUiFont";
 import { AudioEngine } from "@babylonjs/core/Audio/audioEngine";
 import { AbstractEngine } from "@babylonjs/core/Engines/abstractEngine";
 
@@ -20,6 +21,8 @@ if (!rootElement) {
 if (!(AbstractEngine as any).audioEngine) {
   (AbstractEngine as any).audioEngine = new AudioEngine(rootElement);
 }
+
+ensureSquareFontLoaded();
 
 const app = new GameApp(rootElement);
 app.start();

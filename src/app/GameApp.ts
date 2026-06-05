@@ -18,6 +18,7 @@ import {
 import type { TankGameplayDebugState } from "../game/TankGameplayController";
 import { AdvancedDynamicTexture, Button, Control, StackPanel, TextBlock } from "@babylonjs/gui";
 import { MENU_MAPS, type MenuMapEntry, type MenuMission } from "../ui/menuData";
+import { applyUiFontToTexture, UI_FONT_FAMILY } from "../ui/applyUiFont";
 
 type ScreenState = "menu" | "gameplay";
 
@@ -217,6 +218,7 @@ export class GameApp {
     );
 
     this.menuUi = ui;
+    applyUiFontToTexture(ui);
 
     const btnPlay = ui.getControlByName("mm_btn_play");
     const btnOptions = ui.getControlByName("mm_btn_options");
@@ -256,6 +258,7 @@ export class GameApp {
       ui,
       (u) => this.menuUrlRewriter(u)
     );
+    applyUiFontToTexture(ui);
 
     this.startButton = ui.getControlByName("ps_btn_start");
     this.mapsStack = ui.getControlByName("ps_stack_maps") as StackPanel | null;
@@ -390,6 +393,7 @@ export class GameApp {
     const tb = btn.textBlock as TextBlock;
     tb.textHorizontalAlignment = Control.HORIZONTAL_ALIGNMENT_LEFT;
     tb.fontSize = "28px";
+    tb.fontFamily = UI_FONT_FAMILY;
 
     // Hover feedback
     btn.onPointerEnterObservable.add(() => {
