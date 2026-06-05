@@ -49,6 +49,8 @@ import { PowerUpSystem } from "./PowerUpSystem";
 const WEAPON_SHELL_AMMO_FONT_SIZE = 26;
 const WEAPON_INFINITY_FONT_SIZE = 40;
 const WEAPON_SHELL_RELOAD_FILL_COLOR = "rgba(168, 168, 168, 0.5)";
+const WEAPON_SHELL_RELOAD_LINE_COLOR = "rgba(216, 216, 216, 0.5)";
+const WEAPON_SHELL_RELOAD_LINE_HEIGHT_PX = 2;
 const WEAPON_SWITCH_MOVE_PX = 10;
 const WEAPON_SWITCH_EXIT_SEC = 0.14;
 const WEAPON_SWITCH_ENTER_SEC = 0.14;
@@ -990,6 +992,19 @@ export class TankGameplayController {
     fill.isVisible = false;
     fill.zIndex = 1;
     frame.addControl(fill);
+
+    const line = new Rectangle(`${name}_line`);
+    line.width = "100%";
+    line.height = `${WEAPON_SHELL_RELOAD_LINE_HEIGHT_PX}px`;
+    line.thickness = 0;
+    line.background = WEAPON_SHELL_RELOAD_LINE_COLOR;
+    line.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
+    line.verticalAlignment = Control.VERTICAL_ALIGNMENT_TOP;
+    line.top = 0;
+    line.isPointerBlocker = false;
+    line.zIndex = 2;
+    fill.addControl(line);
+
     return fill;
   }
 
