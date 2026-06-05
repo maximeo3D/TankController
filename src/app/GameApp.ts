@@ -394,6 +394,7 @@ export class GameApp {
     tb.textHorizontalAlignment = Control.HORIZONTAL_ALIGNMENT_LEFT;
     tb.fontSize = "28px";
     tb.fontFamily = UI_FONT_FAMILY;
+    tb.fontStyle = "";
 
     // Hover feedback
     btn.onPointerEnterObservable.add(() => {

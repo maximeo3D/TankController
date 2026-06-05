@@ -30,12 +30,14 @@ export function applyUiFontFamily(control: Control | null): void {
 
   if (control instanceof TextBlock) {
     control.fontFamily = UI_FONT_FAMILY;
+    control.fontStyle = "";
   }
 
   if (control instanceof Button) {
     const text = control.textBlock;
     if (text) {
       text.fontFamily = UI_FONT_FAMILY;
+      text.fontStyle = "";
     }
   }
 

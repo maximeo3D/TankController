@@ -46,6 +46,9 @@ import { HighlightLayer } from "@babylonjs/core/Layers/highlightLayer";
 import type { TrackTreadParticleBundle } from "./trackTreadParticles";
 import { PowerUpSystem } from "./PowerUpSystem";
 
+const WEAPON_SHELL_AMMO_FONT_SIZE = 26;
+const WEAPON_INFINITY_FONT_SIZE = 40;
+
 interface BoneControl {
   bone: Bone | null;
   transformNode: TransformNode | null;
@@ -926,6 +929,7 @@ export class TankGameplayController {
     ammo.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
     ammo.left = 0;
     ammo.resizeToFit = false;
+    ammo.fontStyle = "";
     ammo.textHorizontalAlignment = Control.HORIZONTAL_ALIGNMENT_RIGHT;
     ammo.textVerticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
 
@@ -957,36 +961,34 @@ export class TankGameplayController {
         this.hudWeaponPrimaryIcon.source = shellWeaponIconUrl;
         this.hudWeaponPrimaryIcon.alpha = 1;
       }
-      if (this.hudWeaponPrimaryAmmo) {
-        this.hudWeaponPrimaryAmmo.text = shellAmmoText;
-        this.hudWeaponPrimaryAmmo.color = "white";
-      }
+      this.setWeaponAmmoText(this.hudWeaponPrimaryAmmo, shellAmmoText, "white");
       if (this.hudWeaponSecondaryIcon) {
         this.hudWeaponSecondaryIcon.source = machinegunWeaponIconUrl;
         this.hudWeaponSecondaryIcon.alpha = 0.9;
       }
-      if (this.hudWeaponSecondaryAmmo) {
-        this.hudWeaponSecondaryAmmo.text = "∞";
-        this.hudWeaponSecondaryAmmo.color = "#d8d8d8";
-      }
+      this.setWeaponAmmoText(this.hudWeaponSecondaryAmmo, "∞", "#d8d8d8");
     } else {
       if (this.hudWeaponPrimaryIcon) {
         this.hudWeaponPrimaryIcon.source = machinegunWeaponIconUrl;
         this.hudWeaponPrimaryIcon.alpha = 1;
       }
-      if (this.hudWeaponPrimaryAmmo) {
-        this.hudWeaponPrimaryAmmo.text = "∞";
-        this.hudWeaponPrimaryAmmo.color = "white";
-      }
+      this.setWeaponAmmoText(this.hudWeaponPrimaryAmmo, "∞", "white");
       if (this.hudWeaponSecondaryIcon) {
         this.hudWeaponSecondaryIcon.source = shellWeaponIconUrl;
         this.hudWeaponSecondaryIcon.alpha = 0.9;
       }
-      if (this.hudWeaponSecondaryAmmo) {
-        this.hudWeaponSecondaryAmmo.text = shellAmmoText;
-        this.hudWeaponSecondaryAmmo.color = "#d8d8d8";
-      }
+      this.setWeaponAmmoText(this.hudWeaponSecondaryAmmo, shellAmmoText, "#d8d8d8");
     }
+  }
+
+  private setWeaponAmmoText(ammo: TextBlock | null, text: string, color: string): void {
+    if (!ammo) {
+      return;
+    }
+    ammo.text = text;
+    ammo.color = color;
+    ammo.fontStyle = "";
+    ammo.fontSize = text === "∞" ? WEAPON_INFINITY_FONT_SIZE : WEAPON_SHELL_AMMO_FONT_SIZE;
   }
 
   private initSuspensionDebugSpheres(): void {
