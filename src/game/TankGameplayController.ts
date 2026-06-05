@@ -48,6 +48,7 @@ import { PowerUpSystem } from "./PowerUpSystem";
 
 const WEAPON_SHELL_AMMO_FONT_SIZE = 26;
 const WEAPON_INFINITY_FONT_SIZE = 40;
+const WEAPON_SHELL_RELOAD_FILL_COLOR = "rgba(168, 168, 168, 0.5)";
 
 interface BoneControl {
   bone: Bone | null;
@@ -253,8 +254,11 @@ export class TankGameplayController {
   private hudWeaponSecondaryIcon: Image | null = null;
   private hudWeaponPrimaryAmmo: TextBlock | null = null;
   private hudWeaponSecondaryAmmo: TextBlock | null = null;
+  private hudWeaponPrimaryReloadFill: Rectangle | null = null;
+  private hudWeaponSecondaryReloadFill: Rectangle | null = null;
   private weaponHudChromeReady = false;
   private weaponHudLayoutReady = false;
+  private weaponHudReloadGaugesReady = false;
   private hudBoostIndicator: TextBlock | null = null;
   private hudZoomIndicator: TextBlock | null = null;
   private hudReticlesAttached = false;
@@ -722,6 +726,7 @@ export class TankGameplayController {
     this.hudWeaponSecondaryAmmo = t.getControlByName("hud_weapon_secondary_ammo") as TextBlock | null;
     this.setupWeaponHudImages();
     this.setupWeaponHudLayout();
+    this.initWeaponHudReloadGauges();
     this.initWeaponHudChrome();
     applyUiFontToTexture(t);
     this.hudBoostIndicator = t.getControlByName("hud_boost_indicator") as TextBlock | null;
@@ -829,6 +834,7 @@ export class TankGameplayController {
     }
 
     this.updateWeaponHudPanels();
+    this.updateShellReloadGauge();
 
     if (this.hudBoostIndicator) {
       this.hudBoostIndicator.text = this.boostActive ? "BOOST : ON" : "BOOST : OFF";
@@ -912,6 +918,7 @@ export class TankGameplayController {
     grid.clipChildren = false;
     grid.clipContent = false;
     grid.isPointerBlocker = false;
+    grid.zIndex = 2;
     grid.addRowDefinition(1, false);
     grid.addColumnDefinition(layout.iconWidth, true);
     grid.addColumnDefinition(1, false);
@@ -936,6 +943,72 @@ export class TankGameplayController {
     grid.addControl(icon, 0, 0);
     grid.addControl(ammo, 0, 2);
     frame.addControl(grid);
+  }
+
+  private initWeaponHudReloadGauges(): void {
+    if (this.weaponHudReloadGaugesReady) {
+      return;
+    }
+    this.weaponHudReloadGaugesReady = true;
+
+    this.hudWeaponPrimaryReloadFill = this.createWeaponReloadFill(
+      this.hudWeaponPrimary,
+      "hud_weapon_primary_reload"
+    );
+    this.hudWeaponSecondaryReloadFill = this.createWeaponReloadFill(
+      this.hudWeaponSecondary,
+      "hud_weapon_secondary_reload"
+    );
+  }
+
+  private createWeaponReloadFill(frame: Rectangle | null, name: string): Rectangle | null {
+    if (!frame) {
+      return null;
+    }
+
+    const fill = new Rectangle(name);
+    fill.width = "100%";
+    fill.height = "0%";
+    fill.thickness = 0;
+    fill.background = WEAPON_SHELL_RELOAD_FILL_COLOR;
+    fill.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
+    fill.verticalAlignment = Control.VERTICAL_ALIGNMENT_BOTTOM;
+    fill.isPointerBlocker = false;
+    fill.isVisible = false;
+    fill.zIndex = 1;
+    frame.addControl(fill);
+    return fill;
+  }
+
+  private updateShellReloadGauge(): void {
+    const reloadTotal = this.config.weapons.shell.reloadSeconds;
+    const isReloading =
+      !this.shellChambered && this.shellReserveAmmo > 0 && this.shellReloadTimer > 0;
+    const progress = isReloading
+      ? clamp(1 - this.shellReloadTimer / reloadTotal, 0, 1)
+      : 0;
+    const shellIsPrimary = this.activeWeapon === "shell";
+
+    this.applyReloadGauge(this.hudWeaponPrimaryReloadFill, shellIsPrimary && isReloading, progress);
+    this.applyReloadGauge(
+      this.hudWeaponSecondaryReloadFill,
+      !shellIsPrimary && isReloading,
+      progress
+    );
+  }
+
+  private applyReloadGauge(fill: Rectangle | null, visible: boolean, progress: number): void {
+    if (!fill) {
+      return;
+    }
+
+    fill.isVisible = visible;
+    if (!visible) {
+      fill.height = "0%";
+      return;
+    }
+
+    fill.height = `${Math.round(progress * 100)}%`;
   }
 
   private initWeaponHudChrome(): void {
@@ -1108,8 +1181,11 @@ export class TankGameplayController {
     this.hudWeaponSecondaryIcon = null;
     this.hudWeaponPrimaryAmmo = null;
     this.hudWeaponSecondaryAmmo = null;
+    this.hudWeaponPrimaryReloadFill = null;
+    this.hudWeaponSecondaryReloadFill = null;
     this.weaponHudChromeReady = false;
     this.weaponHudLayoutReady = false;
+    this.weaponHudReloadGaugesReady = false;
     this.hudBoostIndicator = null;
     this.hudZoomIndicator = null;
     this.barrelShellReticle2D = null;
