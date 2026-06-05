@@ -26,7 +26,7 @@ import type { Scene } from "@babylonjs/core/scene";
 import { ParticleSystem } from "@babylonjs/core/Particles/particleSystem";
 import type { TankControllerConfig } from "../config/tankController";
 import { TankInput, type WeaponType } from "./TankInput";
-import { AdvancedDynamicTexture, Rectangle, Control, Image, TextBlock } from "@babylonjs/gui";
+import { AdvancedDynamicTexture, Rectangle, Control, Image, TextBlock, Grid } from "@babylonjs/gui";
 import {
   hudLayoutJsonUrl,
   shellWeaponIconUrl,
@@ -251,6 +251,7 @@ export class TankGameplayController {
   private hudWeaponPrimaryAmmo: TextBlock | null = null;
   private hudWeaponSecondaryAmmo: TextBlock | null = null;
   private weaponHudChromeReady = false;
+  private weaponHudLayoutReady = false;
   private hudBoostIndicator: TextBlock | null = null;
   private hudZoomIndicator: TextBlock | null = null;
   private hudReticlesAttached = false;
@@ -847,6 +848,11 @@ export class TankGameplayController {
   }
 
   private setupWeaponHudLayout(): void {
+    if (this.weaponHudLayoutReady) {
+      return;
+    }
+    this.weaponHudLayoutReady = true;
+
     if (this.hudWeaponPrimary) {
       this.hudWeaponPrimary.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_RIGHT;
       this.hudWeaponPrimary.verticalAlignment = Control.VERTICAL_ALIGNMENT_TOP;
@@ -860,45 +866,72 @@ export class TankGameplayController {
       this.hudWeaponSecondary.clipContent = false;
     }
 
-    this.layoutWeaponHudAmmo(
-      this.hudWeaponPrimaryIcon,
-      this.hudWeaponPrimaryAmmo,
-      { iconLeft: 16, iconWidth: 120, iconHeight: 48, ammoRight: 26, ammoWidth: 88 }
-    );
-    this.layoutWeaponHudAmmo(
-      this.hudWeaponSecondaryIcon,
-      this.hudWeaponSecondaryAmmo,
-      { iconLeft: 12, iconWidth: 88, iconHeight: 36, ammoRight: 20, ammoWidth: 52 }
-    );
+    this.buildWeaponHudGrid(this.hudWeaponPrimary, this.hudWeaponPrimaryIcon, this.hudWeaponPrimaryAmmo, {
+      paddingLeft: 16,
+      paddingRight: 26,
+      iconWidth: 120,
+      iconHeight: 48,
+      ammoWidth: 88
+    });
+    this.buildWeaponHudGrid(this.hudWeaponSecondary, this.hudWeaponSecondaryIcon, this.hudWeaponSecondaryAmmo, {
+      paddingLeft: 12,
+      paddingRight: 20,
+      iconWidth: 88,
+      iconHeight: 36,
+      ammoWidth: 52
+    });
   }
 
-  private layoutWeaponHudAmmo(
+  private buildWeaponHudGrid(
+    frame: Rectangle | null,
     icon: Image | null,
     ammo: TextBlock | null,
     layout: {
-      iconLeft: number;
+      paddingLeft: number;
+      paddingRight: number;
       iconWidth: number;
       iconHeight: number;
-      ammoRight: number;
       ammoWidth: number;
     }
   ): void {
-    if (icon) {
-      icon.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_LEFT;
-      icon.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
-      icon.left = `${layout.iconLeft}px`;
-      icon.width = `${layout.iconWidth}px`;
-      icon.height = `${layout.iconHeight}px`;
+    if (!frame || !icon || !ammo) {
+      return;
     }
-    if (ammo) {
-      ammo.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_RIGHT;
-      ammo.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
-      ammo.left = `${layout.ammoRight}px`;
-      ammo.width = `${layout.ammoWidth}px`;
-      ammo.paddingRight = "4px";
-      ammo.textHorizontalAlignment = Control.HORIZONTAL_ALIGNMENT_RIGHT;
-      ammo.textVerticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
-    }
+
+    frame.removeControl(icon);
+    frame.removeControl(ammo);
+
+    const grid = new Grid(`${frame.name ?? "weapon"}_grid`);
+    grid.width = "100%";
+    grid.height = "100%";
+    grid.paddingLeft = layout.paddingLeft;
+    grid.paddingRight = layout.paddingRight;
+    grid.clipChildren = false;
+    grid.clipContent = false;
+    grid.isPointerBlocker = false;
+    grid.addRowDefinition(1, false);
+    grid.addColumnDefinition(layout.iconWidth, true);
+    grid.addColumnDefinition(1, false);
+    grid.addColumnDefinition(layout.ammoWidth, true);
+
+    icon.width = `${layout.iconWidth}px`;
+    icon.height = `${layout.iconHeight}px`;
+    icon.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_LEFT;
+    icon.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
+    icon.left = 0;
+
+    ammo.width = `${layout.ammoWidth}px`;
+    ammo.height = "100%";
+    ammo.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_LEFT;
+    ammo.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
+    ammo.left = 0;
+    ammo.resizeToFit = false;
+    ammo.textHorizontalAlignment = Control.HORIZONTAL_ALIGNMENT_RIGHT;
+    ammo.textVerticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
+
+    grid.addControl(icon, 0, 0);
+    grid.addControl(ammo, 0, 2);
+    frame.addControl(grid);
   }
 
   private initWeaponHudChrome(): void {
@@ -1074,6 +1107,7 @@ export class TankGameplayController {
     this.hudWeaponPrimaryAmmo = null;
     this.hudWeaponSecondaryAmmo = null;
     this.weaponHudChromeReady = false;
+    this.weaponHudLayoutReady = false;
     this.hudBoostIndicator = null;
     this.hudZoomIndicator = null;
     this.barrelShellReticle2D = null;
