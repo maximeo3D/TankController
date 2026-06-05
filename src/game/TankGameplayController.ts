@@ -49,6 +49,13 @@ import { PowerUpSystem } from "./PowerUpSystem";
 const WEAPON_SHELL_AMMO_FONT_SIZE = 26;
 const WEAPON_INFINITY_FONT_SIZE = 40;
 const WEAPON_SHELL_RELOAD_FILL_COLOR = "rgba(168, 168, 168, 0.5)";
+const WEAPON_SWITCH_MOVE_PX = 10;
+const WEAPON_SWITCH_EXIT_SEC = 0.14;
+const WEAPON_SWITCH_ENTER_SEC = 0.14;
+const WEAPON_SWITCH_BLINK_SEC = 0.24;
+const WEAPON_SLOT_SECONDARY_ALPHA = 0.9;
+
+type WeaponHudAnimPhase = "idle" | "exit" | "enter" | "blink";
 
 interface BoneControl {
   bone: Bone | null;
@@ -259,6 +266,10 @@ export class TankGameplayController {
   private weaponHudChromeReady = false;
   private weaponHudLayoutReady = false;
   private weaponHudReloadGaugesReady = false;
+  private weaponHudDisplayedWeapon: WeaponType = "shell";
+  private weaponHudAnimPhase: WeaponHudAnimPhase = "idle";
+  private weaponHudAnimTime = 0;
+  private weaponHudAnimTargetWeapon: WeaponType = "shell";
   private hudBoostIndicator: TextBlock | null = null;
   private hudZoomIndicator: TextBlock | null = null;
   private hudReticlesAttached = false;
@@ -731,7 +742,10 @@ export class TankGameplayController {
     applyUiFontToTexture(t);
     this.hudBoostIndicator = t.getControlByName("hud_boost_indicator") as TextBlock | null;
     this.hudZoomIndicator = t.getControlByName("hud_zoom_indicator") as TextBlock | null;
+    this.weaponHudDisplayedWeapon = this.activeWeapon;
     this.hudJsonLoaded = true;
+    this.refreshWeaponHudContent();
+    this.resetWeaponSlotTransforms();
   }
 
   /** Reticles above HUD layout (`zIndex`). Idempotent. */
@@ -796,7 +810,7 @@ export class TankGameplayController {
     }
   }
 
-  private updateGameplayHud(): void {
+  private updateGameplayHud(dt: number): void {
     if (!this.hudJsonLoaded || !this.hudTexture) {
       return;
     }
@@ -833,8 +847,7 @@ export class TankGameplayController {
         ocPct < 20 ? "#f44336" : ocPct < 45 ? "#ff9800" : "#ffeb3b";
     }
 
-    this.updateWeaponHudPanels();
-    this.updateShellReloadGauge();
+    this.updateWeaponHud(dt);
 
     if (this.hudBoostIndicator) {
       this.hudBoostIndicator.text = this.boostActive ? "BOOST : ON" : "BOOST : OFF";
@@ -987,7 +1000,7 @@ export class TankGameplayController {
     const progress = isReloading
       ? clamp(1 - this.shellReloadTimer / reloadTotal, 0, 1)
       : 0;
-    const shellIsPrimary = this.activeWeapon === "shell";
+    const shellIsPrimary = this.weaponHudDisplayedWeapon === "shell";
 
     this.applyReloadGauge(this.hudWeaponPrimaryReloadFill, shellIsPrimary && isReloading, progress);
     this.applyReloadGauge(
@@ -1025,32 +1038,170 @@ export class TankGameplayController {
     }
   }
 
-  private updateWeaponHudPanels(): void {
-    const shellAmmoText = `${this.shellChambered ? 1 : 0}/${this.shellReserveAmmo}`;
-    const shellIsActive = this.activeWeapon === "shell";
+  private updateWeaponHud(dt: number): void {
+    if (
+      this.weaponHudAnimPhase === "idle" &&
+      this.activeWeapon !== this.weaponHudDisplayedWeapon
+    ) {
+      this.weaponHudAnimPhase = "exit";
+      this.weaponHudAnimTime = 0;
+      this.weaponHudAnimTargetWeapon = this.activeWeapon;
+    }
 
-    if (shellIsActive) {
+    if (this.weaponHudAnimPhase === "idle") {
+      this.refreshWeaponHudContent();
+      this.resetWeaponSlotTransforms();
+      this.updateShellReloadGauge();
+      return;
+    }
+
+    this.weaponHudAnimTime += dt;
+
+    if (this.weaponHudAnimPhase === "exit") {
+      const t = clamp(this.weaponHudAnimTime / WEAPON_SWITCH_EXIT_SEC, 0, 1);
+      const eased = easeInOutQuad(t);
+      this.applyWeaponSlotVisual(
+        this.hudWeaponPrimaryIcon,
+        this.hudWeaponPrimaryAmmo,
+        WEAPON_SWITCH_MOVE_PX * eased,
+        1 - eased,
+        1
+      );
+      this.applyWeaponSlotVisual(
+        this.hudWeaponSecondaryIcon,
+        this.hudWeaponSecondaryAmmo,
+        -WEAPON_SWITCH_MOVE_PX * eased,
+        WEAPON_SLOT_SECONDARY_ALPHA * (1 - eased),
+        WEAPON_SLOT_SECONDARY_ALPHA
+      );
+
+      if (t >= 1) {
+        this.weaponHudDisplayedWeapon = this.weaponHudAnimTargetWeapon;
+        this.refreshWeaponHudContent();
+        this.applyWeaponSlotVisual(
+          this.hudWeaponPrimaryIcon,
+          this.hudWeaponPrimaryAmmo,
+          -WEAPON_SWITCH_MOVE_PX,
+          0,
+          1
+        );
+        this.applyWeaponSlotVisual(
+          this.hudWeaponSecondaryIcon,
+          this.hudWeaponSecondaryAmmo,
+          WEAPON_SWITCH_MOVE_PX,
+          0,
+          WEAPON_SLOT_SECONDARY_ALPHA
+        );
+        this.weaponHudAnimPhase = "enter";
+        this.weaponHudAnimTime = 0;
+      }
+    } else if (this.weaponHudAnimPhase === "enter") {
+      const t = clamp(this.weaponHudAnimTime / WEAPON_SWITCH_ENTER_SEC, 0, 1);
+      const eased = easeInOutQuad(t);
+      this.applyWeaponSlotVisual(
+        this.hudWeaponPrimaryIcon,
+        this.hudWeaponPrimaryAmmo,
+        -WEAPON_SWITCH_MOVE_PX * (1 - eased),
+        eased,
+        1
+      );
+      this.applyWeaponSlotVisual(
+        this.hudWeaponSecondaryIcon,
+        this.hudWeaponSecondaryAmmo,
+        WEAPON_SWITCH_MOVE_PX * (1 - eased),
+        WEAPON_SLOT_SECONDARY_ALPHA * eased,
+        WEAPON_SLOT_SECONDARY_ALPHA
+      );
+
+      if (t >= 1) {
+        this.weaponHudAnimPhase = "blink";
+        this.weaponHudAnimTime = 0;
+      }
+    } else if (this.weaponHudAnimPhase === "blink") {
+      const t = clamp(this.weaponHudAnimTime / WEAPON_SWITCH_BLINK_SEC, 0, 1);
+      const flicker = 0.68 + 0.32 * Math.abs(Math.sin(t * Math.PI * 3));
+      this.applyWeaponSlotVisual(
+        this.hudWeaponPrimaryIcon,
+        this.hudWeaponPrimaryAmmo,
+        0,
+        flicker,
+        1
+      );
+      this.applyWeaponSlotVisual(
+        this.hudWeaponSecondaryIcon,
+        this.hudWeaponSecondaryAmmo,
+        0,
+        WEAPON_SLOT_SECONDARY_ALPHA * flicker,
+        WEAPON_SLOT_SECONDARY_ALPHA
+      );
+
+      if (t >= 1) {
+        this.weaponHudAnimPhase = "idle";
+        this.weaponHudAnimTime = 0;
+        this.resetWeaponSlotTransforms();
+      }
+    }
+
+    this.updateShellReloadGauge();
+  }
+
+  private refreshWeaponHudContent(): void {
+    const shellAmmoText = `${this.shellChambered ? 1 : 0}/${this.shellReserveAmmo}`;
+    const shellIsPrimary = this.weaponHudDisplayedWeapon === "shell";
+
+    if (shellIsPrimary) {
       if (this.hudWeaponPrimaryIcon) {
         this.hudWeaponPrimaryIcon.source = shellWeaponIconUrl;
-        this.hudWeaponPrimaryIcon.alpha = 1;
       }
       this.setWeaponAmmoText(this.hudWeaponPrimaryAmmo, shellAmmoText, "white");
       if (this.hudWeaponSecondaryIcon) {
         this.hudWeaponSecondaryIcon.source = machinegunWeaponIconUrl;
-        this.hudWeaponSecondaryIcon.alpha = 0.9;
       }
       this.setWeaponAmmoText(this.hudWeaponSecondaryAmmo, "∞", "#d8d8d8");
     } else {
       if (this.hudWeaponPrimaryIcon) {
         this.hudWeaponPrimaryIcon.source = machinegunWeaponIconUrl;
-        this.hudWeaponPrimaryIcon.alpha = 1;
       }
       this.setWeaponAmmoText(this.hudWeaponPrimaryAmmo, "∞", "white");
       if (this.hudWeaponSecondaryIcon) {
         this.hudWeaponSecondaryIcon.source = shellWeaponIconUrl;
-        this.hudWeaponSecondaryIcon.alpha = 0.9;
       }
       this.setWeaponAmmoText(this.hudWeaponSecondaryAmmo, shellAmmoText, "#d8d8d8");
+    }
+  }
+
+  private resetWeaponSlotTransforms(): void {
+    this.applyWeaponSlotVisual(
+      this.hudWeaponPrimaryIcon,
+      this.hudWeaponPrimaryAmmo,
+      0,
+      1,
+      1
+    );
+    this.applyWeaponSlotVisual(
+      this.hudWeaponSecondaryIcon,
+      this.hudWeaponSecondaryAmmo,
+      0,
+      WEAPON_SLOT_SECONDARY_ALPHA,
+      WEAPON_SLOT_SECONDARY_ALPHA
+    );
+  }
+
+  private applyWeaponSlotVisual(
+    icon: Image | null,
+    ammo: TextBlock | null,
+    offsetY: number,
+    alpha: number,
+    baseAlpha: number
+  ): void {
+    const clampedAlpha = clamp(alpha, 0, baseAlpha);
+    if (icon) {
+      icon.top = offsetY;
+      icon.alpha = clampedAlpha;
+    }
+    if (ammo) {
+      ammo.top = offsetY;
+      ammo.alpha = clampedAlpha;
     }
   }
 
@@ -1186,6 +1337,9 @@ export class TankGameplayController {
     this.weaponHudChromeReady = false;
     this.weaponHudLayoutReady = false;
     this.weaponHudReloadGaugesReady = false;
+    this.weaponHudDisplayedWeapon = "shell";
+    this.weaponHudAnimPhase = "idle";
+    this.weaponHudAnimTime = 0;
     this.hudBoostIndicator = null;
     this.hudZoomIndicator = null;
     this.barrelShellReticle2D = null;
@@ -1266,7 +1420,7 @@ export class TankGameplayController {
     this.updateGunTracers(dt);
     this.updateSparks(dt);
     this.updateShockwaves(dt);
-    this.updateGameplayHud();
+    this.updateGameplayHud(dt);
   };
 
   private updateSuspensionDebugSpheres(): void {
@@ -3265,6 +3419,10 @@ function collectTankHighlightMeshes(container: AssetContainer): Mesh[] {
 
 function repeat(value: number, length: number): number {
   return value - Math.floor(value / length) * length;
+}
+
+function easeInOutQuad(t: number): number {
+  return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
 }
 
 function clamp(value: number, min: number, max: number): number {
