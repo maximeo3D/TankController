@@ -26,11 +26,22 @@ import type { Scene } from "@babylonjs/core/scene";
 import { ParticleSystem } from "@babylonjs/core/Particles/particleSystem";
 import type { TankControllerConfig } from "../config/tankController";
 import { TankInput, type WeaponType } from "./TankInput";
-import { AdvancedDynamicTexture, Rectangle, Control, Image, TextBlock, Grid } from "@babylonjs/gui";
+import {
+  AdvancedDynamicTexture,
+  Rectangle,
+  Control,
+  Image,
+  TextBlock,
+  Grid,
+  StackPanel
+} from "@babylonjs/gui";
 import {
   hudLayoutJsonUrl,
   shellWeaponIconUrl,
   machinegunWeaponIconUrl,
+  healthStatusIconUrl,
+  fuelStatusIconUrl,
+  boostStatusIconUrl,
   reticleCameraAssetUrl,
   reticleBarrelAssetUrl,
   reticleGunAssetUrl,
@@ -56,6 +67,11 @@ const WEAPON_SWITCH_EXIT_SEC = 0.14;
 const WEAPON_SWITCH_ENTER_SEC = 0.14;
 const WEAPON_SWITCH_BLINK_SEC = 0.24;
 const WEAPON_SLOT_SECONDARY_ALPHA = 0.9;
+const VEHICLE_STATUS_BAR_FILL = "#d9d9d9";
+const VEHICLE_STATUS_BAR_SHIELD = "#42a5f5";
+const VEHICLE_STATUS_ROW_HEIGHT = 36;
+const VEHICLE_STATUS_ROW_GAP = 20;
+const VEHICLE_STATUS_STACK_PADDING_V = 12;
 
 type WeaponHudAnimPhase = "idle" | "exit" | "enter" | "blink";
 
@@ -253,10 +269,15 @@ export class TankGameplayController {
   private hudTexture: AdvancedDynamicTexture | null = null;
   /** True once `UI_hud.json` parsed; HUD text/bars update only then. */
   private hudJsonLoaded = false;
+  private hudPanelStatus: Rectangle | null = null;
   private hudHealthFill: Rectangle | null = null;
-  private hudFuelLabel: TextBlock | null = null;
+  private hudHealthIcon: Image | null = null;
   private hudFuelFill: Rectangle | null = null;
+  private hudFuelIcon: Image | null = null;
   private hudBoostFill: Rectangle | null = null;
+  private hudBoostIcon: Image | null = null;
+  private statusHudChromeReady = false;
+  private statusHudSpacingReady = false;
   private hudWeaponPrimary: Rectangle | null = null;
   private hudWeaponSecondary: Rectangle | null = null;
   private hudWeaponPrimaryIcon: Image | null = null;
@@ -727,10 +748,17 @@ export class TankGameplayController {
       return;
     }
     const t = this.hudTexture;
+    this.hudPanelStatus = t.getControlByName("hud_panel_status") as Rectangle | null;
     this.hudHealthFill = t.getControlByName("hud_health_bar_fill") as Rectangle | null;
-    this.hudFuelLabel = t.getControlByName("hud_fuel_label") as TextBlock | null;
+    this.hudHealthIcon = t.getControlByName("hud_health_icon") as Image | null;
     this.hudFuelFill = t.getControlByName("hud_fuel_bar_fill") as Rectangle | null;
+    this.hudFuelIcon = t.getControlByName("hud_fuel_icon") as Image | null;
     this.hudBoostFill = t.getControlByName("hud_boost_bar_fill") as Rectangle | null;
+    this.hudBoostIcon = t.getControlByName("hud_boost_icon") as Image | null;
+    this.setupStatusHudLayout();
+    this.setupStatusHudSpacing();
+    this.setupStatusHudIcons();
+    this.initStatusHudChrome();
     this.hudWeaponPrimary = t.getControlByName("hud_weapon_primary") as Rectangle | null;
     this.hudWeaponSecondary = t.getControlByName("hud_weapon_secondary") as Rectangle | null;
     this.hudWeaponPrimaryIcon = t.getControlByName("hud_weapon_primary_icon") as Image | null;
@@ -822,11 +850,10 @@ export class TankGameplayController {
     if (this.hudHealthFill) {
       if (shieldActive) {
         this.hudHealthFill.width = "100%";
-        this.hudHealthFill.background = "#42a5f5";
+        this.hudHealthFill.background = VEHICLE_STATUS_BAR_SHIELD;
       } else {
         this.hudHealthFill.width = `${Math.round(hpPct)}%`;
-        this.hudHealthFill.background =
-          hpPct < 20 ? "#f44336" : hpPct < 45 ? "#ff9800" : "#4caf50";
+        this.hudHealthFill.background = VEHICLE_STATUS_BAR_FILL;
       }
     }
 
@@ -835,18 +862,13 @@ export class TankGameplayController {
     const batPct = clamp((this.battery / batteryMax) * 100, 0, 100);
     const ocPct = clamp((this.overcharge / overchargeMax) * 100, 0, 100);
     const ocHud = this.boostInputHeld ? Math.floor(ocPct) : Math.round(ocPct);
-    if (this.hudFuelLabel) {
-      this.hudFuelLabel.text = "Fuel";
-    }
     if (this.hudFuelFill) {
       this.hudFuelFill.width = `${Math.round(batPct)}%`;
-      this.hudFuelFill.background =
-        batPct < 20 ? "#f44336" : batPct < 45 ? "#ff9800" : "#4caf50";
+      this.hudFuelFill.background = VEHICLE_STATUS_BAR_FILL;
     }
     if (this.hudBoostFill) {
       this.hudBoostFill.width = `${ocHud}%`;
-      this.hudBoostFill.background =
-        ocPct < 20 ? "#f44336" : ocPct < 45 ? "#ff9800" : "#ffeb3b";
+      this.hudBoostFill.background = VEHICLE_STATUS_BAR_FILL;
     }
 
     this.updateWeaponHud(dt);
@@ -859,6 +881,92 @@ export class TankGameplayController {
       this.hudZoomIndicator.text = this.zoomActive ? "ZOOM : ON" : "ZOOM : OFF";
       this.hudZoomIndicator.color = this.zoomActive ? "#90caf9" : "#ffffff";
     }
+  }
+
+  private setupStatusHudLayout(): void {
+    const hudRoot = this.hudTexture?.getControlByName("hud_root");
+    if (hudRoot) {
+      hudRoot.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
+      hudRoot.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
+    }
+    if (!this.hudPanelStatus) {
+      return;
+    }
+    this.hudPanelStatus.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
+    this.hudPanelStatus.verticalAlignment = Control.VERTICAL_ALIGNMENT_BOTTOM;
+    this.hudPanelStatus.top = "-16px";
+    this.hudPanelStatus.left = "0px";
+    const panelHeight =
+      VEHICLE_STATUS_STACK_PADDING_V * 2 +
+      VEHICLE_STATUS_ROW_HEIGHT * 3 +
+      VEHICLE_STATUS_ROW_GAP * 2;
+    this.hudPanelStatus.height = `${panelHeight}px`;
+  }
+
+  private setupStatusHudSpacing(): void {
+    if (this.statusHudSpacingReady || !this.hudTexture) {
+      return;
+    }
+
+    const stack = this.hudTexture.getControlByName("hud_status_stack") as StackPanel | null;
+    const fuelRow = this.hudTexture.getControlByName("hud_fuel_row");
+    const boostRow = this.hudTexture.getControlByName("hud_boost_row");
+    if (!stack || !fuelRow || !boostRow) {
+      return;
+    }
+
+    this.statusHudSpacingReady = true;
+    stack.paddingTop = VEHICLE_STATUS_STACK_PADDING_V;
+    stack.paddingBottom = VEHICLE_STATUS_STACK_PADDING_V;
+    fuelRow.paddingTop = 0;
+    boostRow.paddingTop = 0;
+
+    if (stack.getChildByName("hud_status_gap_health_fuel")) {
+      return;
+    }
+
+    stack.removeControl(fuelRow);
+    stack.removeControl(boostRow);
+    stack.addControl(this.createStatusRowGap("hud_status_gap_health_fuel"));
+    stack.addControl(fuelRow);
+    stack.addControl(this.createStatusRowGap("hud_status_gap_fuel_boost"));
+    stack.addControl(boostRow);
+  }
+
+  private createStatusRowGap(name: string): Rectangle {
+    const gap = new Rectangle(name);
+    gap.width = "100%";
+    gap.height = `${VEHICLE_STATUS_ROW_GAP}px`;
+    gap.thickness = 0;
+    gap.background = "transparent";
+    gap.isPointerBlocker = false;
+    return gap;
+  }
+
+  private setupStatusHudIcons(): void {
+    const icons: Array<{ control: Image | null; source: string }> = [
+      { control: this.hudHealthIcon, source: healthStatusIconUrl },
+      { control: this.hudFuelIcon, source: fuelStatusIconUrl },
+      { control: this.hudBoostIcon, source: boostStatusIconUrl }
+    ];
+
+    for (const { control, source } of icons) {
+      if (!control) {
+        continue;
+      }
+      control.source = source;
+      control.stretch = Image.STRETCH_UNIFORM;
+      control.clipContent = false;
+      control.isPointerBlocker = false;
+    }
+  }
+
+  private initStatusHudChrome(): void {
+    if (this.statusHudChromeReady || !this.hudPanelStatus) {
+      return;
+    }
+    this.statusHudChromeReady = true;
+    addWeaponCornerBrackets(this.hudPanelStatus, "hud_panel_status", 1);
   }
 
   private setupWeaponHudImages(): void {
@@ -1337,10 +1445,15 @@ export class TankGameplayController {
     this.hudTexture = null;
     this.hudJsonLoaded = false;
     this.hudReticlesAttached = false;
+    this.hudPanelStatus = null;
     this.hudHealthFill = null;
-    this.hudFuelLabel = null;
+    this.hudHealthIcon = null;
     this.hudFuelFill = null;
+    this.hudFuelIcon = null;
     this.hudBoostFill = null;
+    this.hudBoostIcon = null;
+    this.statusHudChromeReady = false;
+    this.statusHudSpacingReady = false;
     this.hudWeaponPrimary = null;
     this.hudWeaponSecondary = null;
     this.hudWeaponPrimaryIcon = null;
@@ -3398,6 +3511,31 @@ function addWeaponCornerBrackets(frame: Rectangle, idPrefix: string, alpha: numb
     }
     frame.addControl(rect);
   }
+
+  addHudBracketSideBorder(frame, `${idPrefix}_bracket_side_l`, "left", thick, color, z);
+  addHudBracketSideBorder(frame, `${idPrefix}_bracket_side_r`, "right", thick, color, z);
+}
+
+function addHudBracketSideBorder(
+  frame: Rectangle,
+  name: string,
+  side: "left" | "right",
+  thick: number,
+  color: string,
+  z: number
+): void {
+  const rect = new Rectangle(name);
+  rect.width = `${thick}px`;
+  rect.height = "100%";
+  rect.thickness = 0;
+  rect.background = color;
+  rect.isPointerBlocker = false;
+  rect.zIndex = z;
+  rect.horizontalAlignment =
+    side === "left" ? Control.HORIZONTAL_ALIGNMENT_LEFT : Control.HORIZONTAL_ALIGNMENT_RIGHT;
+  rect.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
+  rect.left = 0;
+  frame.addControl(rect);
 }
 
 function moveTowards(current: number, target: number, maxDelta: number): number {
