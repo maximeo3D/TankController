@@ -68,7 +68,12 @@ const WEAPON_SWITCH_ENTER_SEC = 0.14;
 const WEAPON_SWITCH_BLINK_SEC = 0.24;
 const WEAPON_SLOT_SECONDARY_ALPHA = 0.9;
 const VEHICLE_STATUS_BAR_FILL = "#d9d9d9";
+const VEHICLE_STATUS_BAR_EMPTY = "#3a3a3a";
 const VEHICLE_STATUS_BAR_SHIELD = "#42a5f5";
+const VEHICLE_STATUS_BAR_LOW = "#f44336";
+const HEALTH_BAR_WIDTH_PX = 294;
+const HEALTH_BAR_SEGMENT_COUNT = 4;
+const HEALTH_BAR_SEGMENT_GAP_PX = 2;
 const VEHICLE_STATUS_ROW_HEIGHT = 36;
 const VEHICLE_STATUS_ROW_GAP = 20;
 const VEHICLE_STATUS_STACK_PADDING_V = 12;
@@ -270,8 +275,10 @@ export class TankGameplayController {
   /** True once `UI_hud.json` parsed; HUD text/bars update only then. */
   private hudJsonLoaded = false;
   private hudPanelStatus: Rectangle | null = null;
-  private hudHealthFill: Rectangle | null = null;
+  private hudHealthBarBg: Rectangle | null = null;
+  private hudHealthSegmentFills: Rectangle[] = [];
   private hudHealthIcon: Image | null = null;
+  private healthBarSegmentsReady = false;
   private hudFuelFill: Rectangle | null = null;
   private hudFuelIcon: Image | null = null;
   private hudBoostFill: Rectangle | null = null;
@@ -749,8 +756,9 @@ export class TankGameplayController {
     }
     const t = this.hudTexture;
     this.hudPanelStatus = t.getControlByName("hud_panel_status") as Rectangle | null;
-    this.hudHealthFill = t.getControlByName("hud_health_bar_fill") as Rectangle | null;
+    this.hudHealthBarBg = t.getControlByName("hud_health_bar_bg") as Rectangle | null;
     this.hudHealthIcon = t.getControlByName("hud_health_icon") as Image | null;
+    this.setupHealthBarSegments();
     this.hudFuelFill = t.getControlByName("hud_fuel_bar_fill") as Rectangle | null;
     this.hudFuelIcon = t.getControlByName("hud_fuel_icon") as Image | null;
     this.hudBoostFill = t.getControlByName("hud_boost_bar_fill") as Rectangle | null;
@@ -847,15 +855,7 @@ export class TankGameplayController {
 
     const shieldActive = this.shieldTimeRemaining > 0;
     const hpPct = clamp((this.health / this.healthMax) * 100, 0, 100);
-    if (this.hudHealthFill) {
-      if (shieldActive) {
-        this.hudHealthFill.width = "100%";
-        this.hudHealthFill.background = VEHICLE_STATUS_BAR_SHIELD;
-      } else {
-        this.hudHealthFill.width = `${Math.round(hpPct)}%`;
-        this.hudHealthFill.background = VEHICLE_STATUS_BAR_FILL;
-      }
-    }
+    this.updateHealthBarSegments(hpPct, shieldActive);
 
     const batteryMax = this.config.energy.batteryMax;
     const overchargeMax = this.config.energy.overchargeMax;
@@ -880,6 +880,95 @@ export class TankGameplayController {
     if (this.hudZoomIndicator) {
       this.hudZoomIndicator.text = this.zoomActive ? "ZOOM : ON" : "ZOOM : OFF";
       this.hudZoomIndicator.color = this.zoomActive ? "#90caf9" : "#ffffff";
+    }
+  }
+
+  private setupHealthBarSegments(): void {
+    if (this.healthBarSegmentsReady || !this.hudHealthBarBg) {
+      return;
+    }
+    this.healthBarSegmentsReady = true;
+
+    const legacyFill = this.hudHealthBarBg.getChildByName("hud_health_bar_fill");
+    if (legacyFill) {
+      this.hudHealthBarBg.removeControl(legacyFill);
+    }
+
+    this.hudHealthBarBg.background = "transparent";
+    this.hudHealthBarBg.thickness = 0;
+
+    const gapPx = HEALTH_BAR_SEGMENT_GAP_PX;
+    const count = HEALTH_BAR_SEGMENT_COUNT;
+    const segmentWidth = (HEALTH_BAR_WIDTH_PX - gapPx * (count - 1)) / count;
+    this.hudHealthSegmentFills = [];
+
+    for (let i = 0; i < count; i++) {
+      const slot = new Rectangle(`hud_health_seg_slot_${i}`);
+      slot.width = `${segmentWidth}px`;
+      slot.height = "100%";
+      slot.thickness = 0;
+      slot.background = "transparent";
+      slot.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_LEFT;
+      slot.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
+      slot.left = `${i * (segmentWidth + gapPx)}px`;
+      slot.clipChildren = true;
+      slot.isPointerBlocker = false;
+
+      const bg = new Rectangle(`hud_health_seg_bg_${i}`);
+      bg.width = "100%";
+      bg.height = "100%";
+      bg.thickness = 0;
+      bg.background = VEHICLE_STATUS_BAR_EMPTY;
+      bg.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_LEFT;
+      bg.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
+      bg.isPointerBlocker = false;
+      bg.zIndex = 0;
+
+      const fill = new Rectangle(`hud_health_seg_fill_${i}`);
+      fill.width = "0%";
+      fill.height = "100%";
+      fill.thickness = 0;
+      fill.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_LEFT;
+      fill.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
+      fill.isPointerBlocker = false;
+      fill.zIndex = 1;
+
+      slot.addControl(bg);
+      slot.addControl(fill);
+      this.hudHealthBarBg.addControl(slot);
+      this.hudHealthSegmentFills.push(fill);
+    }
+  }
+
+  private updateHealthBarSegments(hpPct: number, shieldActive: boolean): void {
+    if (this.hudHealthSegmentFills.length === 0) {
+      return;
+    }
+
+    const lowHealth = hpPct < 25;
+    const fillColor = shieldActive
+      ? VEHICLE_STATUS_BAR_SHIELD
+      : lowHealth
+        ? VEHICLE_STATUS_BAR_LOW
+        : VEHICLE_STATUS_BAR_FILL;
+
+    for (let i = 0; i < HEALTH_BAR_SEGMENT_COUNT; i++) {
+      const segment = this.hudHealthSegmentFills[i];
+      const quarterStart = i * 25;
+      const quarterEnd = (i + 1) * 25;
+      let fillPct = 0;
+
+      if (shieldActive) {
+        fillPct = 100;
+      } else if (hpPct >= quarterEnd) {
+        fillPct = 100;
+      } else if (hpPct > quarterStart) {
+        fillPct = ((hpPct - quarterStart) / 25) * 100;
+      }
+
+      segment.width = `${Math.round(fillPct)}%`;
+      segment.background = fillColor;
+      segment.isVisible = fillPct > 0;
     }
   }
 
@@ -1446,7 +1535,9 @@ export class TankGameplayController {
     this.hudJsonLoaded = false;
     this.hudReticlesAttached = false;
     this.hudPanelStatus = null;
-    this.hudHealthFill = null;
+    this.hudHealthBarBg = null;
+    this.hudHealthSegmentFills = [];
+    this.healthBarSegmentsReady = false;
     this.hudHealthIcon = null;
     this.hudFuelFill = null;
     this.hudFuelIcon = null;

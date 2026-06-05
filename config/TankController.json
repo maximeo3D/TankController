@@ -119,7 +119,7 @@
   },
   "vehicle": {
     "healthMax": 400,
-    "startingHealth": 200
+    "startingHealth": 90
   },
   "energy": {
     "batteryMax": 100.0,
