@@ -321,6 +321,43 @@
         ]
       },
       {
+        "name": "hud_panel_timer",
+        "className": "Rectangle",
+        "width": "264px",
+        "height": "80px",
+        "alpha": 1,
+        "isPointerBlocker": false,
+        "horizontalAlignment": 2,
+        "verticalAlignment": 0,
+        "left": "-16px",
+        "top": "16px",
+        "background": "rgba(72,72,72,0.58)",
+        "thickness": 0,
+        "cornerRadius": 0,
+        "clipChildren": false,
+        "clipContent": false,
+        "zIndex": 0,
+        "isVisible": true,
+        "children": [
+          {
+            "name": "hud_timer_label",
+            "className": "TextBlock",
+            "text": "00:00:00",
+            "color": "white",
+            "fontSize": "64px",
+            "fontFamily": "Digital",
+            "horizontalAlignment": 1,
+            "verticalAlignment": 1,
+            "textHorizontalAlignment": 1,
+            "textVerticalAlignment": 1,
+            "width": "100%",
+            "height": "100%",
+            "isPointerBlocker": false,
+            "isVisible": true
+          }
+        ]
+      },
+      {
         "name": "hud_indicators_container",
         "className": "StackPanel",
         "isVertical": true,

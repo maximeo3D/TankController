@@ -49,7 +49,7 @@ import {
   tankCannonSoundAssetUrl,
   tankGunSoundAssetUrl
 } from "../assets/assetUrls";
-import { applyUiFontToTexture } from "../ui/applyUiFont";
+import { applyUiFontToTexture, TIMER_FONT_FAMILY } from "../ui/applyUiFont";
 import { Sound } from "@babylonjs/core/Audio/sound";
 import { AbstractEngine } from "@babylonjs/core/Engines/abstractEngine";
 import "@babylonjs/core/Layers/effectLayerSceneComponent";
@@ -80,6 +80,15 @@ const FUEL_BAR_LOW_BLINK_HZ = 2.5;
 const VEHICLE_STATUS_ROW_HEIGHT = 36;
 const VEHICLE_STATUS_ROW_GAP = 20;
 const VEHICLE_STATUS_STACK_PADDING_V = 12;
+
+function formatSessionTimer(elapsedSeconds: number): string {
+  const totalMs = Math.floor(Math.max(0, elapsedSeconds) * 1000);
+  const minutes = Math.floor(totalMs / 60000);
+  const seconds = Math.floor((totalMs % 60000) / 1000);
+  const centiseconds = Math.floor((totalMs % 1000) / 10);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${pad(minutes)}:${pad(seconds)}:${pad(centiseconds)}`;
+}
 
 type WeaponHudAnimPhase = "idle" | "exit" | "enter" | "blink";
 
@@ -287,6 +296,10 @@ export class TankGameplayController {
   private hudFuelIcon: Image | null = null;
   private fuelBarSegmentsReady = false;
   private fuelLowBlinkPhase = 0;
+  private hudPanelTimer: Rectangle | null = null;
+  private hudTimerLabel: TextBlock | null = null;
+  private timerHudChromeReady = false;
+  private sessionElapsedSeconds = 0;
   private hudBoostFill: Rectangle | null = null;
   private hudBoostIcon: Image | null = null;
   private statusHudChromeReady = false;
@@ -774,6 +787,10 @@ export class TankGameplayController {
     this.setupStatusHudSpacing();
     this.setupStatusHudIcons();
     this.initStatusHudChrome();
+    this.hudPanelTimer = t.getControlByName("hud_panel_timer") as Rectangle | null;
+    this.hudTimerLabel = t.getControlByName("hud_timer_label") as TextBlock | null;
+    this.setupTimerHudLayout();
+    this.initTimerHudChrome();
     this.hudWeaponPrimary = t.getControlByName("hud_weapon_primary") as Rectangle | null;
     this.hudWeaponSecondary = t.getControlByName("hud_weapon_secondary") as Rectangle | null;
     this.hudWeaponPrimaryIcon = t.getControlByName("hud_weapon_primary_icon") as Image | null;
@@ -788,6 +805,7 @@ export class TankGameplayController {
     this.hudBoostIndicator = t.getControlByName("hud_boost_indicator") as TextBlock | null;
     this.hudZoomIndicator = t.getControlByName("hud_zoom_indicator") as TextBlock | null;
     this.weaponHudDisplayedWeapon = this.activeWeapon;
+    this.sessionElapsedSeconds = 0;
     this.hudJsonLoaded = true;
     this.refreshWeaponHudContent();
     this.resetWeaponSlotTransforms();
@@ -876,6 +894,10 @@ export class TankGameplayController {
     }
 
     this.updateWeaponHud(dt);
+    this.sessionElapsedSeconds += dt;
+    if (this.hudTimerLabel) {
+      this.hudTimerLabel.text = formatSessionTimer(this.sessionElapsedSeconds);
+    }
 
     if (this.hudBoostIndicator) {
       this.hudBoostIndicator.text = this.boostActive ? "BOOST : ON" : "BOOST : OFF";
@@ -1161,6 +1183,32 @@ export class TankGameplayController {
     }
     this.statusHudChromeReady = true;
     addWeaponCornerBrackets(this.hudPanelStatus, "hud_panel_status", 1);
+  }
+
+  private setupTimerHudLayout(): void {
+    if (!this.hudPanelTimer) {
+      return;
+    }
+    this.hudPanelTimer.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_RIGHT;
+    this.hudPanelTimer.verticalAlignment = Control.VERTICAL_ALIGNMENT_TOP;
+    this.hudPanelTimer.left = "-16px";
+    this.hudPanelTimer.top = "16px";
+    if (this.hudTimerLabel) {
+      this.hudTimerLabel.fontFamily = TIMER_FONT_FAMILY;
+      this.hudTimerLabel.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
+      this.hudTimerLabel.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
+      this.hudTimerLabel.textHorizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
+      this.hudTimerLabel.textVerticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
+      this.hudTimerLabel.isPointerBlocker = false;
+    }
+  }
+
+  private initTimerHudChrome(): void {
+    if (this.timerHudChromeReady || !this.hudPanelTimer) {
+      return;
+    }
+    this.timerHudChromeReady = true;
+    addWeaponCornerBrackets(this.hudPanelTimer, "hud_panel_timer", 1);
   }
 
   private setupWeaponHudImages(): void {
@@ -1669,6 +1717,10 @@ export class TankGameplayController {
     this.weaponHudAnimTime = 0;
     this.hudBoostIndicator = null;
     this.hudZoomIndicator = null;
+    this.hudPanelTimer = null;
+    this.hudTimerLabel = null;
+    this.timerHudChromeReady = false;
+    this.sessionElapsedSeconds = 0;
     this.barrelShellReticle2D = null;
     this.barrelGunReticle2D = null;
 
