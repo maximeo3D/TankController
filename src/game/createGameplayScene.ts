@@ -1,7 +1,6 @@
 import HavokPhysics from "@babylonjs/havok";
 import "@babylonjs/loaders/glTF";
 import "@babylonjs/core/Physics/physicsEngineComponent";
-import "@babylonjs/core/Helpers/sceneHelpers";
 import { ArcRotateCamera } from "@babylonjs/core/Cameras/arcRotateCamera";
 import { UniversalCamera } from "@babylonjs/core/Cameras/universalCamera";
 import { Engine } from "@babylonjs/core/Engines/engine";
@@ -13,6 +12,7 @@ import { Color3 } from "@babylonjs/core/Maths/math.color";
 import { Quaternion, Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { Axis } from "@babylonjs/core/Maths/math.axis";
 import { Mesh } from "@babylonjs/core/Meshes/mesh";
+import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import { PhysicsBody } from "@babylonjs/core/Physics/v2/physicsBody";
 import {
@@ -25,6 +25,7 @@ import { PhysicsMotionType } from "@babylonjs/core/Physics/v2/IPhysicsEnginePlug
 import { HavokPlugin } from "@babylonjs/core/Physics/v2/Plugins/havokPlugin";
 import { Scene } from "@babylonjs/core/scene";
 import { CubeTexture } from "@babylonjs/core/Materials/Textures/cubeTexture";
+import { Texture } from "@babylonjs/core/Materials/Textures/texture";
 import type { AssetContainer } from "@babylonjs/core/assetContainer";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import type { TankControllerConfig } from "../config/tankController";
@@ -93,9 +94,14 @@ export async function createGameplayScene(
   scene.hoverCursor = "none";
 
   const envTex = CubeTexture.CreateFromPrefilteredData(skyboxAssetUrl, scene);
+  await waitForCubeTextureReady(envTex);
   scene.environmentTexture = envTex;
   scene.environmentIntensity = 0.5;
-  scene.createDefaultSkybox(envTex, true, 1000, 0.1, true);
+
+  const skyboxReflection = envTex.clone();
+  await waitForCubeTextureReady(skyboxReflection);
+  skyboxReflection.coordinatesMode = Texture.SKYBOX_MODE;
+  attachEnvironmentSkybox(scene, skyboxReflection);
 
   const fallbackCamera = new ArcRotateCamera(
     "fallback_camera",
@@ -338,6 +344,7 @@ export async function createGameplayScene(
     trackTreadParticlesReverse
   });
 
+  await scene.whenReadyAsync();
 
   return {
     scene,
@@ -357,6 +364,28 @@ export async function createGameplayScene(
       tankPhysics.shape.dispose();
     }
   };
+}
+
+function waitForCubeTextureReady(texture: CubeTexture): Promise<void> {
+  if (texture.isReady()) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    texture.onLoadObservable.addOnce(() => resolve());
+  });
+}
+
+function attachEnvironmentSkybox(scene: Scene, reflectionTexture: CubeTexture): void {
+  const skybox = MeshBuilder.CreateBox("hdrSkyBox", { size: 1000 }, scene);
+  const material = new StandardMaterial("skyBox", scene);
+  material.backFaceCulling = false;
+  material.disableLighting = true;
+  material.reflectionTexture = reflectionTexture;
+  skybox.material = material;
+  skybox.isPickable = false;
+  skybox.infiniteDistance = true;
+  skybox.ignoreCameraMaxZ = true;
 }
 
 function parentTankNodes(

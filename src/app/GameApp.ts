@@ -409,7 +409,20 @@ export class GameApp {
     return btn;
   }
 
+  private setMenuSceneUiActive(active: boolean): void {
+    for (const ui of [this.menuUi, this.levelSelectUi]) {
+      if (!ui) {
+        continue;
+      }
+      ui.rootContainer.isVisible = active;
+      ui.isForeground = active;
+      ui.rootContainer.isHitTestVisible = active;
+      ui.markAsDirty();
+    }
+  }
+
   private async startLevel(level: LevelDefinition): Promise<void> {
+    this.setMenuSceneUiActive(false);
     this.screen = "gameplay";
     this.gameplayState = {
       levelName: level.name,
