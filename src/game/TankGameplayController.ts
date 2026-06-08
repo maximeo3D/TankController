@@ -10,6 +10,7 @@ import type { LinesMesh } from "@babylonjs/core/Meshes/linesMesh";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import { Mesh as BabylonMesh } from "@babylonjs/core/Meshes/mesh";
 import { Color3 } from "@babylonjs/core/Maths/math.color";
+import { PointLight } from "@babylonjs/core/Lights/pointLight";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { Texture } from "@babylonjs/core/Materials/Textures/texture";
 import { SpriteManager, Sprite } from "@babylonjs/core/Sprites";
@@ -380,6 +381,18 @@ export class TankGameplayController {
   private static readonly GUN_RETICLE_KICK_UP_SECONDS = 0.05;
   private static readonly GUN_RETICLE_KICK_FADE_SECONDS = 0.07;
 
+  private static readonly GUN_MUZZLE_FLASH_POOL_SIZE = 6;
+  private static readonly GUN_MUZZLE_FLASH_LIFE_S = 0.05;
+  private static readonly GUN_MUZZLE_FLASH_PEAK_INTENSITY = 6;
+  private static readonly GUN_MUZZLE_FLASH_RANGE = 1;
+  private static readonly CANNON_MUZZLE_FLASH_POOL_SIZE = 2;
+  private static readonly CANNON_MUZZLE_FLASH_LIFE_S = 0.08;
+  private static readonly CANNON_MUZZLE_FLASH_PEAK_INTENSITY = 10;
+  private static readonly CANNON_MUZZLE_FLASH_RANGE = 5;
+  private gunMuzzleFlashPool: PointLight[] = [];
+  private cannonMuzzleFlashPool: PointLight[] = [];
+  private activeMuzzleFlashes: { light: PointLight; age: number; life: number; peak: number }[] = [];
+
   // Shell explosion shockwave FX (pooled clones)
   private shockwaveTemplate: BabylonMesh | null = null;
   private shockwavePool: BabylonMesh[] = [];
@@ -544,6 +557,7 @@ export class TankGameplayController {
     this.initHud();
     this.initShockwaveFx(options);
     this.initWeaponSounds();
+    this.initMuzzleFlashLights();
     this.initPowerUpSounds();
     this.initTankMovementSounds();
     this.initTurretSounds();
@@ -2201,6 +2215,15 @@ export class TankGameplayController {
       s.dispose();
     }
     this.gunShotSoundPool = [];
+    for (const light of this.gunMuzzleFlashPool) {
+      light.dispose();
+    }
+    this.gunMuzzleFlashPool = [];
+    for (const light of this.cannonMuzzleFlashPool) {
+      light.dispose();
+    }
+    this.cannonMuzzleFlashPool = [];
+    this.activeMuzzleFlashes = [];
     for (const sound of this.powerUpSounds.values()) {
       sound.dispose();
     }
@@ -2289,6 +2312,7 @@ export class TankGameplayController {
     this.updateMuzzleDebugVisuals();
     this.updateProjectiles(dt);
     this.updateGunTracers(dt);
+    this.updateMuzzleFlashes(dt);
     this.updateSparks(dt);
     this.updateShockwaves(dt);
     this.updateGameplayHud(dt);
@@ -2374,7 +2398,96 @@ export class TankGameplayController {
     if (this.zoomActive) {
       this.zoomCamFreezeSeconds = Math.max(this.zoomCamFreezeSeconds, 0.12);
     }
+    if (this.muzzleCannonNode) {
+      this.syncMuzzleNodeWorldMatrix(this.muzzleCannonNode);
+      this.spawnMuzzleFlash(
+        this.cannonMuzzleFlashPool,
+        this.muzzleCannonNode.getAbsolutePosition(),
+        TankGameplayController.CANNON_MUZZLE_FLASH_PEAK_INTENSITY,
+        TankGameplayController.CANNON_MUZZLE_FLASH_LIFE_S
+      );
+    }
     this.spawnProjectile(this.ammoShellMesh, this.ammoShellColliderMesh, this.config.weapons.shell, 0.4);
+  }
+
+  private initMuzzleFlashLights(): void {
+    const flashColor = new Color3(1, 0.94, 0.72);
+    const flashSpecular = new Color3(1, 0.88, 0.55);
+
+    for (let i = 0; i < TankGameplayController.GUN_MUZZLE_FLASH_POOL_SIZE; i++) {
+      const light = new PointLight(`gun_muzzle_flash_${i}`, Vector3.Zero(), this.scene);
+      light.diffuse = flashColor;
+      light.specular = flashSpecular;
+      light.intensity = 0;
+      light.range = TankGameplayController.GUN_MUZZLE_FLASH_RANGE;
+      light.setEnabled(false);
+      this.gunMuzzleFlashPool.push(light);
+    }
+
+    for (let i = 0; i < TankGameplayController.CANNON_MUZZLE_FLASH_POOL_SIZE; i++) {
+      const light = new PointLight(`cannon_muzzle_flash_${i}`, Vector3.Zero(), this.scene);
+      light.diffuse = flashColor;
+      light.specular = flashSpecular;
+      light.intensity = 0;
+      light.range = TankGameplayController.CANNON_MUZZLE_FLASH_RANGE;
+      light.setEnabled(false);
+      this.cannonMuzzleFlashPool.push(light);
+    }
+  }
+
+  private spawnMuzzleFlash(
+    pool: PointLight[],
+    position: Vector3,
+    peakIntensity: number,
+    lifeS: number
+  ): void {
+    if (pool.length === 0) {
+      return;
+    }
+
+    const activeLights = new Set(this.activeMuzzleFlashes.map((f) => f.light));
+    let light = pool.find((candidate) => !activeLights.has(candidate)) ?? null;
+    if (!light) {
+      const recycledIdx = this.activeMuzzleFlashes.findIndex((f) => pool.includes(f.light));
+      if (recycledIdx >= 0) {
+        const recycled = this.activeMuzzleFlashes.splice(recycledIdx, 1)[0];
+        recycled.light.intensity = 0;
+        recycled.light.setEnabled(false);
+        light = recycled.light;
+      } else {
+        light = pool[0];
+      }
+    }
+
+    light.position.copyFrom(position);
+    light.intensity = peakIntensity;
+    light.setEnabled(true);
+    this.activeMuzzleFlashes.push({
+      light,
+      age: 0,
+      life: lifeS,
+      peak: peakIntensity
+    });
+  }
+
+  private updateMuzzleFlashes(dt: number): void {
+    if (this.activeMuzzleFlashes.length === 0) {
+      return;
+    }
+
+    for (let i = this.activeMuzzleFlashes.length - 1; i >= 0; i--) {
+      const flash = this.activeMuzzleFlashes[i];
+      flash.age += dt;
+      const t = flash.age / flash.life;
+      if (t >= 1) {
+        flash.light.intensity = 0;
+        flash.light.setEnabled(false);
+        this.activeMuzzleFlashes.splice(i, 1);
+        continue;
+      }
+      const fade = (1 - t) * (1 - t);
+      flash.light.intensity = flash.peak * fade;
+    }
   }
 
   private fireBullet(): void {
@@ -2410,6 +2523,12 @@ export class TankGameplayController {
 
     this.syncMuzzleNodeWorldMatrix(this.muzzleGunNode);
     const origin = this.muzzleGunNode.getAbsolutePosition().clone();
+    this.spawnMuzzleFlash(
+      this.gunMuzzleFlashPool,
+      origin,
+      TankGameplayController.GUN_MUZZLE_FLASH_PEAK_INTENSITY,
+      TankGameplayController.GUN_MUZZLE_FLASH_LIFE_S
+    );
     const baseForward = this.getMuzzleNodeWorldForward(this.muzzleGunNode);
     const muzzleRotation = this.getMuzzleNodeWorldRotation(this.muzzleGunNode);
 
