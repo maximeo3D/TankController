@@ -294,6 +294,15 @@ export class TankGameplayController {
   private debugCameraOriginMarker: Mesh | null = null;
 
   private susDebugSpheres: Mesh[] = [];
+  private muzzleDebugVisuals: {
+    cannonPivot: Mesh;
+    cannonMuzzle: Mesh;
+    gunMuzzle: Mesh;
+    cannonForwardLine: LinesMesh;
+    gunForwardLine: LinesMesh;
+    cannonLinkLine: LinesMesh;
+    gunLinkLine: LinesMesh;
+  } | null = null;
   private hudTexture: AdvancedDynamicTexture | null = null;
   /** True once `UI_hud.json` parsed; HUD text/bars update only then. */
   private hudJsonLoaded = false;
@@ -335,15 +344,15 @@ export class TankGameplayController {
   private hudReticlesAttached = false;
   private barrelShellReticle2D: Rectangle | null = null;
   private barrelGunReticle2D: Rectangle | null = null;
-  private lastShellAimPoint: Vector3 | null = null;
   private activeGunTracers: {
     mesh: Mesh;
     from: Vector3;
-    to: Vector3;
     dir: Vector3;
     hitPoint: Vector3;
-    t: number;
+    hitDistance: number;
+    traveled: number;
     speed: number;
+    rotation: Quaternion;
   }[] = [];
 
   private sparkSpriteManager: SpriteManager | null = null;
@@ -528,6 +537,9 @@ export class TankGameplayController {
     this.initTrackSystem();
     if (this.config.debug?.showSuspensionSpheres) {
       this.initSuspensionDebugSpheres();
+    }
+    if (this.config.debug?.showMuzzleEmpties) {
+      this.initMuzzleDebugVisuals();
     }
     this.initHud();
     this.initShockwaveFx(options);
@@ -1855,6 +1867,179 @@ export class TankGameplayController {
     ammo.fontSize = text === "∞" ? WEAPON_INFINITY_FONT_SIZE : WEAPON_SHELL_AMMO_FONT_SIZE;
   }
 
+  private initMuzzleDebugVisuals(): void {
+    const makeMarker = (name: string, diameter: number, color: Color3): Mesh => {
+      const mesh = MeshBuilder.CreateSphere(name, { diameter, segments: 10 }, this.scene);
+      const mat = new StandardMaterial(`${name}_mat`, this.scene);
+      mat.diffuseColor = color;
+      mat.emissiveColor = color;
+      mat.disableLighting = true;
+      mesh.material = mat;
+      mesh.isPickable = false;
+      mesh.renderingGroupId = 2;
+      return mesh;
+    };
+
+    const makeLine = (name: string, color: Color3): LinesMesh => {
+      const line = MeshBuilder.CreateLines(
+        name,
+        { points: [Vector3.Zero(), Vector3.Zero()], updatable: true },
+        this.scene
+      );
+      line.color = color;
+      line.renderingGroupId = 2;
+      line.isPickable = false;
+      return line;
+    };
+
+    this.muzzleDebugVisuals = {
+      cannonPivot: makeMarker("dbg_muzzle_cannon_pivot", 0.22, new Color3(1, 0.85, 0.1)),
+      cannonMuzzle: makeMarker("dbg_muzzle_canon_tank", 0.18, new Color3(0.1, 0.85, 1)),
+      gunMuzzle: makeMarker("dbg_muzzle_gun_tank", 0.18, new Color3(0.2, 1, 0.35)),
+      cannonForwardLine: makeLine("dbg_muzzle_canon_forward", new Color3(0.1, 0.85, 1)),
+      gunForwardLine: makeLine("dbg_muzzle_gun_forward", new Color3(0.2, 1, 0.35)),
+      cannonLinkLine: makeLine("dbg_muzzle_canon_link", new Color3(1, 1, 1)),
+      gunLinkLine: makeLine("dbg_muzzle_gun_link", new Color3(0.85, 0.85, 0.85))
+    };
+  }
+
+  private syncMuzzleNodeWorldMatrix(node: TransformNode | AbstractMesh): void {
+    node.computeWorldMatrix(true);
+  }
+
+  private getMuzzleNodeWorldForward(node: TransformNode | AbstractMesh): Vector3 {
+    this.syncMuzzleNodeWorldMatrix(node);
+    const forward = node
+      .getDirection(this.movementForwardAxis)
+      .scale(-this.config.rig.movementForwardSign);
+    if (forward.lengthSquared() > 1e-6) {
+      forward.normalize();
+    } else {
+      forward.copyFrom(Axis.Z);
+    }
+    return forward;
+  }
+
+  private getMuzzleNodeWorldRotation(node: TransformNode | AbstractMesh): Quaternion {
+    this.syncMuzzleNodeWorldMatrix(node);
+    return node.absoluteRotationQuaternion?.clone() ?? Quaternion.Identity();
+  }
+
+  /** Base droite / haut du muzzle pour le cone de dispersion (repère du empty, pas le monde). */
+  private getMuzzleSpreadBasis(
+    node: TransformNode | AbstractMesh,
+    forward: Vector3
+  ): { right: Vector3; up: Vector3 } {
+    this.syncMuzzleNodeWorldMatrix(node);
+    let right = node.getDirection(Axis.X);
+    if (right.lengthSquared() > 1e-6) {
+      right.normalize();
+    } else {
+      right = Vector3.Cross(forward, Axis.Y);
+      if (right.lengthSquared() > 1e-6) {
+        right.normalize();
+      } else {
+        right = Axis.X.clone();
+      }
+    }
+    let up = Vector3.Cross(right, forward);
+    if (up.lengthSquared() > 1e-6) {
+      up.normalize();
+    } else {
+      up = node.getDirection(Axis.Y);
+      if (up.lengthSquared() > 1e-6) {
+        up.normalize();
+      } else {
+        up = Axis.Y.clone();
+      }
+    }
+    return { right, up };
+  }
+
+  private getCannonPivotWorldPosition(): Vector3 | null {
+    if (this.cannonControl.transformNode) {
+      this.cannonControl.transformNode.computeWorldMatrix(true);
+      return this.cannonControl.transformNode.getAbsolutePosition().clone();
+    }
+    if (this.cannonControl.bone) {
+      return this.cannonControl.bone.getAbsolutePosition(this.tankAnchor).clone();
+    }
+    return null;
+  }
+
+  private updateMuzzleDebugVisuals(): void {
+    const dbg = this.muzzleDebugVisuals;
+    if (!dbg) {
+      return;
+    }
+
+    const pivot = this.getCannonPivotWorldPosition();
+    if (pivot) {
+      dbg.cannonPivot.setEnabled(true);
+      dbg.cannonPivot.position.copyFrom(pivot);
+    } else {
+      dbg.cannonPivot.setEnabled(false);
+    }
+
+    const forwardLen = 3;
+
+    if (this.muzzleCannonNode) {
+      this.muzzleCannonNode.computeWorldMatrix(true);
+      const pos = this.muzzleCannonNode.getAbsolutePosition();
+      const forward = this.getMuzzleNodeWorldForward(this.muzzleCannonNode);
+      dbg.cannonMuzzle.setEnabled(true);
+      dbg.cannonMuzzle.position.copyFrom(pos);
+      MeshBuilder.CreateLines(
+        dbg.cannonForwardLine.name,
+        { points: [pos, pos.add(forward.scale(forwardLen))], instance: dbg.cannonForwardLine },
+        this.scene
+      );
+      dbg.cannonForwardLine.isVisible = true;
+      if (pivot) {
+        MeshBuilder.CreateLines(
+          dbg.cannonLinkLine.name,
+          { points: [pivot, pos], instance: dbg.cannonLinkLine },
+          this.scene
+        );
+        dbg.cannonLinkLine.isVisible = true;
+      } else {
+        dbg.cannonLinkLine.isVisible = false;
+      }
+    } else {
+      dbg.cannonMuzzle.setEnabled(false);
+      dbg.cannonForwardLine.isVisible = false;
+      dbg.cannonLinkLine.isVisible = false;
+    }
+
+    if (this.muzzleGunNode) {
+      this.muzzleGunNode.computeWorldMatrix(true);
+      const pos = this.muzzleGunNode.getAbsolutePosition();
+      const forward = this.getMuzzleNodeWorldForward(this.muzzleGunNode);
+      dbg.gunMuzzle.setEnabled(true);
+      dbg.gunMuzzle.position.copyFrom(pos);
+      MeshBuilder.CreateLines(
+        dbg.gunForwardLine.name,
+        { points: [pos, pos.add(forward.scale(forwardLen))], instance: dbg.gunForwardLine },
+        this.scene
+      );
+      dbg.gunForwardLine.isVisible = true;
+      if (pivot) {
+        MeshBuilder.CreateLines(
+          dbg.gunLinkLine.name,
+          { points: [pivot, pos], instance: dbg.gunLinkLine },
+          this.scene
+        );
+        dbg.gunLinkLine.isVisible = true;
+      } else {
+        dbg.gunLinkLine.isVisible = false;
+      }
+    } else {
+      dbg.gunMuzzle.setEnabled(false);
+      dbg.gunForwardLine.isVisible = false;
+      dbg.gunLinkLine.isVisible = false;
+    }
+  }
+
   private initSuspensionDebugSpheres(): void {
     // Always-on for now (requested for debugging).
     const nodes = this.suspensionNodes;
@@ -1957,6 +2142,14 @@ export class TankGameplayController {
       s.dispose();
     }
     this.susDebugSpheres = [];
+    this.muzzleDebugVisuals?.cannonPivot.dispose();
+    this.muzzleDebugVisuals?.cannonMuzzle.dispose();
+    this.muzzleDebugVisuals?.gunMuzzle.dispose();
+    this.muzzleDebugVisuals?.cannonForwardLine.dispose();
+    this.muzzleDebugVisuals?.gunForwardLine.dispose();
+    this.muzzleDebugVisuals?.cannonLinkLine.dispose();
+    this.muzzleDebugVisuals?.gunLinkLine.dispose();
+    this.muzzleDebugVisuals = null;
 
     this.hudTexture?.dispose();
     this.hudTexture = null;
@@ -2085,14 +2278,15 @@ export class TankGameplayController {
       this.shieldTimeRemaining = Math.max(0, this.shieldTimeRemaining - dt);
     }
     this.syncShieldHighlight();
-    this.updateWeapons(dt);
     this.applyTurretAndCannon(frame.pointerX, frame.pointerY, dt);
+    this.updateWeapons(dt);
     this.applyMovement(frame.moveAxis, frame.turnAxis, frame.boostHeld, dt);
     this.applyVisualSmoothing(dt);
     this.applyCamera(frame.zoomHeld);
     this.trackSystem?.update(dt);
     this.powerUpSystem?.update(dt);
     this.updateSuspensionDebugSpheres();
+    this.updateMuzzleDebugVisuals();
     this.updateProjectiles(dt);
     this.updateGunTracers(dt);
     this.updateSparks(dt);
@@ -2214,17 +2408,16 @@ export class TankGameplayController {
       return;
     }
 
-    // Base forward from gun muzzle
-    const origin = this.muzzleGunNode.getAbsolutePosition();
-    const baseForward = this.muzzleGunNode
-      .getDirection(this.movementForwardAxis)
-      .scale(-this.config.rig.movementForwardSign)
-      .normalize();
+    this.syncMuzzleNodeWorldMatrix(this.muzzleGunNode);
+    const origin = this.muzzleGunNode.getAbsolutePosition().clone();
+    const baseForward = this.getMuzzleNodeWorldForward(this.muzzleGunNode);
+    const muzzleRotation = this.getMuzzleNodeWorldRotation(this.muzzleGunNode);
 
     // Dynamic bloom cone: grows with sustained firing (0° -> 9°).
     const maxAngleRad = (Math.PI / 180) * this.gunSpreadDeg;
-    const right = Vector3.Cross(baseForward, Axis.Y).normalize();
-    const up = Vector3.Cross(right, baseForward).normalize();
+    const spreadBasis = this.getMuzzleSpreadBasis(this.muzzleGunNode, baseForward);
+    const right = spreadBasis.right;
+    const up = spreadBasis.up;
     const r = Math.random();
     const theta = Math.random() * Math.PI * 2;
     const radius = Math.tan(maxAngleRad) * Math.sqrt(r);
@@ -2254,15 +2447,17 @@ export class TankGameplayController {
     }
     mesh.isVisible = true;
     mesh.position.copyFrom(origin);
-    mesh.rotationQuaternion = Quaternion.FromLookDirectionRH(dir.scale(-1), Axis.Y);
+    mesh.rotationQuaternion = muzzleRotation.clone();
+    const hitDistance = Math.max(Vector3.Distance(origin, hitPoint), 0.001);
     this.activeGunTracers.push({
       mesh,
-      from: origin.clone(),
-      to: hitPoint.clone(),
+      from: origin,
       dir: dir.clone(),
       hitPoint: hitPoint.clone(),
-      t: 0,
-      speed: this.config.weapons.bullet.muzzleVelocity
+      hitDistance,
+      traveled: 0,
+      speed: this.config.weapons.bullet.muzzleVelocity,
+      rotation: muzzleRotation
     });
 
     // (Gun impacts/damage can be implemented later if needed.)
@@ -2283,6 +2478,7 @@ export class TankGameplayController {
     if (!mesh) return;
     mesh.isPickable = false;
     mesh.isVisible = !colliderTemplate;
+    this.syncMuzzleNodeWorldMatrix(this.muzzleCannonNode);
     mesh.position.copyFrom(this.muzzleCannonNode.getAbsolutePosition());
 
     if (colliderTemplate) {
@@ -2298,23 +2494,8 @@ export class TankGameplayController {
       visual.rotationQuaternion ??= Quaternion.Identity();
     }
 
-    // Calculate forward direction towards the reticle (shell uses cannon aim)
-    let forward = Vector3.Zero();
-    if (this.lastShellAimPoint) {
-      forward = this.lastShellAimPoint.subtract(mesh.position);
-    }
-    
-    // Fallback if reticle is too close or missing
-    if (forward.lengthSquared() < 1e-6) {
-      forward = this.muzzleCannonNode
-        .getDirection(this.movementForwardAxis)
-        .scale(-this.config.rig.movementForwardSign);
-    } else {
-      forward.normalize();
-    }
-
-    // Rotate the projectile to face its flight direction
-    mesh.rotationQuaternion = Quaternion.FromLookDirectionRH(forward, Axis.Y);
+    const forward = this.getMuzzleNodeWorldForward(this.muzzleCannonNode);
+    mesh.rotationQuaternion = this.getMuzzleNodeWorldRotation(this.muzzleCannonNode);
 
     const velocity = forward.scale(weaponConfig.muzzleVelocity);
 
@@ -2569,19 +2750,15 @@ export class TankGameplayController {
     if (this.activeGunTracers.length === 0) return;
     for (let i = this.activeGunTracers.length - 1; i >= 0; i--) {
       const tracer = this.activeGunTracers[i];
-      const distance = Vector3.Distance(tracer.from, tracer.to);
-      const travelPerSecond = tracer.speed;
-      const deltaT = distance > 0 ? (travelPerSecond * dt) / distance : 1;
-      tracer.t += deltaT;
-      if (tracer.t >= 1) {
+      tracer.traveled += tracer.speed * dt;
+      if (tracer.traveled >= tracer.hitDistance) {
         this.spawnSparkImpact(tracer.hitPoint);
         tracer.mesh.dispose();
         this.activeGunTracers.splice(i, 1);
         continue;
       }
-      const pos = Vector3.Lerp(tracer.from, tracer.to, tracer.t);
-      tracer.mesh.position.copyFrom(pos);
-      tracer.mesh.rotationQuaternion = Quaternion.FromLookDirectionRH(tracer.dir.scale(-1), Axis.Y);
+      tracer.mesh.position.copyFrom(tracer.from.add(tracer.dir.scale(tracer.traveled)));
+      tracer.mesh.rotationQuaternion = tracer.rotation.clone();
     }
   }
 
@@ -2906,10 +3083,6 @@ export class TankGameplayController {
     // In zoom view, keep barrel reticles locked to screen center (avoid parallax between camera ray and muzzle ray).
     // Also keep shell aim point aligned with the camera aim target so the projectile uses the same target.
     if (this.zoomActive) {
-      if (this.lastAimTargetPoint) {
-        this.lastShellAimPoint = this.lastAimTargetPoint.clone();
-      }
-
       if (this.barrelShellReticle2D) {
         this.barrelShellReticle2D.isVisible = this.activeWeapon === "shell";
         this.barrelShellReticle2D.leftInPixels = 0;
@@ -2996,7 +3169,6 @@ export class TankGameplayController {
           hitPoint = to;
         }
 
-        this.lastShellAimPoint = hitPoint.clone();
         if (this.activeWeapon === "shell") {
           updateUiFromHit(hitPoint, this.barrelShellReticle2D);
         } else if (this.barrelShellReticle2D) {

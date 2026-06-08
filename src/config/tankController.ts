@@ -24,6 +24,7 @@ export interface TankControllerConfig {
   debug?: {
     showSuspensionSpheres?: boolean;
     showPowerUpBounds?: boolean;
+    showMuzzleEmpties?: boolean;
   };
   rig: {
     spawnYawOffsetDeg: number;

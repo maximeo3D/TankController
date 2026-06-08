@@ -1,7 +1,8 @@
 {
   "debug": {
     "showSuspensionSpheres": false,
-    "showPowerUpBounds": false
+    "showPowerUpBounds": false,
+    "showMuzzleEmpties": false
   },
   "rig": {
     "spawnYawOffsetDeg": 0.0,

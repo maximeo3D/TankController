@@ -276,6 +276,8 @@ export async function createGameplayScene(
 
   const muzzleCannonNode = findTransformNode(tankContainer, "MUZZLE_canon_tank");
   const muzzleGunNode = findTransformNode(tankContainer, "MUZZLE_gun_tank");
+  parentMuzzleNodesToCannonBone(tankContainer, muzzleCannonNode, muzzleGunNode);
+  refreshTankRigWorldMatrices(tankAnchor, tankContainer);
 
   const suspensionNodes = {
     fl: findTransformNode(tankContainer, "SUS_FL"),
@@ -422,6 +424,42 @@ function findTransformNode(
       return n === wanted || n.startsWith(`${wanted}.`);
     }) ?? null
   );
+}
+
+function findCannonBoneTransform(container: AssetContainer): TransformNode | null {
+  const wanted = "canon";
+  const bone =
+    container.skeletons
+      .flatMap((skeleton) => skeleton.bones)
+      .find((candidate) => {
+        const name = candidate.name.trim().toLowerCase();
+        return name === wanted || name.startsWith(`${wanted}.`);
+      }) ?? null;
+
+  return bone?.getTransformNode() ?? null;
+}
+
+/** Les MUZZLE_* doivent suivre le pitch du bone `canon` (piloté en code sur son TransformNode). */
+function parentMuzzleNodesToCannonBone(
+  container: AssetContainer,
+  muzzleCannonNode: TransformNode | AbstractMesh | null,
+  muzzleGunNode: TransformNode | AbstractMesh | null
+): void {
+  const cannonTransform = findCannonBoneTransform(container);
+  if (!cannonTransform) {
+    console.warn("[TankController] canon bone transform not found; MUZZLE_* nodes were not reparented.");
+    return;
+  }
+
+  for (const muzzle of [muzzleCannonNode, muzzleGunNode]) {
+    if (!muzzle) {
+      continue;
+    }
+    if (muzzle.parent === cannonTransform) {
+      continue;
+    }
+    muzzle.setParent(cannonTransform, true);
+  }
 }
 
 function refreshTankRigWorldMatrices(tankAnchor: TransformNode, container: AssetContainer): void {
