@@ -51,7 +51,12 @@ import {
   powerUpAmmoSoundAssetUrl,
   powerUpFuelSoundAssetUrl,
   powerUpRepairSoundAssetUrl,
-  powerUpShieldSoundAssetUrl
+  powerUpShieldSoundAssetUrl,
+  tankIdleSoundAssetUrl,
+  tankMoveSoundAssetUrl,
+  turretStartSoundAssetUrl,
+  turretLoopSoundAssetUrl,
+  turretStopSoundAssetUrl
 } from "../assets/assetUrls";
 import { applyUiFontToTexture, TIMER_FONT_FAMILY } from "../ui/applyUiFont";
 import { TARGET_FRAME_SEC } from "./frameTiming";
@@ -383,6 +388,14 @@ export class TankGameplayController {
   private audioUnlocked = false;
   private gunShotAudioBuffer: AudioBuffer | null = null;
   private readonly powerUpSounds = new Map<PowerUpTypeId, Sound>();
+  private tankIdleSound: Sound | null = null;
+  private tankMoveSound: Sound | null = null;
+  private tankMovementSoundMode: "idle" | "move" | "stopped" = "stopped";
+  private turretStartSound: Sound | null = null;
+  private turretLoopSound: Sound | null = null;
+  private turretStopSound: Sound | null = null;
+  private turretSoundState: "stopped" | "starting" | "looping" | "stopping" = "stopped";
+  private articulationIsRotating = false;
 
   private explosionDefsPromise: Promise<unknown[]> | null = null;
 
@@ -517,6 +530,8 @@ export class TankGameplayController {
     this.initShockwaveFx(options);
     this.initWeaponSounds();
     this.initPowerUpSounds();
+    this.initTankMovementSounds();
+    this.initTurretSounds();
 
     // Browsers require a user gesture to start audio.
     options.canvas.addEventListener(
@@ -545,6 +560,7 @@ export class TankGameplayController {
         } catch {
           // ignore
         }
+        this.syncTankMovementSounds();
       },
       { passive: true }
     );
@@ -683,6 +699,189 @@ export class TankGameplayController {
       } catch {
         // Audio is optional.
       }
+    }
+  }
+
+  private initTankMovementSounds(): void {
+    try {
+      this.tankIdleSound = new Sound(
+        "tank_idle",
+        tankIdleSoundAssetUrl,
+        this.scene,
+        null,
+        { autoplay: false, loop: true, volume: 0.42 }
+      );
+      (this.tankIdleSound as any).onErrorObservable?.add((err: unknown) =>
+        console.warn("[TankController][audio] tank_idle load failed:", err)
+      );
+
+      this.tankMoveSound = new Sound(
+        "tank_move",
+        tankMoveSoundAssetUrl,
+        this.scene,
+        null,
+        { autoplay: false, loop: true, volume: 0.55 }
+      );
+      (this.tankMoveSound as any).onErrorObservable?.add((err: unknown) =>
+        console.warn("[TankController][audio] tank_move load failed:", err)
+      );
+    } catch {
+      // Audio is optional.
+    }
+  }
+
+  private syncTankMovementSounds(): void {
+    const isMoving = this.battery > 0 && Math.abs(this.smoothedMoveAxis) > 0.001;
+    this.updateTankMovementSounds(isMoving);
+  }
+
+  private updateTankMovementSounds(isMoving: boolean): void {
+    if (!this.audioUnlocked) {
+      return;
+    }
+
+    const target: "idle" | "move" = isMoving ? "move" : "idle";
+    if (this.tankMovementSoundMode !== target) {
+      this.tankMovementSoundMode = target;
+      if (target === "move") {
+        this.tankIdleSound?.stop();
+        this.tankMoveSound?.play();
+      } else {
+        this.tankMoveSound?.stop();
+        this.tankIdleSound?.play();
+      }
+    }
+
+    if (target === "move" && this.tankMoveSound) {
+      const speed = clamp(Math.abs(this.smoothedMoveAxis), 0, 1);
+      this.tankMoveSound.setVolume(0.28 + 0.42 * speed);
+    } else if (this.tankIdleSound) {
+      this.tankIdleSound.setVolume(0.42);
+    }
+  }
+
+  private initTurretSounds(): void {
+    try {
+      this.turretStartSound = new Sound(
+        "turret_start",
+        turretStartSoundAssetUrl,
+        this.scene,
+        null,
+        { autoplay: false, loop: false, volume: 0.5 }
+      );
+      (this.turretStartSound as any).onErrorObservable?.add((err: unknown) =>
+        console.warn("[TankController][audio] turret_start load failed:", err)
+      );
+      this.turretStartSound.onended = () => {
+        if (this.turretSoundState === "starting" && this.articulationIsRotating) {
+          this.turretLoopSound?.play();
+          this.turretSoundState = "looping";
+        }
+      };
+
+      this.turretLoopSound = new Sound(
+        "turret_loop",
+        turretLoopSoundAssetUrl,
+        this.scene,
+        null,
+        { autoplay: false, loop: true, volume: 0.45 }
+      );
+      (this.turretLoopSound as any).onErrorObservable?.add((err: unknown) =>
+        console.warn("[TankController][audio] turret_loop load failed:", err)
+      );
+
+      this.turretStopSound = new Sound(
+        "turret_stop",
+        turretStopSoundAssetUrl,
+        this.scene,
+        null,
+        { autoplay: false, loop: false, volume: 0.5 }
+      );
+      (this.turretStopSound as any).onErrorObservable?.add((err: unknown) =>
+        console.warn("[TankController][audio] turret_stop load failed:", err)
+      );
+      this.turretStopSound.onended = () => {
+        if (this.turretSoundState === "stopping") {
+          this.turretSoundState = "stopped";
+        }
+      };
+    } catch {
+      // Audio is optional.
+    }
+  }
+
+  private beginTurretSoundStarting(): void {
+    this.turretLoopSound?.stop();
+    this.turretStopSound?.stop();
+    this.turretStartSound?.stop();
+    this.turretSoundState = "starting";
+    this.turretStartSound?.play();
+  }
+
+  private beginTurretSoundStopping(): void {
+    // State must change before stopping `turret_start`, otherwise its `onended`
+    // can fire while still "starting" and leave the loop playing.
+    this.turretSoundState = "stopping";
+    this.turretStartSound?.stop();
+    this.turretLoopSound?.stop();
+    this.turretStopSound?.stop();
+    this.turretStopSound?.play();
+  }
+
+  private syncArticulationSounds(turretStepDeg: number, cannonStepDeg: number): void {
+    if (!this.audioUnlocked) {
+      return;
+    }
+
+    const yawRemainingDeg = Math.abs(shortestAngleDeltaDeg(this.currentTurretYawDeg, this.targetTurretYawDeg));
+    const pitchRemainingDeg = Math.abs(this.targetCannonPitchDeg - this.currentCannonPitchDeg);
+    const turretRotating = turretStepDeg > 0.01 && yawRemainingDeg > 0.05;
+    const cannonRotating = cannonStepDeg > 0.01 && pitchRemainingDeg > 0.05;
+    const rotating = turretRotating || cannonRotating;
+    this.articulationIsRotating = rotating;
+
+    switch (this.turretSoundState) {
+      case "stopped":
+        if (rotating) {
+          this.beginTurretSoundStarting();
+        }
+        break;
+
+      case "starting":
+        if (!rotating) {
+          this.beginTurretSoundStopping();
+        }
+        break;
+
+      case "looping":
+        if (!rotating) {
+          this.beginTurretSoundStopping();
+        } else if (this.turretLoopSound) {
+          const turretSpeed = clamp(
+            turretStepDeg / Math.max(this.config.turret.yawSpeedDeg / 60, 0.001),
+            0,
+            1
+          );
+          const cannonSpeed = clamp(
+            cannonStepDeg / Math.max(this.config.cannon.pitchSpeedDeg / 60, 0.001),
+            0,
+            1
+          );
+          const speed = Math.max(turretSpeed, cannonSpeed);
+          this.turretLoopSound.setVolume(0.28 + 0.28 * speed);
+        }
+        break;
+
+      case "stopping":
+        if (rotating) {
+          this.beginTurretSoundStarting();
+        } else {
+          this.turretLoopSound?.stop();
+          if (!this.turretStopSound?.isPlaying) {
+            this.turretSoundState = "stopped";
+          }
+        }
+        break;
     }
   }
 
@@ -1783,6 +1982,24 @@ export class TankGameplayController {
       sound.dispose();
     }
     this.powerUpSounds.clear();
+    this.tankIdleSound?.stop();
+    this.tankIdleSound?.dispose();
+    this.tankIdleSound = null;
+    this.tankMoveSound?.stop();
+    this.tankMoveSound?.dispose();
+    this.tankMoveSound = null;
+    this.turretStartSound?.stop();
+    this.turretStartSound?.dispose();
+    this.turretStartSound = null;
+    this.turretLoopSound?.stop();
+    this.turretLoopSound?.dispose();
+    this.turretLoopSound = null;
+    this.turretStopSound?.stop();
+    this.turretStopSound?.dispose();
+    this.turretStopSound = null;
+    this.turretSoundState = "stopped";
+    this.articulationIsRotating = false;
+    this.tankMovementSoundMode = "stopped";
 
     for (const proj of this.activeProjectiles) {
       proj.body.dispose();
@@ -2476,12 +2693,14 @@ export class TankGameplayController {
       );
     }
 
+    const turretPrevYawDeg = this.currentTurretYawDeg;
     const turretNextYawDeg = moveTowardsAngle(
       this.currentTurretYawDeg,
       this.targetTurretYawDeg,
       this.config.turret.yawSpeedDeg * dt
     );
-    const turretStepRad = toRadians(turretNextYawDeg - this.currentTurretYawDeg);
+    const turretStepDeg = Math.abs(turretNextYawDeg - turretPrevYawDeg);
+    const turretStepRad = toRadians(turretNextYawDeg - turretPrevYawDeg);
     this.currentTurretYawDeg = turretNextYawDeg;
 
     void turretStepRad;
@@ -2493,14 +2712,17 @@ export class TankGameplayController {
       this.tankAnchor
     );
 
+    const cannonPrevPitchDeg = this.currentCannonPitchDeg;
     const cannonNextPitchDeg = moveTowards(
       this.currentCannonPitchDeg,
       this.targetCannonPitchDeg,
       this.config.cannon.pitchSpeedDeg * dt
     );
-    const cannonStepRad = toRadians(cannonNextPitchDeg - this.currentCannonPitchDeg);
+    const cannonStepDeg = Math.abs(cannonNextPitchDeg - cannonPrevPitchDeg);
+    const cannonStepRad = toRadians(cannonNextPitchDeg - cannonPrevPitchDeg);
     this.currentCannonPitchDeg = cannonNextPitchDeg;
 
+    this.syncArticulationSounds(turretStepDeg, cannonStepDeg);
     void cannonStepRad;
 
     this.cannonRecoilOffsetY = moveTowards(
@@ -2911,6 +3133,7 @@ export class TankGameplayController {
     }
 
     this.updateTrackTreadDust(forwardWorld);
+    this.syncTankMovementSounds();
   }
 
   /** Fumée / gravillons : arrière en avance, avant en recul (vitesse selon l'axe marche). */
@@ -3848,8 +4071,12 @@ function moveTowards(current: number, target: number, maxDelta: number): number 
   return current + Math.sign(target - current) * maxDelta;
 }
 
+function shortestAngleDeltaDeg(current: number, target: number): number {
+  return repeat(target - current + 180, 360) - 180;
+}
+
 function moveTowardsAngle(current: number, target: number, maxDelta: number): number {
-  const delta = repeat(target - current + 180, 360) - 180;
+  const delta = shortestAngleDeltaDeg(current, target);
   if (Math.abs(delta) <= maxDelta) {
     return current + delta;
   }
