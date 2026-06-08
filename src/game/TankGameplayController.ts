@@ -347,11 +347,11 @@ export class TankGameplayController {
 
   // Coax (hitscan) spread: grows while firing, shrinks when not firing.
   private gunSpreadDeg = 0;
-  private static readonly GUN_SPREAD_GROW_DEG_PER_SEC = 1.0;
+  private static readonly GUN_SPREAD_GROW_DEG_PER_SEC = 0.2;
   private static readonly GUN_SPREAD_SHRINK_DEG_PER_SEC = 5.0;
-  private static readonly GUN_SPREAD_MAX_DEG = 5.0;
+  private static readonly GUN_SPREAD_MAX_DEG = 1.0;
   private static readonly GUN_RETICLE_SCALE_MIN = 1.0;
-  private static readonly GUN_RETICLE_SCALE_MAX = 1.5;
+  private static readonly GUN_RETICLE_SCALE_MAX = 2;
 
   // Per-shot reticle "kick" (recoil bounce) for the coax reticle.
   private gunReticleKickTime = 999;
