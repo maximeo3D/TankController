@@ -48,6 +48,7 @@ import {
   sparkImpactAssetUrl,
   tankCannonSoundAssetUrl,
   tankGunSoundAssetUrl,
+  shellInsertSoundAssetUrl,
   powerUpAmmoSoundAssetUrl,
   powerUpFuelSoundAssetUrl,
   powerUpRepairSoundAssetUrl,
@@ -383,6 +384,8 @@ export class TankGameplayController {
 
   // Audio
   private cannonShotSound: Sound | null = null;
+  private shellInsertSound: Sound | null = null;
+  private shellInsertSoundPlayed = false;
   private gunShotSoundPool: Sound[] = [];
   private gunShotSoundPoolCursor = 0;
   private audioUnlocked = false;
@@ -885,6 +888,19 @@ export class TankGameplayController {
     }
   }
 
+  private playShellInsertSound(): void {
+    if (!this.audioUnlocked || !this.shellInsertSound) {
+      return;
+    }
+
+    try {
+      this.shellInsertSound.stop();
+      this.shellInsertSound.play();
+    } catch {
+      // Ignore playback errors (autoplay restrictions, etc.).
+    }
+  }
+
   private playPowerUpSound(typeId: PowerUpTypeId): void {
     const sound = this.powerUpSounds.get(typeId);
     if (!sound) {
@@ -913,6 +929,17 @@ export class TankGameplayController {
       );
       (this.cannonShotSound as any).onErrorObservable?.add((err: unknown) =>
         console.warn("[TankController][audio] cannon sound load failed:", err)
+      );
+
+      this.shellInsertSound = new Sound(
+        "shell_insert",
+        shellInsertSoundAssetUrl,
+        this.scene,
+        null,
+        { autoplay: false, loop: false, volume: 0.65 }
+      );
+      (this.shellInsertSound as any).onErrorObservable?.add((err: unknown) =>
+        console.warn("[TankController][audio] shell_insert load failed:", err)
       );
 
       const baseGun = new Sound(
@@ -1974,6 +2001,9 @@ export class TankGameplayController {
 
     this.cannonShotSound?.dispose();
     this.cannonShotSound = null;
+    this.shellInsertSound?.dispose();
+    this.shellInsertSound = null;
+    this.shellInsertSoundPlayed = false;
     for (const s of this.gunShotSoundPool) {
       s.dispose();
     }
@@ -2102,7 +2132,11 @@ export class TankGameplayController {
     this.gunReticleKickTime += dt;
 
     // Shell reload
-    if (!this.shellChambered && this.shellReserveAmmo > 0) {
+    if (!this.shellChambered && this.shellReserveAmmo > 0 && this.shellReloadTimer > 0) {
+      if (!this.shellInsertSoundPlayed && this.shellReloadTimer <= 1.0) {
+        this.playShellInsertSound();
+        this.shellInsertSoundPlayed = true;
+      }
       this.shellReloadTimer -= dt;
       if (this.shellReloadTimer <= 0) {
         this.shellChambered = true;
@@ -2139,6 +2173,7 @@ export class TankGameplayController {
   private fireShell(): void {
     this.shellChambered = false;
     this.shellReloadTimer = this.config.weapons.shell.reloadSeconds;
+    this.shellInsertSoundPlayed = false;
     this.cannonShotSound?.play();
     this.debugLogZoomCamOnNextShellShot = this.zoomActive;
     // Freeze zoom camera position briefly after firing to avoid visible "snap".
