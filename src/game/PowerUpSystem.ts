@@ -30,6 +30,7 @@ export interface PowerUpSystemOptions {
   onFuelPickup: (batteryAmount: number) => void;
   onRepairPickup: (healthAmount: number) => void;
   onShieldPickup: (durationSeconds: number, damageReduction: number) => void;
+  onPicked?: (typeId: PowerUpTypeId) => void;
 }
 
 interface MaterialAlphaState {
@@ -219,6 +220,7 @@ export class PowerUpSystem {
   private readonly onFuelPickup: (batteryAmount: number) => void;
   private readonly onRepairPickup: (healthAmount: number) => void;
   private readonly onShieldPickup: (durationSeconds: number, damageReduction: number) => void;
+  private readonly onPicked?: (typeId: PowerUpTypeId) => void;
   private readonly highlightLayer: HighlightLayer | null;
   private readonly instances: PowerUpInstance[] = [];
 
@@ -231,6 +233,7 @@ export class PowerUpSystem {
     this.onFuelPickup = options.onFuelPickup;
     this.onRepairPickup = options.onRepairPickup;
     this.onShieldPickup = options.onShieldPickup;
+    this.onPicked = options.onPicked;
     this.highlightLayer = this.createHighlightLayer();
 
     if (!this.config.enabled || !this.config.types) {
@@ -470,6 +473,7 @@ export class PowerUpSystem {
   }
 
   private pickup(instance: PowerUpInstance): void {
+    this.onPicked?.(instance.typeId);
     this.applyPickupEffect(instance);
 
     instance.available = false;

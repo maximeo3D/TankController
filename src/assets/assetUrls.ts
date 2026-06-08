@@ -14,3 +14,7 @@ export const reticleGunAssetUrl = new URL("../../assets/ui/reticle_gun.png", imp
 export const sparkImpactAssetUrl = new URL("../../assets/effects/spark.png", import.meta.url).href;
 export const tankCannonSoundAssetUrl = new URL("../../assets/sounds/tank_cannon.mp3", import.meta.url).href;
 export const tankGunSoundAssetUrl = new URL("../../assets/sounds/tank_gun.mp3", import.meta.url).href;
+export const powerUpAmmoSoundAssetUrl = new URL("../../assets/sounds/PU_ammo.wav", import.meta.url).href;
+export const powerUpFuelSoundAssetUrl = new URL("../../assets/sounds/PU_fuel.wav", import.meta.url).href;
+export const powerUpRepairSoundAssetUrl = new URL("../../assets/sounds/PU_repair.wav", import.meta.url).href;
+export const powerUpShieldSoundAssetUrl = new URL("../../assets/sounds/PU_shield.wav", import.meta.url).href;

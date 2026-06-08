@@ -47,7 +47,11 @@ import {
   reticleGunAssetUrl,
   sparkImpactAssetUrl,
   tankCannonSoundAssetUrl,
-  tankGunSoundAssetUrl
+  tankGunSoundAssetUrl,
+  powerUpAmmoSoundAssetUrl,
+  powerUpFuelSoundAssetUrl,
+  powerUpRepairSoundAssetUrl,
+  powerUpShieldSoundAssetUrl
 } from "../assets/assetUrls";
 import { applyUiFontToTexture, TIMER_FONT_FAMILY } from "../ui/applyUiFont";
 import { TARGET_FRAME_SEC } from "./frameTiming";
@@ -56,7 +60,7 @@ import { AbstractEngine } from "@babylonjs/core/Engines/abstractEngine";
 import "@babylonjs/core/Layers/effectLayerSceneComponent";
 import { HighlightLayer } from "@babylonjs/core/Layers/highlightLayer";
 import type { TrackTreadParticleBundle } from "./trackTreadParticles";
-import { PowerUpSystem } from "./PowerUpSystem";
+import { PowerUpSystem, type PowerUpTypeId } from "./PowerUpSystem";
 
 const WEAPON_SHELL_AMMO_FONT_SIZE = 26;
 const WEAPON_INFINITY_FONT_SIZE = 40;
@@ -378,6 +382,7 @@ export class TankGameplayController {
   private gunShotSoundPoolCursor = 0;
   private audioUnlocked = false;
   private gunShotAudioBuffer: AudioBuffer | null = null;
+  private readonly powerUpSounds = new Map<PowerUpTypeId, Sound>();
 
   private explosionDefsPromise: Promise<unknown[]> | null = null;
 
@@ -511,6 +516,7 @@ export class TankGameplayController {
     this.initHud();
     this.initShockwaveFx(options);
     this.initWeaponSounds();
+    this.initPowerUpSounds();
 
     // Browsers require a user gesture to start audio.
     options.canvas.addEventListener(
@@ -563,7 +569,8 @@ export class TankGameplayController {
         onFuelPickup: (amount) => this.addBattery(amount),
         onRepairPickup: (amount) => this.repairHealth(amount),
         onShieldPickup: (durationSeconds, damageReduction) =>
-          this.applyShield(durationSeconds, damageReduction)
+          this.applyShield(durationSeconds, damageReduction),
+        onPicked: (typeId) => this.playPowerUpSound(typeId)
       });
     } catch (error) {
       console.error("[TankController] PowerUpSystem init failed:", error);
@@ -649,6 +656,47 @@ export class TankGameplayController {
       } else if (layer.hasMesh(mesh)) {
         layer.removeMesh(mesh);
       }
+    }
+  }
+
+  private initPowerUpSounds(): void {
+    const entries: Array<[PowerUpTypeId, string]> = [
+      ["ammo_shell", powerUpAmmoSoundAssetUrl],
+      ["fuel", powerUpFuelSoundAssetUrl],
+      ["repair", powerUpRepairSoundAssetUrl],
+      ["shield", powerUpShieldSoundAssetUrl]
+    ];
+
+    for (const [typeId, url] of entries) {
+      try {
+        const sound = new Sound(
+          `pu_${typeId}`,
+          url,
+          this.scene,
+          null,
+          { autoplay: false, loop: false, volume: 0.85 }
+        );
+        (sound as any).onErrorObservable?.add((err: unknown) =>
+          console.warn(`[TankController][audio] power-up sound "${typeId}" load failed:`, err)
+        );
+        this.powerUpSounds.set(typeId, sound);
+      } catch {
+        // Audio is optional.
+      }
+    }
+  }
+
+  private playPowerUpSound(typeId: PowerUpTypeId): void {
+    const sound = this.powerUpSounds.get(typeId);
+    if (!sound) {
+      return;
+    }
+
+    try {
+      sound.stop();
+      sound.play();
+    } catch {
+      // Ignore playback errors (autoplay restrictions, etc.).
     }
   }
 
@@ -1731,6 +1779,10 @@ export class TankGameplayController {
       s.dispose();
     }
     this.gunShotSoundPool = [];
+    for (const sound of this.powerUpSounds.values()) {
+      sound.dispose();
+    }
+    this.powerUpSounds.clear();
 
     for (const proj of this.activeProjectiles) {
       proj.body.dispose();
