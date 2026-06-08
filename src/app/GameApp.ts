@@ -19,6 +19,7 @@ import type { TankGameplayDebugState } from "../game/TankGameplayController";
 import { AdvancedDynamicTexture, Button, Control, StackPanel, TextBlock } from "@babylonjs/gui";
 import { MENU_MAPS, type MenuMapEntry, type MenuMission } from "../ui/menuData";
 import { applyUiFontToTexture, UI_FONT_FAMILY } from "../ui/applyUiFont";
+import { TARGET_FPS } from "../game/frameTiming";
 
 type ScreenState = "menu" | "gameplay";
 
@@ -137,6 +138,7 @@ export class GameApp {
     this.overlay.addEventListener("pointerdown", tryUnlockAudio, { passive: true });
 
     this.engine = new Engine(this.canvas, true);
+    this.engine.maxFPS = TARGET_FPS;
     this.menuScene = this.createMenuScene();
     this.currentScene = this.menuScene;
     void this.ensureMenuUi();

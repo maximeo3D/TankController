@@ -14,17 +14,17 @@
     "cannonPitchSign": 1
   },
   "movement": {
-    "moveSpeed": 0.35,
+    "moveSpeed": 0.45,
     "boostMultiplier": 1.5,
     "hullTurnSpeedDeg": 45.0,
-    "acceleration": 4.0,
+    "acceleration": 5.0,
     "brakeDeceleration": 4,
     "inputRiseRate": 1.5,
     "inputFallRate": 1.5,
     "lateralGrip": 0.8
   },
   "physics": {
-    "tankMass": 55.0,
+    "tankMass": 25.0,
     "tankLinearDamping": 2.0,
     "tankAngularDamping": 2.2,
     "tankCenterOfMassYOffset": 0,

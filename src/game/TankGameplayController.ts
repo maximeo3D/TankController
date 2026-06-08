@@ -50,6 +50,7 @@ import {
   tankGunSoundAssetUrl
 } from "../assets/assetUrls";
 import { applyUiFontToTexture, TIMER_FONT_FAMILY } from "../ui/applyUiFont";
+import { TARGET_FRAME_SEC } from "./frameTiming";
 import { Sound } from "@babylonjs/core/Audio/sound";
 import { AbstractEngine } from "@babylonjs/core/Engines/abstractEngine";
 import "@babylonjs/core/Layers/effectLayerSceneComponent";
@@ -1748,10 +1749,8 @@ export class TankGameplayController {
   }
 
   private readonly update = (): void => {
-    const dt = this.scene.getEngine().getDeltaTime() / 1000;
-    if (dt <= 0) {
-      return;
-    }
+    // Fixed step: engine.maxFPS caps frames; getDeltaTime() is unreliable if render is skipped manually.
+    const dt = TARGET_FRAME_SEC;
 
     if (this.zoomCamFreezeSeconds > 0) {
       this.zoomCamFreezeSeconds = Math.max(this.zoomCamFreezeSeconds - dt, 0);
