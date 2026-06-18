@@ -173,7 +173,7 @@
       },
       "repair": {
         "enabled": true,
-        "respawnSeconds": 45.0,
+        "respawnSeconds": 5.0,
         "pickedAlpha": 0.25,
         "singleUse": false,
         "highlightAvailable": [1, 1, 1],

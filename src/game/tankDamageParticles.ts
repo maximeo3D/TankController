@@ -56,8 +56,102 @@ interface DamageSlot {
   id: DamageSlotId;
   emitter: Mesh;
   system: ParticleSystem;
-  baseEmitRate: number;
   active: boolean;
+}
+
+/** Valeurs de référence lues depuis damage_smoke.json (colorDead inchangé à l'exécution). */
+interface DamageSmokeProfileBase {
+  colorDead: Color4;
+  grayColor1: Color4;
+  grayColor2: Color4;
+  fireColor1: Color4;
+  fireColor2: Color4;
+  emitRate: number;
+  minLifeTime: number;
+  maxLifeTime: number;
+  minEmitPower: number;
+  maxEmitPower: number;
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+function lerpColor4(from: Color4, to: Color4, t: number): Color4 {
+  return new Color4(
+    lerp(from.r, to.r, t),
+    lerp(from.g, to.g, t),
+    lerp(from.b, to.b, t),
+    lerp(from.a, to.a, t)
+  );
+}
+
+/** 0 = premiers dégâts (75 % de vie), 1 = critique (0 % de vie). */
+function computeDamageIntensity(healthPercent: number): number {
+  if (healthPercent > 75) {
+    return 0;
+  }
+  return clamp01((75 - healthPercent) / 75);
+}
+
+function buildSmokeProfileBase(def: DamageSmokeJson): DamageSmokeProfileBase {
+  const jsonGray1 = c4(def.color1);
+  const jsonGray2 = c4(def.color2);
+
+  // À 75 % de vie : fumée gris clair (légèrement plus claire que le JSON de base).
+  const grayColor1 = new Color4(
+    lerp(jsonGray1.r, 0.78, 0.45),
+    lerp(jsonGray1.g, 0.78, 0.45),
+    lerp(jsonGray1.b, 0.8, 0.45),
+    Math.max(jsonGray1.a, 0.42)
+  );
+  const grayColor2 = new Color4(
+    lerp(jsonGray2.r, 0.62, 0.45),
+    lerp(jsonGray2.g, 0.62, 0.45),
+    lerp(jsonGray2.b, 0.64, 0.45),
+    Math.max(jsonGray2.a, 0.26)
+  );
+
+  return {
+    colorDead: c4(def.colorDead),
+    grayColor1,
+    grayColor2,
+    fireColor1: new Color4(1, 0.68, 0.14, 0.88),
+    fireColor2: new Color4(0.94, 0.26, 0.05, 0.58),
+    emitRate: def.emitRate,
+    minLifeTime: def.minLifeTime,
+    maxLifeTime: def.maxLifeTime,
+    minEmitPower: def.minEmitPower,
+    maxEmitPower: def.maxEmitPower
+  };
+}
+
+function applyDamageSmokeProfile(
+  system: ParticleSystem,
+  base: DamageSmokeProfileBase,
+  damageIntensity: number,
+  active: boolean
+): void {
+  const t = clamp01(damageIntensity);
+  const fireMix = t * t;
+
+  system.color1 = lerpColor4(base.grayColor1, base.fireColor1, fireMix);
+  system.color2 = lerpColor4(base.grayColor2, base.fireColor2, fireMix);
+  system.colorDead = base.colorDead;
+
+  const emitMul = lerp(1, 2, fireMix);
+  const lifeMul = lerp(1, 0.28, fireMix);
+  const powerMul = lerp(1, 1.85, fireMix);
+
+  system.minLifeTime = base.minLifeTime * lifeMul;
+  system.maxLifeTime = base.maxLifeTime * lifeMul;
+  system.minEmitPower = base.minEmitPower * powerMul;
+  system.maxEmitPower = base.maxEmitPower * powerMul;
+  system.emitRate = active ? base.emitRate * emitMul : 0;
 }
 
 function v3(t: [number, number, number]): Vector3 {
@@ -90,7 +184,7 @@ function buildSmokeSystem(
   def: DamageSmokeJson,
   emitterMesh: Mesh,
   slotId: DamageSlotId
-): { system: ParticleSystem; baseEmitRate: number } {
+): { system: ParticleSystem } {
   const ps = new ParticleSystem(`damage_smoke_${slotId}_${emitterMesh.name}`, def.capacity, scene);
   ps.particleTexture = new Texture(resolveParticleTextureUrl(def.particleTexture), scene, true, false);
   ps.emitter = emitterMesh;
@@ -129,7 +223,7 @@ function buildSmokeSystem(
   }
 
   ps.start();
-  return { system: ps, baseEmitRate: def.emitRate };
+  return { system: ps };
 }
 
 function createEmitterMesh(
@@ -161,12 +255,14 @@ function isSlotActive(slotId: DamageSlotId, healthPercent: number): boolean {
   }
 }
 
-function setSlotActive(slot: DamageSlot, active: boolean): void {
-  if (slot.active === active) {
-    return;
-  }
+function syncSlot(
+  slot: DamageSlot,
+  active: boolean,
+  profile: DamageSmokeProfileBase,
+  damageIntensity: number
+): void {
   slot.active = active;
-  slot.system.emitRate = active ? slot.baseEmitRate : 0;
+  applyDamageSmokeProfile(slot.system, profile, damageIntensity, active);
 }
 
 /**
@@ -197,6 +293,7 @@ export async function createTankDamageParticleBundle(
     return null;
   }
 
+  const profileBase = buildSmokeProfileBase(smokeDef);
   const slots: DamageSlot[] = [];
   for (const def of present) {
     if (!def.parent) {
@@ -208,7 +305,6 @@ export async function createTankDamageParticleBundle(
       id: def.id,
       emitter,
       system: built.system,
-      baseEmitRate: built.baseEmitRate,
       active: false
     });
   }
@@ -222,13 +318,14 @@ export async function createTankDamageParticleBundle(
   return {
     syncHealthPercent(healthPercent: number): void {
       const hp = Math.max(0, Math.min(100, healthPercent));
+      const damageIntensity = computeDamageIntensity(hp);
       for (const slot of slots) {
-        setSlotActive(slot, isSlotActive(slot.id, hp));
+        syncSlot(slot, isSlotActive(slot.id, hp), profileBase, damageIntensity);
       }
     },
     dispose(): void {
       for (const slot of slots) {
-        setSlotActive(slot, false);
+        syncSlot(slot, false, profileBase, 0);
         slot.system.stop();
         slot.system.dispose();
         slot.emitter.dispose();
