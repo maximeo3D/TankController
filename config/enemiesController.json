@@ -1,0 +1,29 @@
+{
+  "turret": {
+    "enabled": true,
+    "meshName": "mesh_enemy_turret",
+    "spawnNodePrefix": "SPAWN_enemy_turret_",
+    "detectionRange": 20,
+    "tracking": {
+      "yawSpeedDeg": 60,
+      "pitchSpeedDeg": 45,
+      "minPitchDeg": -45,
+      "maxPitchDeg": 45
+    },
+    "rig": {
+      "yawBone": "turret_body",
+      "pitchBone": "turret_head",
+      "yawAxis": "y",
+      "yawSign": 1,
+      "pitchAxis": "x",
+      "pitchSign": 1,
+      "pitchAimSign": -1,
+      "yawAimXSign": 1,
+      "yawAimZSign": 1
+    },
+    "combat": {
+      "healthMax": 200,
+      "contactDamage": 0
+    }
+  }
+}

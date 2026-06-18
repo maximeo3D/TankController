@@ -29,7 +29,9 @@ import { Texture } from "@babylonjs/core/Materials/Textures/texture";
 import type { AssetContainer } from "@babylonjs/core/assetContainer";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import type { TankControllerConfig } from "../config/tankController";
-import { tankAssetUrl, skyboxAssetUrl, powerUpsAssetUrl } from "../assets/assetUrls";
+import { tankAssetUrl, skyboxAssetUrl, powerUpsAssetUrl, enemiesAssetUrl } from "../assets/assetUrls";
+import { enemiesConfig } from "../config/enemiesController";
+import { EnemyTurretSystem } from "./EnemyTurretSystem";
 import type { LevelDefinition } from "../app/levels";
 import {
   TankGameplayController,
@@ -45,6 +47,7 @@ export interface GameplaySceneSummary {
   terrainDynamicMeshes: number;
   terrainColliderMeshes: number;
   tankBones: string[];
+  enemyTurretsSpawned: number;
 }
 
 export interface GameplaySceneBundle {
@@ -329,6 +332,21 @@ export async function createGameplayScene(
   }
 
   const powerUpsContainer = await SceneLoader.LoadAssetContainerAsync("", powerUpsAssetUrl, scene);
+  const enemiesContainer = await SceneLoader.LoadAssetContainerAsync("", enemiesAssetUrl, scene);
+
+  let enemyTurretSystem: EnemyTurretSystem | null = null;
+  if (enemiesConfig.turret.enabled) {
+    try {
+      enemyTurretSystem = new EnemyTurretSystem({
+        scene,
+        terrainContainer,
+        enemiesContainer,
+        config: enemiesConfig.turret
+      });
+    } catch (err) {
+      console.warn("[TankController] Enemy turret system could not be created:", err);
+    }
+  }
 
   // Only dispose the fallback camera if we successfully switched to another active camera.
   if (scene.activeCamera !== fallbackCamera) {
@@ -362,7 +380,8 @@ export async function createGameplayScene(
     ammoBulletMesh,
     trackTreadParticles,
     trackTreadParticlesReverse,
-    tankDamageParticles
+    tankDamageParticles,
+    enemyTurretSystem
   });
 
   await scene.whenReadyAsync();
@@ -375,7 +394,8 @@ export async function createGameplayScene(
       terrainStaticMeshes: countNamedMeshes(terrainContainer, "SM_"),
       terrainDynamicMeshes: countNamedMeshes(terrainContainer, "DM_"),
       terrainColliderMeshes: countNamedMeshes(terrainContainer, "COL_"),
-      tankBones: collectBoneMatches(tankContainer)
+      tankBones: collectBoneMatches(tankContainer),
+      enemyTurretsSpawned: enemyTurretSystem?.instanceCount ?? 0
     },
     getDebugState: () => controller.getDebugState(),
     dispose: () => {

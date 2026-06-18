@@ -69,6 +69,7 @@ import { HighlightLayer } from "@babylonjs/core/Layers/highlightLayer";
 import type { TrackTreadParticleBundle } from "./trackTreadParticles";
 import type { TankDamageParticleBundle } from "./tankDamageParticles";
 import { PowerUpSystem, type PowerUpTypeId } from "./PowerUpSystem";
+import { EnemyTurretSystem } from "./EnemyTurretSystem";
 
 const WEAPON_SHELL_AMMO_FONT_SIZE = 26;
 const WEAPON_INFINITY_FONT_SIZE = 40;
@@ -177,6 +178,7 @@ export interface TankGameplayControllerOptions {
   trackTreadParticlesReverse?: TrackTreadParticleBundle | null;
   /** Fumée / étincelles de dégâts sur les empties `tank_damage_*` (si chargés). */
   tankDamageParticles?: TankDamageParticleBundle | null;
+  enemyTurretSystem?: EnemyTurretSystem | null;
 }
 
 export class TankGameplayController {
@@ -273,6 +275,7 @@ export class TankGameplayController {
   private readonly trackTreadParticlesReverse: TrackTreadParticleBundle | null;
   private readonly tankDamageParticles: TankDamageParticleBundle | null;
   private readonly powerUpSystem: PowerUpSystem | null;
+  private readonly enemyTurretSystem: EnemyTurretSystem | null;
 
   /** Décalage courant sur l’axe local Y du bone canon (recul). */
   private cannonRecoilOffsetY = 0;
@@ -484,6 +487,7 @@ export class TankGameplayController {
     this.trackTreadParticlesReverse = options.trackTreadParticlesReverse ?? null;
     this.tankDamageParticles = options.tankDamageParticles ?? null;
     this.powerUpSystem = this.createPowerUpSystem(options);
+    this.enemyTurretSystem = options.enemyTurretSystem ?? null;
     this.input = new TankInput(options.canvas);
     this.turretControl = resolveBoneControl(options.tankContainer, "tourelle");
     this.cannonControl = resolveBoneControl(options.tankContainer, "canon");
@@ -2275,6 +2279,7 @@ export class TankGameplayController {
     this.shieldHighlightVisualActive = false;
 
     this.powerUpSystem?.dispose();
+    this.enemyTurretSystem?.dispose();
   }
 
   private readonly update = (): void => {
@@ -2322,6 +2327,7 @@ export class TankGameplayController {
     this.applyCamera(frame.zoomHeld);
     this.trackSystem?.update(dt);
     this.powerUpSystem?.update(dt);
+    this.enemyTurretSystem?.update(dt, this.tankAnchor);
     this.updateSuspensionDebugSpheres();
     this.updateMuzzleDebugVisuals();
     this.updateProjectiles(dt);
