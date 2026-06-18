@@ -67,6 +67,7 @@ import { AbstractEngine } from "@babylonjs/core/Engines/abstractEngine";
 import "@babylonjs/core/Layers/effectLayerSceneComponent";
 import { HighlightLayer } from "@babylonjs/core/Layers/highlightLayer";
 import type { TrackTreadParticleBundle } from "./trackTreadParticles";
+import type { TankDamageParticleBundle } from "./tankDamageParticles";
 import { PowerUpSystem, type PowerUpTypeId } from "./PowerUpSystem";
 
 const WEAPON_SHELL_AMMO_FONT_SIZE = 26;
@@ -174,6 +175,8 @@ export interface TankGameplayControllerOptions {
   trackTreadParticles?: TrackTreadParticleBundle | null;
   /** Chenilles (recul) : fumée + gravillons sur SUS_FL / SUS_FR (si chargés). */
   trackTreadParticlesReverse?: TrackTreadParticleBundle | null;
+  /** Fumée / étincelles de dégâts sur les empties `tank_damage_*` (si chargés). */
+  tankDamageParticles?: TankDamageParticleBundle | null;
 }
 
 export class TankGameplayController {
@@ -252,6 +255,7 @@ export class TankGameplayController {
   private targetCannonPitchDeg = 0;
   private currentCannonPitchDeg = 0;
   private smoothedMoveAxis = 0;
+  private smoothedTurnAxis = 0;
 
   private shellReloadTimer = 0;
   private bulletCooldownTimer = 0;
@@ -267,6 +271,7 @@ export class TankGameplayController {
   private physicsViewer?: PhysicsViewer;
   private readonly trackTreadParticles: TrackTreadParticleBundle | null;
   private readonly trackTreadParticlesReverse: TrackTreadParticleBundle | null;
+  private readonly tankDamageParticles: TankDamageParticleBundle | null;
   private readonly powerUpSystem: PowerUpSystem | null;
 
   /** Décalage courant sur l’axe local Y du bone canon (recul). */
@@ -383,8 +388,8 @@ export class TankGameplayController {
 
   private static readonly GUN_MUZZLE_FLASH_POOL_SIZE = 6;
   private static readonly GUN_MUZZLE_FLASH_LIFE_S = 0.05;
-  private static readonly GUN_MUZZLE_FLASH_PEAK_INTENSITY = 6;
-  private static readonly GUN_MUZZLE_FLASH_RANGE = 1;
+  private static readonly GUN_MUZZLE_FLASH_PEAK_INTENSITY = 5;
+  private static readonly GUN_MUZZLE_FLASH_RANGE = 0.1;
   private static readonly CANNON_MUZZLE_FLASH_POOL_SIZE = 2;
   private static readonly CANNON_MUZZLE_FLASH_LIFE_S = 0.08;
   private static readonly CANNON_MUZZLE_FLASH_PEAK_INTENSITY = 10;
@@ -408,6 +413,7 @@ export class TankGameplayController {
   private cannonShotSound: Sound | null = null;
   private shellInsertSound: Sound | null = null;
   private shellInsertSoundPlayed = false;
+  private static readonly SHELL_INSERT_SOUND_BEFORE_END_S = 2.5;
   private gunShotSoundPool: Sound[] = [];
   private gunShotSoundPoolCursor = 0;
   private audioUnlocked = false;
@@ -476,6 +482,7 @@ export class TankGameplayController {
     this.physicsViewer = options.physicsViewer;
     this.trackTreadParticles = options.trackTreadParticles ?? null;
     this.trackTreadParticlesReverse = options.trackTreadParticlesReverse ?? null;
+    this.tankDamageParticles = options.tankDamageParticles ?? null;
     this.powerUpSystem = this.createPowerUpSystem(options);
     this.input = new TankInput(options.canvas);
     this.turretControl = resolveBoneControl(options.tankContainer, "tourelle");
@@ -760,7 +767,9 @@ export class TankGameplayController {
   }
 
   private syncTankMovementSounds(): void {
-    const isMoving = this.battery > 0 && Math.abs(this.smoothedMoveAxis) > 0.001;
+    const isMoving =
+      this.battery > 0 &&
+      (Math.abs(this.smoothedMoveAxis) > 0.001 || Math.abs(this.smoothedTurnAxis) > 0.001);
     this.updateTankMovementSounds(isMoving);
   }
 
@@ -782,7 +791,11 @@ export class TankGameplayController {
     }
 
     if (target === "move" && this.tankMoveSound) {
-      const speed = clamp(Math.abs(this.smoothedMoveAxis), 0, 1);
+      const speed = clamp(
+        Math.max(Math.abs(this.smoothedMoveAxis), Math.abs(this.smoothedTurnAxis)),
+        0,
+        1
+      );
       this.tankMoveSound.setVolume(0.28 + 0.42 * speed);
     } else if (this.tankIdleSound) {
       this.tankIdleSound.setVolume(0.42);
@@ -2255,6 +2268,7 @@ export class TankGameplayController {
 
     this.trackTreadParticles?.dispose();
     this.trackTreadParticlesReverse?.dispose();
+    this.tankDamageParticles?.dispose();
     this.shieldHighlightLayer?.removeAllMeshes();
     this.shieldHighlightLayer?.dispose();
     this.shieldHighlightLayer = null;
@@ -2316,6 +2330,9 @@ export class TankGameplayController {
     this.updateSparks(dt);
     this.updateShockwaves(dt);
     this.updateGameplayHud(dt);
+    this.tankDamageParticles?.syncHealthPercent(
+      clamp((this.health / this.healthMax) * 100, 0, 100)
+    );
   };
 
   private updateSuspensionDebugSpheres(): void {
@@ -2351,7 +2368,10 @@ export class TankGameplayController {
 
     // Shell reload
     if (!this.shellChambered && this.shellReserveAmmo > 0 && this.shellReloadTimer > 0) {
-      if (!this.shellInsertSoundPlayed && this.shellReloadTimer <= 1.0) {
+      if (
+        !this.shellInsertSoundPlayed &&
+        this.shellReloadTimer <= TankGameplayController.SHELL_INSERT_SOUND_BEFORE_END_S
+      ) {
         this.playShellInsertSound();
         this.shellInsertSoundPlayed = true;
       }
@@ -3380,6 +3400,12 @@ export class TankGameplayController {
         ? this.config.movement.inputRiseRate
         : this.config.movement.inputFallRate;
     this.smoothedMoveAxis = moveTowards(this.smoothedMoveAxis, desiredMoveAxis, inputRate * dt);
+    const desiredTurnAxis = canMove ? turnAxis : 0;
+    const turnInputRate =
+      Math.abs(desiredTurnAxis) > Math.abs(this.smoothedTurnAxis)
+        ? this.config.movement.inputRiseRate
+        : this.config.movement.inputFallRate;
+    this.smoothedTurnAxis = moveTowards(this.smoothedTurnAxis, desiredTurnAxis, turnInputRate * dt);
     const isMoving = canMove && Math.abs(this.smoothedMoveAxis) > 0.001;
 
     const g = this.config.grounding;
@@ -3393,6 +3419,7 @@ export class TankGameplayController {
     } else {
       this.hullDrivePitchTarget = 0;
       this.prevSmoothedMoveAxis = 0;
+      this.smoothedTurnAxis = 0;
     }
 
     this.boostActive = false;

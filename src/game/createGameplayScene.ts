@@ -36,6 +36,7 @@ import {
   type TankGameplayDebugState
 } from "./TankGameplayController";
 import { createTrackTreadParticleBundle } from "./trackTreadParticles";
+import { createTankDamageParticleBundle } from "./tankDamageParticles";
 
 export interface GameplaySceneSummary {
   spawnFound: boolean;
@@ -310,6 +311,23 @@ export async function createGameplayScene(
     console.warn("[TankController] Track tread particles (reverse) could not be created:", err);
   }
 
+  const damageSmoke1 = findTransformNode(tankContainer, "tank_damage_smoke_1");
+  const damageSmoke2 = findTransformNode(tankContainer, "tank_damage_smoke_2");
+  const damageSmoke3 = findTransformNode(tankContainer, "tank_damage_smoke_3");
+  const damageSmoke4 = findTransformNode(tankContainer, "tank_damage_smoke_4");
+
+  let tankDamageParticles = null;
+  try {
+    tankDamageParticles = await createTankDamageParticleBundle(scene, {
+      smoke1: damageSmoke1,
+      smoke2: damageSmoke2,
+      smoke3: damageSmoke3,
+      smoke4: damageSmoke4
+    });
+  } catch (err) {
+    console.warn("[TankController] Tank damage particles could not be created:", err);
+  }
+
   const powerUpsContainer = await SceneLoader.LoadAssetContainerAsync("", powerUpsAssetUrl, scene);
 
   // Only dispose the fallback camera if we successfully switched to another active camera.
@@ -343,7 +361,8 @@ export async function createGameplayScene(
     ammoShellColliderMesh,
     ammoBulletMesh,
     trackTreadParticles,
-    trackTreadParticlesReverse
+    trackTreadParticlesReverse,
+    tankDamageParticles
   });
 
   await scene.whenReadyAsync();
