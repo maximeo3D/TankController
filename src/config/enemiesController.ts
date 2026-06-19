@@ -28,12 +28,17 @@ export interface EnemyTurretCombatConfig {
   contactDamage: number;
 }
 
+export interface EnemyTurretDebugConfig {
+  showAimVectors: boolean;
+}
+
 export interface EnemyTurretConfig {
   enabled: boolean;
   meshName: string;
   /** Préfixe des empties terrain, ex. `SPAWN_enemy_turret_` → `_1`, `_2`, … */
   spawnNodePrefix: string;
   detectionRange: number;
+  debug?: EnemyTurretDebugConfig;
   tracking: EnemyTurretTrackingConfig;
   rig: EnemyTurretRigConfig;
   combat: EnemyTurretCombatConfig;

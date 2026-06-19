@@ -178,6 +178,8 @@ export interface TankGameplayControllerOptions {
   trackTreadParticlesReverse?: TrackTreadParticleBundle | null;
   /** Fumée / étincelles de dégâts sur les empties `tank_damage_*` (si chargés). */
   tankDamageParticles?: TankDamageParticleBundle | null;
+  /** Empty `TARGET_player_tank` — world aim point for enemy turrets. Falls back to `tankAnchor`. */
+  playerTargetNode?: TransformNode | AbstractMesh | null;
   enemyTurretSystem?: EnemyTurretSystem | null;
 }
 
@@ -275,6 +277,7 @@ export class TankGameplayController {
   private readonly trackTreadParticlesReverse: TrackTreadParticleBundle | null;
   private readonly tankDamageParticles: TankDamageParticleBundle | null;
   private readonly powerUpSystem: PowerUpSystem | null;
+  private readonly playerTargetNode: TransformNode | AbstractMesh | null;
   private readonly enemyTurretSystem: EnemyTurretSystem | null;
 
   /** Décalage courant sur l’axe local Y du bone canon (recul). */
@@ -488,6 +491,7 @@ export class TankGameplayController {
     this.tankDamageParticles = options.tankDamageParticles ?? null;
     this.powerUpSystem = this.createPowerUpSystem(options);
     this.enemyTurretSystem = options.enemyTurretSystem ?? null;
+    this.playerTargetNode = options.playerTargetNode ?? null;
     this.input = new TankInput(options.canvas);
     this.turretControl = resolveBoneControl(options.tankContainer, "tourelle");
     this.cannonControl = resolveBoneControl(options.tankContainer, "canon");
@@ -2327,7 +2331,10 @@ export class TankGameplayController {
     this.applyCamera(frame.zoomHeld);
     this.trackSystem?.update(dt);
     this.powerUpSystem?.update(dt);
-    this.enemyTurretSystem?.update(dt, this.tankAnchor);
+    this.enemyTurretSystem?.update(
+      dt,
+      this.playerTargetNode ?? this.tankAnchor
+    );
     this.updateSuspensionDebugSpheres();
     this.updateMuzzleDebugVisuals();
     this.updateProjectiles(dt);

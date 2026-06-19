@@ -60,6 +60,47 @@ export function refreshSkinnedMeshRig(root: AbstractMesh, anchor: TransformNode)
   }
 }
 
+export function getBoneWorldPosition(
+  control: BoneControl,
+  skinnedMesh: AbstractMesh | null,
+  fallbackRoot: AbstractMesh | TransformNode
+): Vector3 | null {
+  if (control.bone) {
+    const meshRef = skinnedMesh ?? fallbackRoot;
+    meshRef.computeWorldMatrix(true);
+    const skeleton = skinnedMesh?.skeleton;
+    if (skeleton) {
+      skeleton.prepare();
+    }
+    return control.bone.getAbsolutePosition(meshRef).clone();
+  }
+
+  if (control.transformNode) {
+    control.transformNode.computeWorldMatrix(true);
+    return control.transformNode.getAbsolutePosition().clone();
+  }
+
+  return null;
+}
+
+export function worldToLocalInReference(world: Vector3, reference: TransformNode): Vector3 {
+  reference.computeWorldMatrix(true);
+  return Vector3.TransformCoordinates(world, reference.getWorldMatrix().invert());
+}
+
+export function getBoneLocalInReference(
+  control: BoneControl,
+  skinnedMesh: AbstractMesh | null,
+  fallbackRoot: AbstractMesh | TransformNode,
+  reference: TransformNode
+): Vector3 | null {
+  const world = getBoneWorldPosition(control, skinnedMesh, fallbackRoot);
+  if (!world) {
+    return null;
+  }
+  return worldToLocalInReference(world, reference);
+}
+
 export function getBoneLocalRotation(control: BoneControl, reference: TransformNode): Quaternion | null {
   if (!control.bone) {
     return null;

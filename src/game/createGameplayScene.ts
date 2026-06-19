@@ -318,6 +318,12 @@ export async function createGameplayScene(
   const damageSmoke2 = findTransformNode(tankContainer, "tank_damage_smoke_2");
   const damageSmoke3 = findTransformNode(tankContainer, "tank_damage_smoke_3");
   const damageSmoke4 = findTransformNode(tankContainer, "tank_damage_smoke_4");
+  const playerTargetNode = findTransformNode(tankContainer, "TARGET_player_tank");
+  if (!playerTargetNode) {
+    console.warn(
+      "[TankController] TARGET_player_tank not found in tank GLB; enemy turrets will aim at tank anchor."
+    );
+  }
 
   let tankDamageParticles = null;
   try {
@@ -381,6 +387,7 @@ export async function createGameplayScene(
     trackTreadParticles,
     trackTreadParticlesReverse,
     tankDamageParticles,
+    playerTargetNode,
     enemyTurretSystem
   });
 

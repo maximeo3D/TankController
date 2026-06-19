@@ -4,6 +4,9 @@
     "meshName": "mesh_enemy_turret",
     "spawnNodePrefix": "SPAWN_enemy_turret_",
     "detectionRange": 20,
+    "debug": {
+      "showAimVectors": false
+    },
     "tracking": {
       "yawSpeedDeg": 60,
       "pitchSpeedDeg": 45,

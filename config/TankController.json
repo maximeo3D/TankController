@@ -125,7 +125,7 @@
   "energy": {
     "batteryMax": 100.0,
     "overchargeMax": 100.0,
-    "startingBattery": 30.0,
+    "startingBattery": 100.0,
     "startingOvercharge": 100.0,
     "batteryDrainMovingPerSecond": 1.0,
     "overchargeDrainBoostPerSecond": 10.0,

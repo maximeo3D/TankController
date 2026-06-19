@@ -1,13 +1,18 @@
 import type { AssetContainer } from "@babylonjs/core/assetContainer";
-import { Space } from "@babylonjs/core/Maths/math.axis";
+import { Axis, Space } from "@babylonjs/core/Maths/math.axis";
+import { Color3 } from "@babylonjs/core/Maths/math.color";
 import { Quaternion, Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
+import type { LinesMesh } from "@babylonjs/core/Meshes/linesMesh";
+import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import type { Scene } from "@babylonjs/core/scene";
 import type { EnemyTurretConfig } from "../config/enemiesController";
 import {
   axisFromConfig,
   clamp,
+  getBoneLocalInReference,
+  getBoneWorldPosition,
   getControlLocalRotation,
   getBoneLocalRotation,
   moveTowards,
@@ -17,6 +22,7 @@ import {
   setBoneAxisAngle,
   setControlAxisAngle,
   toRadians,
+  worldToLocalInReference,
   type BoneControl
 } from "./rigUtils";
 
@@ -39,11 +45,17 @@ interface EnemyTurretInstance {
   muzzle2: TransformNode | AbstractMesh | null;
   yawBaseLocalRotation: Quaternion;
   pitchBaseLocalRotation: Quaternion;
+  /** Pivot du pitch bone en espace anchor (pose neutre au spawn). */
+  pitchPivotLocalInAnchor: Vector3;
   currentYawDeg: number;
   currentPitchDeg: number;
   targetYawDeg: number;
   targetPitchDeg: number;
   tracking: boolean;
+  debugAimLine: LinesMesh | null;
+  debugBarrelLine: LinesMesh | null;
+  debugTargetMarker: AbstractMesh | null;
+  debugPivotMarker: AbstractMesh | null;
 }
 
 function matchNodeName(candidateName: string, wanted: string): boolean {
@@ -100,11 +112,12 @@ function resolveBoneControlOnRoot(root: TransformNode, boneName: string): BoneCo
 
 function applySpawnTransform(source: TransformNode | AbstractMesh, target: TransformNode): void {
   source.computeWorldMatrix(true);
-  target.setAbsolutePosition(source.getAbsolutePosition());
+  target.position.copyFrom(source.getAbsolutePosition());
   if (source.rotationQuaternion) {
     target.rotationQuaternion = source.rotationQuaternion.clone();
   } else {
-    target.rotation.copyFrom(source.rotation);
+    target.rotationQuaternion = Quaternion.FromEulerAngles(source.rotation.x, source.rotation.y, source.rotation.z);
+    target.rotation.set(0, 0, 0);
   }
 
   const scale = source.absoluteScaling;
@@ -113,6 +126,7 @@ function applySpawnTransform(source: TransformNode | AbstractMesh, target: Trans
   } else {
     target.scaling.setAll(1);
   }
+  target.computeWorldMatrix(true);
 }
 
 function sanitizeNodeName(name: string): string {
@@ -181,6 +195,7 @@ function refreshClonedRigMatrices(
 export class EnemyTurretSystem {
   private readonly scene: Scene;
   private readonly config: EnemyTurretConfig;
+  private readonly showAimDebug: boolean;
   private readonly yawAxis: Vector3;
   private readonly pitchAxis: Vector3;
   private readonly instances: EnemyTurretInstance[] = [];
@@ -188,6 +203,7 @@ export class EnemyTurretSystem {
   public constructor(options: EnemyTurretSystemOptions) {
     this.scene = options.scene;
     this.config = options.config;
+    this.showAimDebug = options.config.debug?.showAimVectors ?? false;
     this.yawAxis = axisFromConfig(options.config.rig.yawAxis, options.config.rig.yawSign);
     this.pitchAxis = axisFromConfig(options.config.rig.pitchAxis, options.config.rig.pitchSign);
 
@@ -199,30 +215,37 @@ export class EnemyTurretSystem {
     return this.instances.length;
   }
 
-  public update(dt: number, tankAnchor: TransformNode): void {
+  public update(dt: number, aimTarget: TransformNode | AbstractMesh): void {
     if (this.instances.length === 0) {
       return;
     }
 
-    const tankWorldPos = tankAnchor.getAbsolutePosition();
+    aimTarget.computeWorldMatrix(true);
+    const targetWorldPos = aimTarget.getAbsolutePosition();
     const detectionRangeSq = this.config.detectionRange * this.config.detectionRange;
 
     for (const instance of this.instances) {
-      const inRange = Vector3.DistanceSquared(tankWorldPos, instance.anchor.getAbsolutePosition()) <= detectionRangeSq;
+      const inRange =
+        Vector3.DistanceSquared(targetWorldPos, instance.anchor.getAbsolutePosition()) <= detectionRangeSq;
 
       if (inRange) {
         instance.tracking = true;
-        this.updateAimTargets(instance, tankWorldPos);
+        this.updateAimTargets(instance, targetWorldPos);
       } else {
         instance.tracking = false;
       }
 
       this.applyTracking(instance, dt);
+      this.updateAimDebug(instance, targetWorldPos);
     }
   }
 
   public dispose(): void {
     for (const instance of this.instances) {
+      instance.debugAimLine?.dispose();
+      instance.debugBarrelLine?.dispose();
+      instance.debugTargetMarker?.dispose();
+      instance.debugPivotMarker?.dispose();
       instance.root.dispose(false, true);
       instance.anchor.dispose();
     }
@@ -266,6 +289,7 @@ export class EnemyTurretSystem {
       const anchor = new TransformNode(`enemy_turret_anchor_${instanceLabel}`, this.scene);
       applySpawnTransform(spawnNode, anchor);
 
+      anchor.computeWorldMatrix(true);
       const root = armatureRoot.clone(`enemy_turret_armature_${instanceLabel}`, anchor, false);
       if (!root) {
         console.warn(
@@ -312,8 +336,25 @@ export class EnemyTurretSystem {
         getBoneLocalRotation(pitchControl, pitchReference) ??
         getControlLocalRotation(pitchControl, pitchReference);
 
+      anchor.computeWorldMatrix(true);
+      const pitchPivotLocalInAnchor =
+        getBoneLocalInReference(pitchControl, skinnedMesh, root, anchor) ??
+        worldToLocalInReference(
+          this.getMuzzleWorldPos(muzzle1, muzzle2, pitchControl, pitchReference, skinnedMesh, root),
+          anchor
+        );
+
+      const debugMeshes = this.showAimDebug
+        ? this.createAimDebugMeshes(instanceLabel)
+        : {
+            debugAimLine: null,
+            debugBarrelLine: null,
+            debugTargetMarker: null,
+            debugPivotMarker: null
+          };
+
       console.info(
-        `[EnemyTurretSystem] ${instanceLabel}: yawBone=${Boolean(yawControl.bone)} pitchBone=${Boolean(pitchControl.bone)} muzzle1=${Boolean(muzzle1)} muzzle2=${Boolean(muzzle2)} pitchBase=${pitchBaseLocalRotation.toString()}`
+        `[EnemyTurretSystem] ${instanceLabel}: spawn=${spawnNode.getAbsolutePosition().asArray()} anchor=${anchor.getAbsolutePosition().asArray()} root=${root.getAbsolutePosition().asArray()} yawBone=${Boolean(yawControl.bone)} pitchBone=${Boolean(pitchControl.bone)} muzzle1=${Boolean(muzzle1)} pitchPivotLocal=${pitchPivotLocalInAnchor.asArray()}`
       );
 
       this.instances.push({
@@ -328,11 +369,13 @@ export class EnemyTurretSystem {
         muzzle2,
         yawBaseLocalRotation,
         pitchBaseLocalRotation,
+        pitchPivotLocalInAnchor,
         currentYawDeg: 0,
         currentPitchDeg: 0,
         targetYawDeg: 0,
         targetPitchDeg: 0,
-        tracking: false
+        tracking: false,
+        ...debugMeshes
       });
     }
 
@@ -350,12 +393,15 @@ export class EnemyTurretSystem {
     const desiredYawRad = Math.atan2(aimX, aimZ);
     instance.targetYawDeg = (desiredYawRad * 180) / Math.PI * this.config.rig.yawSign;
 
-    instance.pitchReference.computeWorldMatrix(true);
-    const invBodyMatrix = instance.pitchReference.getWorldMatrix().clone().invert();
-    const targetInBody = Vector3.TransformCoordinates(tankWorldPos, invBodyMatrix);
+    // Pitch en espace anchor (indépendant du yaw courant du turret_body) — sinon l'élévation
+    // dépend de l'azimut du tank autour de la tourelle.
+    const targetInAnchor = localTarget;
 
-    const distHoriz = Math.sqrt(targetInBody.x * targetInBody.x + targetInBody.z * targetInBody.z);
-    const desiredPitchRad = Math.atan2(targetInBody.y, distHoriz);
+    const dx = targetInAnchor.x - instance.pitchPivotLocalInAnchor.x;
+    const dz = targetInAnchor.z - instance.pitchPivotLocalInAnchor.z;
+    const distHoriz = Math.sqrt(dx * dx + dz * dz);
+    const heightDelta = targetInAnchor.y - instance.pitchPivotLocalInAnchor.y;
+    const desiredPitchRad = Math.atan2(heightDelta, distHoriz);
 
     instance.targetPitchDeg = clamp(
       ((desiredPitchRad * 180) / Math.PI) * this.config.rig.pitchAimSign,
@@ -396,8 +442,148 @@ export class EnemyTurretSystem {
       instance.pitchReference
     );
 
-    if (instance.tracking && Math.abs(instance.currentPitchDeg - prevPitchDeg) > 1e-3) {
+    refreshClonedRigMatrices(instance.anchor, instance.root, instance.skinnedMesh);
+
+    if (instance.tracking && !this.showAimDebug && Math.abs(instance.currentPitchDeg - prevPitchDeg) > 1e-3) {
       this.logPitchMovement(instance, prevPitchDeg);
+    }
+  }
+
+  private getPitchPivotWorldPos(instance: EnemyTurretInstance): Vector3 {
+    refreshClonedRigMatrices(instance.anchor, instance.root, instance.skinnedMesh);
+    const fromBone = getBoneWorldPosition(
+      instance.pitchControl,
+      instance.skinnedMesh,
+      instance.root
+    );
+    if (fromBone) {
+      return fromBone;
+    }
+    return this.getMuzzleWorldPos(
+      instance.muzzle1,
+      instance.muzzle2,
+      instance.pitchControl,
+      instance.pitchReference,
+      instance.skinnedMesh,
+      instance.root
+    );
+  }
+
+  private getMuzzleWorldPos(
+    muzzle1: TransformNode | AbstractMesh | null,
+    muzzle2: TransformNode | AbstractMesh | null,
+    pitchControl: BoneControl,
+    pitchReference: TransformNode,
+    skinnedMesh: AbstractMesh | null,
+    root: TransformNode
+  ): Vector3 {
+    const muzzle = muzzle1 ?? muzzle2;
+    if (muzzle) {
+      muzzle.computeWorldMatrix(true);
+      return muzzle.getAbsolutePosition();
+    }
+    const fromBone = getBoneWorldPosition(pitchControl, skinnedMesh, root);
+    if (fromBone) {
+      return fromBone;
+    }
+    return pitchReference.getAbsolutePosition();
+  }
+
+  private createAimDebugMeshes(instanceLabel: string): {
+    debugAimLine: LinesMesh;
+    debugBarrelLine: LinesMesh;
+    debugTargetMarker: AbstractMesh;
+    debugPivotMarker: AbstractMesh;
+  } {
+    const suffix = instanceLabel;
+    const debugAimLine = MeshBuilder.CreateLines(
+      `enemy_turret_aim_${suffix}`,
+      { points: [Vector3.Zero(), Vector3.Zero()], updatable: true },
+      this.scene
+    );
+    debugAimLine.color = new Color3(1, 1, 0);
+    debugAimLine.renderingGroupId = 2;
+    debugAimLine.isPickable = false;
+
+    const debugBarrelLine = MeshBuilder.CreateLines(
+      `enemy_turret_barrel_${suffix}`,
+      { points: [Vector3.Zero(), Vector3.Zero()], updatable: true },
+      this.scene
+    );
+    debugBarrelLine.color = new Color3(0.2, 0.6, 1);
+    debugBarrelLine.renderingGroupId = 2;
+    debugBarrelLine.isPickable = false;
+
+    const debugTargetMarker = MeshBuilder.CreateSphere(
+      `enemy_turret_target_${suffix}`,
+      { diameter: 0.35, segments: 8 },
+      this.scene
+    );
+    debugTargetMarker.isPickable = false;
+    debugTargetMarker.renderingGroupId = 2;
+
+    const debugPivotMarker = MeshBuilder.CreateSphere(
+      `enemy_turret_pivot_${suffix}`,
+      { diameter: 0.22, segments: 8 },
+      this.scene
+    );
+    debugPivotMarker.isPickable = false;
+    debugPivotMarker.renderingGroupId = 2;
+
+    return { debugAimLine, debugBarrelLine, debugTargetMarker, debugPivotMarker };
+  }
+
+  private updateAimDebug(instance: EnemyTurretInstance, targetWorldPos: Vector3): void {
+    if (!this.showAimDebug) {
+      return;
+    }
+
+    const pivotWorld = this.getPitchPivotWorldPos(instance);
+
+    if (instance.debugPivotMarker) {
+      instance.debugPivotMarker.setAbsolutePosition(pivotWorld);
+      instance.debugPivotMarker.isVisible = instance.tracking;
+    }
+
+    if (instance.debugTargetMarker) {
+      instance.debugTargetMarker.setAbsolutePosition(targetWorldPos);
+      instance.debugTargetMarker.isVisible = instance.tracking;
+    }
+
+    if (instance.debugAimLine) {
+      if (instance.tracking) {
+        MeshBuilder.CreateLines(
+          instance.debugAimLine.name,
+          { points: [pivotWorld, targetWorldPos], instance: instance.debugAimLine },
+          this.scene
+        );
+        instance.debugAimLine.isVisible = true;
+      } else {
+        instance.debugAimLine.isVisible = false;
+      }
+    }
+
+    const muzzle = instance.muzzle1 ?? instance.muzzle2;
+    if (instance.debugBarrelLine && muzzle) {
+      if (instance.tracking) {
+        muzzle.computeWorldMatrix(true);
+        const from = muzzle.getAbsolutePosition();
+        const forward = muzzle.getDirection(Axis.Z);
+        if (forward.lengthSquared() > 1e-6) {
+          forward.normalize();
+        } else {
+          forward.copyFrom(Axis.Z);
+        }
+        const to = from.add(forward.scale(8));
+        MeshBuilder.CreateLines(
+          instance.debugBarrelLine.name,
+          { points: [from, to], instance: instance.debugBarrelLine },
+          this.scene
+        );
+        instance.debugBarrelLine.isVisible = true;
+      } else {
+        instance.debugBarrelLine.isVisible = false;
+      }
     }
   }
 
