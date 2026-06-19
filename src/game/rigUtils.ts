@@ -258,6 +258,53 @@ export function applyBoneLocalOffset(
   return bonePos.add(Vector3.TransformCoordinates(localOffset, rotMat));
 }
 
+/** Direction monde → espace local du bone (rotation seule). */
+export function captureBoneLocalDirection(
+  worldDirection: Vector3,
+  control: BoneControl,
+  skinnedMesh: AbstractMesh | null,
+  fallbackRoot: AbstractMesh | TransformNode
+): Vector3 {
+  if (!control.bone) {
+    return worldDirection.clone();
+  }
+  const meshRef = skinnedMesh ?? fallbackRoot;
+  meshRef.computeWorldMatrix(true);
+  skinnedMesh?.skeleton?.prepare();
+  const boneRot = control.bone.getRotationQuaternion(Space.WORLD, meshRef);
+  const invRot = boneRot.conjugate();
+  const rotMat = Matrix.Identity();
+  Matrix.FromQuaternionToRef(invRot, rotMat);
+  const local = Vector3.TransformCoordinates(worldDirection, rotMat);
+  if (local.lengthSquared() > 1e-6) {
+    local.normalize();
+  }
+  return local;
+}
+
+/** Direction locale du bone → direction monde. */
+export function applyBoneLocalDirection(
+  localDirection: Vector3,
+  control: BoneControl,
+  skinnedMesh: AbstractMesh | null,
+  fallbackRoot: AbstractMesh | TransformNode
+): Vector3 {
+  if (!control.bone) {
+    return localDirection.clone();
+  }
+  const meshRef = skinnedMesh ?? fallbackRoot;
+  meshRef.computeWorldMatrix(true);
+  skinnedMesh?.skeleton?.prepare();
+  const boneRot = control.bone.getRotationQuaternion(Space.WORLD, meshRef);
+  const rotMat = Matrix.Identity();
+  Matrix.FromQuaternionToRef(boneRot, rotMat);
+  const world = Vector3.TransformCoordinates(localDirection, rotMat);
+  if (world.lengthSquared() > 1e-6) {
+    world.normalize();
+  }
+  return world;
+}
+
 function repeat(value: number, length: number): number {
   return value - Math.floor(value / length) * length;
 }

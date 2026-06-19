@@ -11,7 +11,9 @@ import { PhysicsBody } from "@babylonjs/core/Physics/v2/physicsBody";
 import type { Scene } from "@babylonjs/core/scene";
 import type { EnemyTurretConfig } from "../config/enemiesController";
 import {
+  applyBoneLocalDirection,
   applyBoneLocalOffset,
+  captureBoneLocalDirection,
   captureBoneLocalOffset,
   axisFromConfig,
   clamp,
@@ -58,6 +60,8 @@ interface EnemyTurretInstance {
   /** Offset du muzzle dans l'espace local du pitch bone (turret_head). */
   muzzle1LocalInPitchBone: Vector3 | null;
   muzzle2LocalInPitchBone: Vector3 | null;
+  /** Axe des canons en local du pitch bone (depuis l'empty muzzle au spawn). */
+  barrelForwardLocalInPitchBone: Vector3 | null;
   yawBaseLocalRotation: Quaternion;
   pitchBaseLocalRotation: Quaternion;
   /** Pivot du pitch bone en espace anchor (pose neutre au spawn). */
@@ -296,7 +300,7 @@ export class EnemyTurretSystem {
       }
 
       this.applyTracking(instance, dt);
-      this.updateFiring(instance, dt, targetWorldPos);
+      this.updateFiring(instance, dt);
       this.updateAimDebug(instance, targetWorldPos);
     }
 
@@ -428,6 +432,20 @@ export class EnemyTurretSystem {
             })()
           : null;
 
+      const barrelForwardLocalInPitchBone =
+        muzzle1 && pitchControl.bone
+          ? (() => {
+              muzzle1.computeWorldMatrix(true);
+              const forward = muzzle1.getDirection(Axis.Z);
+              if (forward.lengthSquared() > 1e-6) {
+                forward.normalize();
+              } else {
+                forward.copyFrom(Axis.Z);
+              }
+              return captureBoneLocalDirection(forward, pitchControl, skinnedMesh, root);
+            })()
+          : null;
+
       const pitchReference = resolveControlReference(yawControl, anchor);
       const yawBaseLocalRotation = getControlLocalRotation(yawControl, anchor);
       const pitchBaseLocalRotation =
@@ -476,6 +494,7 @@ export class EnemyTurretSystem {
         muzzle2,
         muzzle1LocalInPitchBone,
         muzzle2LocalInPitchBone,
+        barrelForwardLocalInPitchBone,
         yawBaseLocalRotation,
         pitchBaseLocalRotation,
         pitchPivotLocalInAnchor,
@@ -554,7 +573,7 @@ export class EnemyTurretSystem {
     refreshClonedRigMatrices(instance.anchor, instance.root, instance.skinnedMesh);
   }
 
-  private updateFiring(instance: EnemyTurretInstance, dt: number, targetWorldPos: Vector3): void {
+  private updateFiring(instance: EnemyTurretInstance, dt: number): void {
     if (!instance.tracking || !this.ammoTemplateMesh) {
       return;
     }
@@ -577,7 +596,14 @@ export class EnemyTurretSystem {
     }
 
     const barrelIndex = instance.nextBarrelIndex % muzzles.length;
-    this.fireFromMuzzle(instance, muzzles[barrelIndex], barrelIndex, targetWorldPos);
+    const aimPoint = this.getAimPointWorldPos(
+      instance.anchor.getAbsolutePosition()
+    );
+    if (!this.isReadyToFire(instance, aimPoint, barrelIndex)) {
+      return;
+    }
+
+    this.fireFromMuzzle(instance, barrelIndex);
     instance.nextBarrelIndex = (barrelIndex + 1) % muzzles.length;
     instance.fireCooldown = this.getFireIntervalSeconds(muzzles.length);
   }
@@ -626,17 +652,6 @@ export class EnemyTurretSystem {
     }
   }
 
-  private getMuzzleWorldForward(muzzle: TransformNode | AbstractMesh): Vector3 {
-    muzzle.computeWorldMatrix(true);
-    const forward = muzzle.getDirection(Axis.Z);
-    if (forward.lengthSquared() > 1e-6) {
-      forward.normalize();
-    } else {
-      forward.copyFrom(Axis.Z);
-    }
-    return forward;
-  }
-
   private getFireIntervalSeconds(barrelCount: number): number {
     const rate = this.config.combat.shotsPerSecondPerBarrel;
     if (rate <= 0) {
@@ -652,12 +667,7 @@ export class EnemyTurretSystem {
     );
   }
 
-  private fireFromMuzzle(
-    instance: EnemyTurretInstance,
-    muzzle: TransformNode | AbstractMesh,
-    barrelIndex: number,
-    targetWorldPos: Vector3
-  ): void {
+  private fireFromMuzzle(instance: EnemyTurretInstance, barrelIndex: number): void {
     if (!this.ammoTemplateMesh) {
       return;
     }
@@ -671,7 +681,10 @@ export class EnemyTurretSystem {
       );
       return;
     }
-    const dir = this.computeBulletDirection(muzzlePos, targetWorldPos, muzzle);
+    const dir = this.getBarrelAimDirection(instance);
+    if (!dir) {
+      return;
+    }
     const spawnOffset = this.config.combat.muzzleSpawnOffset;
     const origin = muzzlePos.add(dir.scale(spawnOffset)).clone();
     const bulletRotation = Quaternion.FromLookDirectionRH(dir, Axis.Y);
@@ -737,16 +750,51 @@ export class EnemyTurretSystem {
     return muzzle.getAbsolutePosition().clone();
   }
 
-  private computeBulletDirection(
-    from: Vector3,
-    targetWorldPos: Vector3,
-    muzzle: TransformNode | AbstractMesh
-  ): Vector3 {
-    const toTarget = targetWorldPos.subtract(from);
-    if (toTarget.lengthSquared() > 1e-6) {
-      return toTarget.normalize();
+  private getAimPointWorldPos(fallbackTarget: Vector3): Vector3 {
+    if (this.tankColliderMesh) {
+      this.tankColliderMesh.computeWorldMatrix(true);
+      return this.tankColliderMesh.getAbsolutePosition().clone();
     }
-    return this.getMuzzleWorldForward(muzzle);
+    return fallbackTarget.clone();
+  }
+
+  private getBarrelAimDirection(instance: EnemyTurretInstance): Vector3 | null {
+    if (instance.barrelForwardLocalInPitchBone && instance.pitchControl.bone) {
+      return applyBoneLocalDirection(
+        instance.barrelForwardLocalInPitchBone,
+        instance.pitchControl,
+        instance.skinnedMesh,
+        instance.root
+      );
+    }
+    return null;
+  }
+
+  private isReadyToFire(
+    instance: EnemyTurretInstance,
+    aimPoint: Vector3,
+    barrelIndex: number
+  ): boolean {
+    const barrelDir = this.getBarrelAimDirection(instance);
+    if (!barrelDir) {
+      return false;
+    }
+
+    const muzzlePos = this.resolveMuzzleWorldPosition(instance, barrelIndex);
+    if (!muzzlePos) {
+      return false;
+    }
+
+    const toTarget = aimPoint.subtract(muzzlePos);
+    if (toTarget.lengthSquared() < 1e-6) {
+      return false;
+    }
+    toTarget.normalize();
+
+    const dot = Vector3.Dot(barrelDir, toTarget);
+    const angleDeg =
+      (Math.acos(clamp(dot, -1, 1)) * 180) / Math.PI;
+    return angleDeg <= this.config.combat.fireAlignmentMaxAngleDeg;
   }
 
   private raycastBulletHit(
@@ -1080,9 +1128,9 @@ export class EnemyTurretSystem {
     const muzzlePos = this.resolveMuzzleWorldPosition(instance, instance.muzzle1 ? 0 : 1);
     if (instance.debugBarrelLine && muzzlePos) {
       if (instance.tracking) {
-        const toTarget = targetWorldPos.subtract(muzzlePos);
         const forward =
-          toTarget.lengthSquared() > 1e-6 ? toTarget.normalize() : this.getMuzzleWorldForward(instance.muzzle1 ?? instance.muzzle2!);
+          this.getBarrelAimDirection(instance) ??
+          this.getAimPointWorldPos(targetWorldPos).subtract(muzzlePos).normalize();
         const to = muzzlePos.add(forward.scale(8));
         MeshBuilder.CreateLines(
           instance.debugBarrelLine.name,

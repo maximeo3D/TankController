@@ -34,7 +34,8 @@
       "muzzleSpawnOffset": 0.5,
       "gravityMultiplier": 0.5,
       "projectileRadius": 0.12,
-      "projectileMaxLifeSeconds": 5
+      "projectileMaxLifeSeconds": 5,
+      "fireAlignmentMaxAngleDeg": 8
     }
   }
 }

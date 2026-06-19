@@ -34,6 +34,8 @@ export interface EnemyTurretCombatConfig {
   gravityMultiplier: number;
   projectileRadius: number;
   projectileMaxLifeSeconds: number;
+  /** Angle max (deg) entre l'axe du canon et la cible pour autoriser le tir. */
+  fireAlignmentMaxAngleDeg: number;
 }
 
 export interface EnemyTurretDebugConfig {
