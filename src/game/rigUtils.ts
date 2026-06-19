@@ -2,7 +2,7 @@ import type { AssetContainer } from "@babylonjs/core/assetContainer";
 import type { Bone } from "@babylonjs/core/Bones/bone";
 import { Space } from "@babylonjs/core/Maths/math.axis";
 import { Axis } from "@babylonjs/core/Maths/math.axis";
-import { Quaternion, Vector3 } from "@babylonjs/core/Maths/math.vector";
+import { Quaternion, Matrix, Vector3 } from "@babylonjs/core/Maths/math.vector";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 
@@ -214,6 +214,48 @@ export function axisFromConfig(axisName: "x" | "y" | "z", sign: 1 | -1): Vector3
     axisName === "x" ? Axis.X.clone() : axisName === "y" ? Axis.Y.clone() : Axis.Z.clone();
 
   return axis.scale(sign);
+}
+
+/** Offset monde → espace local du bone (rotation monde du bone). */
+export function captureBoneLocalOffset(
+  worldPoint: Vector3,
+  control: BoneControl,
+  skinnedMesh: AbstractMesh | null,
+  fallbackRoot: AbstractMesh | TransformNode
+): Vector3 {
+  if (!control.bone) {
+    return worldPoint.clone();
+  }
+  const meshRef = skinnedMesh ?? fallbackRoot;
+  meshRef.computeWorldMatrix(true);
+  skinnedMesh?.skeleton?.prepare();
+  const bonePos = control.bone.getAbsolutePosition(meshRef);
+  const boneRot = control.bone.getRotationQuaternion(Space.WORLD, meshRef);
+  const diff = worldPoint.subtract(bonePos);
+  const invRot = boneRot.conjugate();
+  const rotMat = Matrix.Identity();
+  Matrix.FromQuaternionToRef(invRot, rotMat);
+  return Vector3.TransformCoordinates(diff, rotMat);
+}
+
+/** Offset local du bone → position monde (suit yaw + pitch du rig). */
+export function applyBoneLocalOffset(
+  localOffset: Vector3,
+  control: BoneControl,
+  skinnedMesh: AbstractMesh | null,
+  fallbackRoot: AbstractMesh | TransformNode
+): Vector3 {
+  if (!control.bone) {
+    return localOffset.clone();
+  }
+  const meshRef = skinnedMesh ?? fallbackRoot;
+  meshRef.computeWorldMatrix(true);
+  skinnedMesh?.skeleton?.prepare();
+  const bonePos = control.bone.getAbsolutePosition(meshRef);
+  const boneRot = control.bone.getRotationQuaternion(Space.WORLD, meshRef);
+  const rotMat = Matrix.Identity();
+  Matrix.FromQuaternionToRef(boneRot, rotMat);
+  return bonePos.add(Vector3.TransformCoordinates(localOffset, rotMat));
 }
 
 function repeat(value: number, length: number): number {

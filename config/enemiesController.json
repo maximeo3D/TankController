@@ -5,10 +5,11 @@
     "spawnNodePrefix": "SPAWN_enemy_turret_",
     "detectionRange": 20,
     "debug": {
-      "showAimVectors": false
+      "showAimVectors": false,
+      "showBulletVectors": false
     },
     "tracking": {
-      "yawSpeedDeg": 60,
+      "yawSpeedDeg": 45,
       "pitchSpeedDeg": 45,
       "minPitchDeg": -45,
       "maxPitchDeg": 45
@@ -26,7 +27,14 @@
     },
     "combat": {
       "healthMax": 200,
-      "contactDamage": 0
+      "contactDamage": 0,
+      "shotsPerSecondPerBarrel": 1,
+      "bulletDamage": 5,
+      "muzzleVelocity": 100,
+      "muzzleSpawnOffset": 0.5,
+      "gravityMultiplier": 0.5,
+      "projectileRadius": 0.12,
+      "projectileMaxLifeSeconds": 5
     }
   }
 }

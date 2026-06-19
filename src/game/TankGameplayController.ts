@@ -492,6 +492,14 @@ export class TankGameplayController {
     this.powerUpSystem = this.createPowerUpSystem(options);
     this.enemyTurretSystem = options.enemyTurretSystem ?? null;
     this.playerTargetNode = options.playerTargetNode ?? null;
+    if (this.enemyTurretSystem) {
+      this.enemyTurretSystem.bindPlayerTarget({
+        tankBody: this.tankBody,
+        tankColliderMesh: options.tankColliderMesh,
+        onDamage: (amount) => this.takeDamage(amount),
+        onBulletImpact: (worldPos) => this.spawnSparkImpact(worldPos)
+      });
+    }
     this.input = new TankInput(options.canvas);
     this.turretControl = resolveBoneControl(options.tankContainer, "tourelle");
     this.cannonControl = resolveBoneControl(options.tankContainer, "canon");

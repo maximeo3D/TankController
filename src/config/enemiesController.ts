@@ -26,10 +26,20 @@ export interface EnemyTurretTrackingConfig {
 export interface EnemyTurretCombatConfig {
   healthMax: number;
   contactDamage: number;
+  shotsPerSecondPerBarrel: number;
+  bulletDamage: number;
+  muzzleVelocity: number;
+  /** Décalage le long de l'axe du canon pour éviter un impact immédiat avec la tourelle. */
+  muzzleSpawnOffset: number;
+  gravityMultiplier: number;
+  projectileRadius: number;
+  projectileMaxLifeSeconds: number;
 }
 
 export interface EnemyTurretDebugConfig {
   showAimVectors: boolean;
+  /** Origine / direction des balles (lignes + marqueurs au tir). */
+  showBulletVectors?: boolean;
 }
 
 export interface EnemyTurretConfig {
