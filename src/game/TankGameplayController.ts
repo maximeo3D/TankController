@@ -365,6 +365,7 @@ export class TankGameplayController {
     traveled: number;
     speed: number;
     rotation: Quaternion;
+    turretSpawnId: string | null;
   }[] = [];
 
   private sparkSpriteManager: SpriteManager | null = null;
@@ -414,6 +415,7 @@ export class TankGameplayController {
   private static readonly SHOCKWAVE_FADE_START_S = 0 / 60;
   private static readonly SHOCKWAVE_FADE_END_S = 7 / 60;
   private static readonly SHOCKWAVE_SCALE_MAX = 4.0; // 400%
+  private static readonly SHELL_TURRET_DAMAGE_RADIUS = 3.0;
 
   // Audio
   private cannonShotSound: Sound | null = null;
@@ -2588,6 +2590,7 @@ export class TankGameplayController {
     const to = origin.add(dir.scale(maxDistance));
 
     let hitPoint = to;
+    let turretSpawnId: string | null = null;
     const physics = this.scene.getPhysicsEngine();
     if (physics) {
       const hit = physics.raycast(origin, to, {
@@ -2597,6 +2600,9 @@ export class TankGameplayController {
       });
       if (hit.hasHit) {
         hitPoint = hit.hitPointWorld.clone();
+        if (this.enemyTurretSystem) {
+          turretSpawnId = this.enemyTurretSystem.resolveTurretIdFromWeaponHit(hit);
+        }
       }
     }
 
@@ -2617,10 +2623,11 @@ export class TankGameplayController {
       hitDistance,
       traveled: 0,
       speed: this.config.weapons.bullet.muzzleVelocity,
-      rotation: muzzleRotation
+      rotation: muzzleRotation,
+      turretSpawnId
     });
 
-    // (Gun impacts/damage can be implemented later if needed.)
+    // Gun damage is applied when the tracer reaches its hit point.
   }
 
   private spawnProjectile(
@@ -2711,6 +2718,7 @@ export class TankGameplayController {
         proj.mesh.getAbsolutePosition().clone();
 
       void this.spawnExplosionAt(p.clone());
+      this.applyShellDamageAt(p.clone());
 
       const idx = this.activeProjectiles.indexOf(proj);
       if (idx >= 0) {
@@ -2745,12 +2753,14 @@ export class TankGameplayController {
           if (!mesh) return false;
           if (mesh.uniqueId === proj.mesh.uniqueId) return false;
           if (this.tankMeshIdsToIgnore.has(mesh.uniqueId)) return false;
+          if (this.enemyTurretSystem?.isTurretColliderMesh(mesh)) return true;
           const n = mesh.name.toLowerCase();
           return n.startsWith("sm_") || n.startsWith("dm_") || n.startsWith("col_") || n.includes("ground");
         });
         if (hit?.hit && hit.pickedPoint) {
           proj.impactHandled = true;
           void this.spawnExplosionAt(hit.pickedPoint.clone());
+          this.applyShellDamageAt(hit.pickedPoint.clone());
           proj.body.dispose();
           proj.shape.dispose();
           proj.mesh.dispose();
@@ -2913,6 +2923,12 @@ export class TankGameplayController {
       tracer.traveled += tracer.speed * dt;
       if (tracer.traveled >= tracer.hitDistance) {
         this.spawnSparkImpact(tracer.hitPoint);
+        if (tracer.turretSpawnId) {
+          this.enemyTurretSystem?.applyDamageToTurret(
+            tracer.turretSpawnId,
+            this.config.weapons.bullet.damage
+          );
+        }
         tracer.mesh.dispose();
         this.activeGunTracers.splice(i, 1);
         continue;
@@ -2920,6 +2936,18 @@ export class TankGameplayController {
       tracer.mesh.position.copyFrom(tracer.from.add(tracer.dir.scale(tracer.traveled)));
       tracer.mesh.rotationQuaternion = tracer.rotation.clone();
     }
+  }
+
+  private applyShellDamageAt(worldPos: Vector3): void {
+    const damage = this.config.weapons.shell.damage;
+    if (damage <= 0 || !this.enemyTurretSystem) {
+      return;
+    }
+    this.enemyTurretSystem.applyExplosionDamageAt(
+      worldPos,
+      damage,
+      TankGameplayController.SHELL_TURRET_DAMAGE_RADIUS
+    );
   }
 
   private spawnSparkImpact(worldPos: Vector3): void {

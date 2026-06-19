@@ -8,7 +8,10 @@ import { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import { PhysicsBody } from "@babylonjs/core/Physics/v2/physicsBody";
+import { PhysicsMotionType } from "@babylonjs/core/Physics/v2/IPhysicsEnginePlugin";
+import { PhysicsShapeMesh, type PhysicsShape } from "@babylonjs/core/Physics/v2/physicsShape";
 import type { Scene } from "@babylonjs/core/scene";
+import type { Node } from "@babylonjs/core/node";
 import type { EnemyTurretConfig } from "../config/enemiesController";
 import {
   applyBoneLocalDirection,
@@ -77,6 +80,11 @@ interface EnemyTurretInstance {
   debugPivotMarker: AbstractMesh | null;
   nextBarrelIndex: number;
   fireCooldown: number;
+  colliderMesh: Mesh | null;
+  physicsBody: PhysicsBody | null;
+  physicsShape: PhysicsShape | null;
+  health: number;
+  alive: boolean;
 }
 
 interface EnemyBulletTracer {
@@ -125,6 +133,37 @@ function findArmatureRoot(container: AssetContainer): TransformNode | null {
   return (
     container.transformNodes.find((node) => matchNodeName(node.name, "turret_armature")) ?? null
   );
+}
+
+function findColliderMeshOnRoot(root: TransformNode, scene: Scene): Mesh | null {
+  const fromTree = findNodeOnRoot(root, "COL_enemy_turret");
+  if (fromTree instanceof Mesh) {
+    return fromTree;
+  }
+  if (fromTree instanceof AbstractMesh && fromTree.getTotalVertices() > 0) {
+    return fromTree as Mesh;
+  }
+
+  for (const mesh of scene.meshes) {
+    if (!matchNodeName(mesh.name, "COL_enemy_turret")) {
+      continue;
+    }
+    let parent: Node | null = mesh;
+    while (parent) {
+      if (parent === root) {
+        if (mesh instanceof Mesh) {
+          return mesh;
+        }
+        if (mesh.getTotalVertices() > 0) {
+          return mesh as Mesh;
+        }
+        break;
+      }
+      parent = parent.parent;
+    }
+  }
+
+  return null;
 }
 
 function findNodeOnRoot(root: TransformNode, name: string): TransformNode | AbstractMesh | null {
@@ -241,6 +280,7 @@ export class EnemyTurretSystem {
   private readonly yawAxis: Vector3;
   private readonly pitchAxis: Vector3;
   private readonly ammoTemplateMesh: Mesh | null;
+  private readonly colliderTemplateMesh: Mesh | null;
   private readonly instances: EnemyTurretInstance[] = [];
   private readonly activeBulletTracers: EnemyBulletTracer[] = [];
   private readonly persistedBulletDebug: BulletDebugVisual[] = [];
@@ -249,6 +289,14 @@ export class EnemyTurretSystem {
   private tankColliderMesh: Mesh | null = null;
   private onPlayerDamage: ((amount: number) => void) | null = null;
   private onBulletImpact: ((worldPos: Vector3) => void) | null = null;
+  private readonly turretColliderMeshIds = new Set<number>();
+  private readonly syncColliderMatricesBeforePhysics = (): void => {
+    for (const instance of this.instances) {
+      if (instance.alive && instance.colliderMesh) {
+        instance.colliderMesh.computeWorldMatrix(true);
+      }
+    }
+  };
 
   public constructor(options: EnemyTurretSystemOptions) {
     this.scene = options.scene;
@@ -258,14 +306,54 @@ export class EnemyTurretSystem {
     this.yawAxis = axisFromConfig(options.config.rig.yawAxis, options.config.rig.yawSign);
     this.pitchAxis = axisFromConfig(options.config.rig.pitchAxis, options.config.rig.pitchSign);
     this.ammoTemplateMesh = findMeshInContainer(options.enemiesContainer, "AMMO_turret");
+    this.colliderTemplateMesh = findMeshInContainer(options.enemiesContainer, "COL_enemy_turret");
     if (!this.ammoTemplateMesh) {
       console.warn("[EnemyTurretSystem] Missing AMMO_turret template mesh in enemies.glb.");
     } else {
       this.prepareAmmoTemplateMesh(this.ammoTemplateMesh);
     }
+    if (!this.colliderTemplateMesh) {
+      console.warn("[EnemyTurretSystem] Missing COL_enemy_turret template mesh in enemies.glb.");
+    }
 
     this.hideTemplateAssets(options.enemiesContainer);
     this.spawnTurrets(options.terrainContainer, options.enemiesContainer);
+    this.scene.onBeforePhysicsObservable.add(this.syncColliderMatricesBeforePhysics);
+  }
+
+  /** Identifie une tourelle touchée par un raycast / collision physique du joueur. */
+  public resolveTurretIdFromWeaponHit(hit: unknown): string | null {
+    return this.resolveInstanceFromWeaponHit(hit)?.spawnId ?? null;
+  }
+
+  public isTurretColliderMesh(mesh: AbstractMesh | null | undefined): boolean {
+    return mesh != null && this.turretColliderMeshIds.has(mesh.uniqueId);
+  }
+
+  public applyDamageToTurret(spawnId: string, amount: number): boolean {
+    const instance = this.instances.find((candidate) => candidate.spawnId === spawnId);
+    if (!instance) {
+      return false;
+    }
+    this.applyDamageToInstance(instance, amount);
+    return true;
+  }
+
+  public applyExplosionDamageAt(worldPos: Vector3, amount: number, radius: number): void {
+    if (amount <= 0 || radius <= 0) {
+      return;
+    }
+    const radiusSq = radius * radius;
+    for (const instance of this.instances) {
+      if (!instance.alive) {
+        continue;
+      }
+      const center =
+        instance.colliderMesh?.getAbsolutePosition() ?? instance.anchor.getAbsolutePosition();
+      if (Vector3.DistanceSquared(worldPos, center) <= radiusSq) {
+        this.applyDamageToInstance(instance, amount);
+      }
+    }
   }
 
   public bindPlayerTarget(target: EnemyTurretPlayerTarget): void {
@@ -289,6 +377,10 @@ export class EnemyTurretSystem {
     const detectionRangeSq = this.config.detectionRange * this.config.detectionRange;
 
     for (const instance of this.instances) {
+      if (!instance.alive) {
+        continue;
+      }
+
       const inRange =
         Vector3.DistanceSquared(targetWorldPos, instance.anchor.getAbsolutePosition()) <= detectionRangeSq;
 
@@ -309,6 +401,8 @@ export class EnemyTurretSystem {
   }
 
   public dispose(): void {
+    this.scene.onBeforePhysicsObservable.removeCallback(this.syncColliderMatricesBeforePhysics);
+
     for (const tracer of this.activeBulletTracers) {
       tracer.mesh.material?.dispose();
       tracer.mesh.dispose();
@@ -321,10 +415,13 @@ export class EnemyTurretSystem {
       instance.debugBarrelLine?.dispose();
       instance.debugTargetMarker?.dispose();
       instance.debugPivotMarker?.dispose();
+      instance.physicsShape?.dispose();
+      instance.physicsBody?.dispose();
       instance.root.dispose(false, true);
       instance.anchor.dispose();
     }
     this.instances.length = 0;
+    this.turretColliderMeshIds.clear();
   }
 
   private hideTemplateAssets(enemiesContainer: AssetContainer): void {
@@ -478,6 +575,26 @@ export class EnemyTurretSystem {
             debugPivotMarker: null
           };
 
+      const colliderMesh =
+        this.resolveInstanceColliderMesh(
+          root,
+          instanceLabel,
+          yawControl,
+          pitchReference
+        );
+      let physicsBody: PhysicsBody | null = null;
+      let physicsShape: PhysicsShape | null = null;
+      if (colliderMesh) {
+        const physics = this.setupTurretColliderPhysics(colliderMesh);
+        physicsBody = physics.body;
+        physicsShape = physics.shape;
+        this.turretColliderMeshIds.add(colliderMesh.uniqueId);
+      } else {
+        console.warn(
+          `[EnemyTurretSystem] Missing COL_enemy_turret collider for spawn "${spawnNode.name}".`
+        );
+      }
+
       console.info(
         `[EnemyTurretSystem] ${instanceLabel}: spawn=${spawnNode.getAbsolutePosition().asArray()} anchor=${anchor.getAbsolutePosition().asArray()} root=${root.getAbsolutePosition().asArray()} yawBone=${Boolean(yawControl.bone)} pitchBone=${Boolean(pitchControl.bone)} muzzle1=${Boolean(muzzle1)} muzzle2=${Boolean(muzzle2)} pitchPivotLocal=${pitchPivotLocalInAnchor.asArray()}`
       );
@@ -505,6 +622,11 @@ export class EnemyTurretSystem {
         tracking: false,
         nextBarrelIndex: 0,
         fireCooldown: 0,
+        colliderMesh,
+        physicsBody,
+        physicsShape,
+        health: Math.max(1, this.config.combat.healthMax),
+        alive: true,
         ...debugMeshes
       });
     }
@@ -512,6 +634,135 @@ export class EnemyTurretSystem {
     if (this.instances.length > 0) {
       console.info(`[EnemyTurretSystem] Spawned ${this.instances.length} turret(s).`);
     }
+  }
+
+  private setupTurretColliderPhysics(colliderMesh: Mesh): { body: PhysicsBody; shape: PhysicsShape } {
+    colliderMesh.isPickable = true;
+    colliderMesh.isVisible = false;
+    colliderMesh.setEnabled(true);
+    colliderMesh.computeWorldMatrix(true);
+
+    const body = new PhysicsBody(colliderMesh, PhysicsMotionType.ANIMATED, false, this.scene);
+    body.disablePreStep = false;
+    const shape = new PhysicsShapeMesh(colliderMesh, this.scene);
+    shape.filterMembershipMask = 8;
+    shape.filterCollideMask = 0xffffffff;
+    body.shape = shape;
+
+    return { body, shape };
+  }
+
+  private resolveInstanceColliderMesh(
+    root: TransformNode,
+    instanceLabel: string,
+    yawControl: BoneControl,
+    pitchReference: TransformNode
+  ): Mesh | null {
+    const existing = findColliderMeshOnRoot(root, this.scene);
+    if (existing) {
+      return existing;
+    }
+
+    if (!this.colliderTemplateMesh) {
+      return null;
+    }
+
+    const parentNode =
+      yawControl.transformNode ??
+      yawControl.bone?.getTransformNode() ??
+      pitchReference;
+    const cloned = this.colliderTemplateMesh.clone(
+      `COL_enemy_turret_${instanceLabel}`,
+      parentNode,
+      false
+    );
+    if (!cloned) {
+      return null;
+    }
+    if (cloned instanceof Mesh && cloned.getTotalVertices() > 0) {
+      return cloned;
+    }
+    if (cloned instanceof AbstractMesh && cloned.getTotalVertices() > 0) {
+      return cloned as Mesh;
+    }
+
+    cloned.dispose();
+    return null;
+  }
+
+  private resolveInstanceFromWeaponHit(hit: unknown): EnemyTurretInstance | null {
+    const collidedAgainst = (hit as { collidedAgainst?: PhysicsBody }).collidedAgainst;
+    if (collidedAgainst) {
+      for (const instance of this.instances) {
+        if (instance.alive && instance.physicsBody === collidedAgainst) {
+          return instance;
+        }
+      }
+    }
+
+    const body = (hit as { body?: PhysicsBody }).body;
+    if (body) {
+      for (const instance of this.instances) {
+        if (instance.alive && instance.physicsBody === body) {
+          return instance;
+        }
+      }
+    }
+
+    const mesh = (hit as { collidedAgainstMesh?: AbstractMesh }).collidedAgainstMesh;
+    if (mesh) {
+      for (const instance of this.instances) {
+        if (instance.alive && instance.colliderMesh?.uniqueId === mesh.uniqueId) {
+          return instance;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  private applyDamageToInstance(instance: EnemyTurretInstance, amount: number): void {
+    if (!instance.alive || amount <= 0) {
+      return;
+    }
+    instance.health = Math.max(0, instance.health - amount);
+    if (instance.health <= 0) {
+      this.destroyInstance(instance);
+    }
+  }
+
+  private destroyInstance(instance: EnemyTurretInstance): void {
+    instance.alive = false;
+    instance.tracking = false;
+
+    if (instance.colliderMesh) {
+      this.turretColliderMeshIds.delete(instance.colliderMesh.uniqueId);
+      instance.colliderMesh.setEnabled(false);
+      instance.colliderMesh.isPickable = false;
+    }
+
+    if (instance.physicsShape) {
+      instance.physicsShape.dispose();
+      instance.physicsShape = null;
+    }
+    if (instance.physicsBody) {
+      instance.physicsBody.dispose();
+      instance.physicsBody = null;
+    }
+
+    for (const mesh of instance.root.getChildMeshes(true)) {
+      mesh.setEnabled(false);
+      mesh.isVisible = false;
+    }
+
+    instance.debugAimLine?.dispose();
+    instance.debugAimLine = null;
+    instance.debugBarrelLine?.dispose();
+    instance.debugBarrelLine = null;
+    instance.debugTargetMarker?.dispose();
+    instance.debugTargetMarker = null;
+    instance.debugPivotMarker?.dispose();
+    instance.debugPivotMarker = null;
   }
 
   private updateAimTargets(instance: EnemyTurretInstance, tankWorldPos: Vector3): void {
