@@ -1,4 +1,5 @@
 import type { AssetContainer } from "@babylonjs/core/assetContainer";
+import { Material } from "@babylonjs/core/Materials/material";
 import { Axis } from "@babylonjs/core/Maths/math.axis";
 import { Color3 } from "@babylonjs/core/Maths/math.color";
 import { Quaternion, Vector3 } from "@babylonjs/core/Maths/math.vector";
@@ -13,6 +14,10 @@ import { PhysicsShapeMesh, type PhysicsShape } from "@babylonjs/core/Physics/v2/
 import type { Scene } from "@babylonjs/core/scene";
 import type { Node } from "@babylonjs/core/node";
 import type { EnemyTurretConfig } from "../config/enemiesController";
+import {
+  createSingleDamageParticleBundle,
+  type TankDamageParticleBundle
+} from "./tankDamageParticles";
 import {
   applyBoneLocalDirection,
   applyBoneLocalOffset,
@@ -60,6 +65,8 @@ interface EnemyTurretInstance {
   pitchReference: TransformNode;
   muzzle1: TransformNode | AbstractMesh | null;
   muzzle2: TransformNode | AbstractMesh | null;
+  damageSmoke: TransformNode | AbstractMesh | null;
+  damageParticles: TankDamageParticleBundle | null;
   /** Offset du muzzle dans l'espace local du pitch bone (turret_head). */
   muzzle1LocalInPitchBone: Vector3 | null;
   muzzle2LocalInPitchBone: Vector3 | null;
@@ -85,6 +92,138 @@ interface EnemyTurretInstance {
   physicsShape: PhysicsShape | null;
   health: number;
   alive: boolean;
+  flashMaterials: DamageFlashMaterialState[];
+  damageFlashRemaining: number;
+}
+
+interface DamageFlashMaterialState {
+  material: Material;
+  baseEmissive: Color3;
+  baseEmissiveIntensity: number | null;
+}
+
+const DEFAULT_DAMAGE_FLASH = {
+  durationSeconds: 0.15,
+  maxAlpha: 0.65,
+  color: new Color3(1, 0.12, 0.08)
+} as const;
+
+const PEAK_EMISSIVE_INTENSITY = 2.4;
+
+function collectTurretVisualMeshes(
+  root: TransformNode,
+  skinnedMesh: AbstractMesh | null,
+  meshName: string
+): AbstractMesh[] {
+  if (skinnedMesh && skinnedMesh.getTotalVertices() > 0) {
+    return [skinnedMesh];
+  }
+
+  const meshes = root.getChildMeshes(true).filter((mesh) => {
+    if (mesh.getTotalVertices() <= 0) {
+      return false;
+    }
+    if (matchNodeName(mesh.name, "COL_enemy_turret") || matchNodeName(mesh.name, "AMMO_turret")) {
+      return false;
+    }
+    return matchNodeName(mesh.name, meshName);
+  });
+
+  if (meshes.length > 0) {
+    return meshes;
+  }
+
+  return root.getChildMeshes(true).filter((mesh) => {
+    if (mesh.getTotalVertices() <= 0) {
+      return false;
+    }
+    return !matchNodeName(mesh.name, "COL_enemy_turret") && !matchNodeName(mesh.name, "AMMO_turret");
+  });
+}
+
+function readMaterialEmissive(material: Material): { color: Color3; intensity: number | null } {
+  const mat = material as Material & {
+    emissiveColor?: Color3;
+    emissiveIntensity?: number;
+  };
+  return {
+    color: mat.emissiveColor?.clone() ?? Color3.Black(),
+    intensity: typeof mat.emissiveIntensity === "number" ? mat.emissiveIntensity : null
+  };
+}
+
+function setupTurretFlashMaterials(
+  root: TransformNode,
+  skinnedMesh: AbstractMesh | null,
+  meshName: string,
+  instanceLabel: string
+): DamageFlashMaterialState[] {
+  const targetMeshes = collectTurretVisualMeshes(root, skinnedMesh, meshName);
+  const states: DamageFlashMaterialState[] = [];
+  const clonedBySource = new Map<Material, Material>();
+
+  for (const mesh of targetMeshes) {
+    const source = mesh.material;
+    if (!source) {
+      continue;
+    }
+
+    let material = clonedBySource.get(source);
+    if (!material) {
+      const cloned = source.clone(`${source.name}_damage_flash_${instanceLabel}`);
+      if (!cloned) {
+        continue;
+      }
+      material = cloned;
+      clonedBySource.set(source, material);
+      const base = readMaterialEmissive(material);
+      states.push({
+        material,
+        baseEmissive: base.color,
+        baseEmissiveIntensity: base.intensity
+      });
+    }
+
+    mesh.material = material;
+  }
+
+  return states;
+}
+
+function applyDamageFlashEmissive(
+  states: DamageFlashMaterialState[],
+  flashColor: Color3,
+  mix: number
+): void {
+  const t = clamp(mix, 0, 1);
+  for (const state of states) {
+    const mat = state.material as Material & {
+      emissiveColor?: Color3;
+      emissiveIntensity?: number;
+    };
+    if (mat.emissiveColor) {
+      mat.emissiveColor = Color3.Lerp(state.baseEmissive, flashColor, t);
+    }
+    if (typeof mat.emissiveIntensity === "number") {
+      const baseIntensity = state.baseEmissiveIntensity ?? mat.emissiveIntensity;
+      mat.emissiveIntensity = baseIntensity + (PEAK_EMISSIVE_INTENSITY - baseIntensity) * t;
+    }
+  }
+}
+
+function restoreDamageFlashEmissive(states: DamageFlashMaterialState[]): void {
+  for (const state of states) {
+    const mat = state.material as Material & {
+      emissiveColor?: Color3;
+      emissiveIntensity?: number;
+    };
+    if (mat.emissiveColor) {
+      mat.emissiveColor = state.baseEmissive.clone();
+    }
+    if (typeof mat.emissiveIntensity === "number" && state.baseEmissiveIntensity !== null) {
+      mat.emissiveIntensity = state.baseEmissiveIntensity;
+    }
+  }
 }
 
 interface EnemyBulletTracer {
@@ -290,6 +429,10 @@ export class EnemyTurretSystem {
   private onPlayerDamage: ((amount: number) => void) | null = null;
   private onBulletImpact: ((worldPos: Vector3) => void) | null = null;
   private readonly turretColliderMeshIds = new Set<number>();
+  private readonly damageFlashColor: Color3;
+  private readonly damageFlashDuration: number;
+  private readonly damageFlashMaxAlpha: number;
+  private disposed = false;
   private readonly syncColliderMatricesBeforePhysics = (): void => {
     for (const instance of this.instances) {
       if (instance.alive && instance.colliderMesh) {
@@ -307,6 +450,15 @@ export class EnemyTurretSystem {
     this.pitchAxis = axisFromConfig(options.config.rig.pitchAxis, options.config.rig.pitchSign);
     this.ammoTemplateMesh = findMeshInContainer(options.enemiesContainer, "AMMO_turret");
     this.colliderTemplateMesh = findMeshInContainer(options.enemiesContainer, "COL_enemy_turret");
+    const flashConfig = options.config.damageFlash;
+    const flashRgb = flashConfig?.color ?? [
+      DEFAULT_DAMAGE_FLASH.color.r,
+      DEFAULT_DAMAGE_FLASH.color.g,
+      DEFAULT_DAMAGE_FLASH.color.b
+    ];
+    this.damageFlashColor = new Color3(flashRgb[0], flashRgb[1], flashRgb[2]);
+    this.damageFlashDuration = Math.max(0.01, flashConfig?.durationSeconds ?? DEFAULT_DAMAGE_FLASH.durationSeconds);
+    this.damageFlashMaxAlpha = clamp(flashConfig?.maxAlpha ?? DEFAULT_DAMAGE_FLASH.maxAlpha, 0, 1);
     if (!this.ammoTemplateMesh) {
       console.warn("[EnemyTurretSystem] Missing AMMO_turret template mesh in enemies.glb.");
     } else {
@@ -318,6 +470,7 @@ export class EnemyTurretSystem {
 
     this.hideTemplateAssets(options.enemiesContainer);
     this.spawnTurrets(options.terrainContainer, options.enemiesContainer);
+    void this.initializeDamageParticles();
     this.scene.onBeforePhysicsObservable.add(this.syncColliderMatricesBeforePhysics);
   }
 
@@ -393,6 +546,7 @@ export class EnemyTurretSystem {
 
       this.applyTracking(instance, dt);
       this.updateFiring(instance, dt);
+      this.updateDamageFlash(instance, dt);
       this.updateAimDebug(instance, targetWorldPos);
     }
 
@@ -401,6 +555,7 @@ export class EnemyTurretSystem {
   }
 
   public dispose(): void {
+    this.disposed = true;
     this.scene.onBeforePhysicsObservable.removeCallback(this.syncColliderMatricesBeforePhysics);
 
     for (const tracer of this.activeBulletTracers) {
@@ -415,6 +570,8 @@ export class EnemyTurretSystem {
       instance.debugBarrelLine?.dispose();
       instance.debugTargetMarker?.dispose();
       instance.debugPivotMarker?.dispose();
+      instance.damageParticles?.dispose();
+      instance.damageParticles = null;
       instance.physicsShape?.dispose();
       instance.physicsBody?.dispose();
       instance.root.dispose(false, true);
@@ -422,6 +579,29 @@ export class EnemyTurretSystem {
     }
     this.instances.length = 0;
     this.turretColliderMeshIds.clear();
+  }
+
+  private async initializeDamageParticles(): Promise<void> {
+    const healthMax = Math.max(1, this.config.combat.healthMax);
+    await Promise.all(
+      this.instances.map(async (instance) => {
+        const bundle = await createSingleDamageParticleBundle(
+          this.scene,
+          instance.damageSmoke,
+          `enemy_turret_${instance.spawnId}`,
+          `[EnemyTurretSystem] Missing turret_damage_smoke emitter for spawn "${instance.spawnId}".`
+        );
+        if (!bundle) {
+          return;
+        }
+        if (this.disposed || !instance.alive) {
+          bundle.dispose();
+          return;
+        }
+        instance.damageParticles = bundle;
+        instance.damageParticles.syncHealthPercent(clamp((instance.health / healthMax) * 100, 0, 100));
+      })
+    );
   }
 
   private hideTemplateAssets(enemiesContainer: AssetContainer): void {
@@ -485,6 +665,7 @@ export class EnemyTurretSystem {
       const pitchControl = resolveBoneControlOnRoot(root, this.config.rig.pitchBone);
       const muzzle1 = findNodeOnRoot(root, "turret_muzzle_1");
       const muzzle2 = findNodeOnRoot(root, "turret_muzzle_2");
+      const damageSmoke = findNodeOnRoot(root, "turret_damage_smoke");
 
       const skinnedMesh = root.getChildMeshes(true).find((mesh) => mesh.skeleton) ?? null;
       if (skinnedMesh) {
@@ -609,6 +790,8 @@ export class EnemyTurretSystem {
         pitchReference,
         muzzle1,
         muzzle2,
+        damageSmoke,
+        damageParticles: null,
         muzzle1LocalInPitchBone,
         muzzle2LocalInPitchBone,
         barrelForwardLocalInPitchBone,
@@ -627,12 +810,26 @@ export class EnemyTurretSystem {
         physicsShape,
         health: Math.max(1, this.config.combat.healthMax),
         alive: true,
+        flashMaterials: setupTurretFlashMaterials(
+          root,
+          skinnedMesh,
+          this.config.meshName,
+          instanceLabel
+        ),
+        damageFlashRemaining: 0,
         ...debugMeshes
       });
     }
 
     if (this.instances.length > 0) {
       console.info(`[EnemyTurretSystem] Spawned ${this.instances.length} turret(s).`);
+      for (const instance of this.instances) {
+        if (instance.flashMaterials.length === 0) {
+          console.warn(
+            `[EnemyTurretSystem] No visual damage-flash material for turret "${instance.spawnId}" (expected ${this.config.meshName}).`
+          );
+        }
+      }
     }
   }
 
@@ -726,9 +923,44 @@ export class EnemyTurretSystem {
       return;
     }
     instance.health = Math.max(0, instance.health - amount);
+    instance.damageParticles?.syncHealthPercent(
+      clamp((instance.health / Math.max(1, this.config.combat.healthMax)) * 100, 0, 100)
+    );
+    this.triggerDamageFlash(instance);
     if (instance.health <= 0) {
       this.destroyInstance(instance);
     }
+  }
+
+  private triggerDamageFlash(instance: EnemyTurretInstance): void {
+    if (instance.flashMaterials.length === 0 || this.damageFlashMaxAlpha <= 0) {
+      return;
+    }
+    instance.damageFlashRemaining = this.damageFlashDuration;
+    applyDamageFlashEmissive(
+      instance.flashMaterials,
+      this.damageFlashColor,
+      this.damageFlashMaxAlpha
+    );
+  }
+
+  private updateDamageFlash(instance: EnemyTurretInstance, dt: number): void {
+    if (instance.damageFlashRemaining <= 0) {
+      return;
+    }
+
+    instance.damageFlashRemaining = Math.max(0, instance.damageFlashRemaining - dt);
+    if (instance.damageFlashRemaining <= 0) {
+      restoreDamageFlashEmissive(instance.flashMaterials);
+      return;
+    }
+
+    const t = instance.damageFlashRemaining / this.damageFlashDuration;
+    applyDamageFlashEmissive(
+      instance.flashMaterials,
+      this.damageFlashColor,
+      this.damageFlashMaxAlpha * t
+    );
   }
 
   private destroyInstance(instance: EnemyTurretInstance): void {
@@ -763,6 +995,10 @@ export class EnemyTurretSystem {
     instance.debugTargetMarker = null;
     instance.debugPivotMarker?.dispose();
     instance.debugPivotMarker = null;
+    instance.damageParticles?.dispose();
+    instance.damageParticles = null;
+    restoreDamageFlashEmissive(instance.flashMaterials);
+    instance.damageFlashRemaining = 0;
   }
 
   private updateAimTargets(instance: EnemyTurretInstance, tankWorldPos: Vector3): void {

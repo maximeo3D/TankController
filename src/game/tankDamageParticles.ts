@@ -183,7 +183,7 @@ function buildSmokeSystem(
   scene: Scene,
   def: DamageSmokeJson,
   emitterMesh: Mesh,
-  slotId: DamageSlotId
+  slotId: string
 ): { system: ParticleSystem } {
   const ps = new ParticleSystem(`damage_smoke_${slotId}_${emitterMesh.name}`, def.capacity, scene);
   ps.particleTexture = new Texture(resolveParticleTextureUrl(def.particleTexture), scene, true, false);
@@ -330,6 +330,50 @@ export async function createTankDamageParticleBundle(
         slot.system.dispose();
         slot.emitter.dispose();
       }
+    }
+  };
+}
+
+export async function createSingleDamageParticleBundle(
+  scene: Scene,
+  parent: TransformNode | AbstractMesh | null,
+  label: string,
+  missingWarning: string
+): Promise<TankDamageParticleBundle | null> {
+  if (!parent) {
+    console.warn(missingWarning);
+    return null;
+  }
+
+  let smokeDef: DamageSmokeJson;
+  try {
+    smokeDef = await loadDamageSmokeJson();
+  } catch (err) {
+    console.warn("[TankController] Damage smoke could not be loaded:", err);
+    return null;
+  }
+
+  const profileBase = buildSmokeProfileBase(smokeDef);
+  const emitter = createEmitterMesh(scene, parent, smokeDef, label);
+  const built = buildSmokeSystem(scene, smokeDef, emitter, label);
+  const slot: DamageSlot = {
+    id: "smoke_1",
+    emitter,
+    system: built.system,
+    active: false
+  };
+
+  return {
+    syncHealthPercent(healthPercent: number): void {
+      const hp = Math.max(0, Math.min(100, healthPercent));
+      const damageIntensity = computeDamageIntensity(hp);
+      syncSlot(slot, isSlotActive(slot.id, hp), profileBase, damageIntensity);
+    },
+    dispose(): void {
+      syncSlot(slot, false, profileBase, 0);
+      slot.system.stop();
+      slot.system.dispose();
+      slot.emitter.dispose();
     }
   };
 }

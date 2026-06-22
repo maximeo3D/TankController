@@ -44,6 +44,13 @@ export interface EnemyTurretDebugConfig {
   showBulletVectors?: boolean;
 }
 
+export interface EnemyTurretDamageFlashConfig {
+  durationSeconds: number;
+  maxAlpha: number;
+  /** RGB 0–1 */
+  color: [number, number, number];
+}
+
 export interface EnemyTurretConfig {
   enabled: boolean;
   meshName: string;
@@ -51,6 +58,7 @@ export interface EnemyTurretConfig {
   spawnNodePrefix: string;
   detectionRange: number;
   debug?: EnemyTurretDebugConfig;
+  damageFlash?: EnemyTurretDamageFlashConfig;
   tracking: EnemyTurretTrackingConfig;
   rig: EnemyTurretRigConfig;
   combat: EnemyTurretCombatConfig;

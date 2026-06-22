@@ -25,6 +25,11 @@
       "yawAimXSign": 1,
       "yawAimZSign": 1
     },
+    "damageFlash": {
+      "durationSeconds": 0.15,
+      "maxAlpha": 0.35,
+      "color": [1, 0.12, 0.08]
+    },
     "combat": {
       "healthMax": 200,
       "contactDamage": 0,
