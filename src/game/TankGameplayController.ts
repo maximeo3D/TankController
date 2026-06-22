@@ -500,7 +500,10 @@ export class TankGameplayController {
         tankBody: this.tankBody,
         tankColliderMesh: options.tankColliderMesh,
         onDamage: (amount) => this.takeDamage(amount),
-        onBulletImpact: (worldPos) => this.spawnSparkImpact(worldPos)
+        onBulletImpact: (worldPos) => this.spawnSparkImpact(worldPos),
+        onTurretDestroyed: (worldPos) => {
+          void this.spawnExplosionAt(worldPos);
+        }
       });
     }
     this.input = new TankInput(options.canvas, () => !this.paused);

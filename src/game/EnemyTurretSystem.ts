@@ -53,6 +53,8 @@ export interface EnemyTurretPlayerTarget {
   onDamage: (amount: number) => void;
   /** Spark d'impact (même effet que le mitrailleur du tank). */
   onBulletImpact?: (worldPos: Vector3) => void;
+  /** Explosion visuelle à la destruction (même FX qu'un obus). */
+  onTurretDestroyed?: (worldPos: Vector3) => void;
 }
 
 interface EnemyTurretInstance {
@@ -428,6 +430,7 @@ export class EnemyTurretSystem {
   private tankColliderMesh: Mesh | null = null;
   private onPlayerDamage: ((amount: number) => void) | null = null;
   private onBulletImpact: ((worldPos: Vector3) => void) | null = null;
+  private onTurretDestroyed: ((worldPos: Vector3) => void) | null = null;
   private readonly turretColliderMeshIds = new Set<number>();
   private readonly damageFlashColor: Color3;
   private readonly damageFlashDuration: number;
@@ -514,6 +517,7 @@ export class EnemyTurretSystem {
     this.tankColliderMesh = target.tankColliderMesh;
     this.onPlayerDamage = target.onDamage;
     this.onBulletImpact = target.onBulletImpact ?? null;
+    this.onTurretDestroyed = target.onTurretDestroyed ?? null;
   }
 
   public get instanceCount(): number {
@@ -963,9 +967,19 @@ export class EnemyTurretSystem {
     );
   }
 
+  private getTurretDeathExplosionPosition(instance: EnemyTurretInstance): Vector3 {
+    if (instance.damageSmoke) {
+      instance.damageSmoke.computeWorldMatrix(true);
+      return instance.damageSmoke.getAbsolutePosition().clone();
+    }
+    return instance.anchor.getAbsolutePosition().clone();
+  }
+
   private destroyInstance(instance: EnemyTurretInstance): void {
     instance.alive = false;
     instance.tracking = false;
+
+    this.onTurretDestroyed?.(this.getTurretDeathExplosionPosition(instance));
 
     if (instance.colliderMesh) {
       this.turretColliderMeshIds.delete(instance.colliderMesh.uniqueId);
