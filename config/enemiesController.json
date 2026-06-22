@@ -29,13 +29,13 @@
       "healthMax": 200,
       "contactDamage": 0,
       "shotsPerSecondPerBarrel": 1,
-      "bulletDamage": 5,
-      "muzzleVelocity": 100,
+      "bulletDamage": 10,
+      "muzzleVelocity": 50,
       "muzzleSpawnOffset": 0.5,
       "gravityMultiplier": 0.5,
       "projectileRadius": 0.12,
       "projectileMaxLifeSeconds": 5,
-      "fireAlignmentMaxAngleDeg": 8
+      "fireAlignmentMaxAngleDeg": 5
     }
   }
 }

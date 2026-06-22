@@ -19,7 +19,7 @@ import type { TankGameplayDebugState } from "../game/TankGameplayController";
 import { AdvancedDynamicTexture, Button, Control, StackPanel, TextBlock } from "@babylonjs/gui";
 import { MENU_MAPS, type MenuMapEntry, type MenuMission } from "../ui/menuData";
 import { applyUiFontToTexture, UI_FONT_FAMILY } from "../ui/applyUiFont";
-import { TARGET_FPS } from "../game/frameTiming";
+import { TARGET_FPS, waitAnimationFrames } from "../game/frameTiming";
 
 type ScreenState = "menu" | "gameplay";
 
@@ -48,6 +48,7 @@ export class GameApp {
   private audioUnlockButton: HTMLButtonElement | null = null;
   private currentScene: Scene;
   private menuScene: Scene;
+  private loadingScene: Scene | null = null;
   /** Main menu only — never load `UI_levels` into this. */
   private menuUi: AdvancedDynamicTexture | null = null;
   /**
@@ -62,6 +63,9 @@ export class GameApp {
   private mapsStack: StackPanel | null = null;
   private missionsStack: StackPanel | null = null;
   private menuDebugSeq = 0;
+  private lastCanvasWidth = 0;
+  private lastCanvasHeight = 0;
+  private renderLoopActive = false;
 
   private menuDebugMsg(message: string, extra?: Record<string, unknown>): void {
     if (!GameApp.DEBUG_MENU_NAV) return;
@@ -137,15 +141,73 @@ export class GameApp {
     this.canvas.addEventListener("pointerdown", tryUnlockAudio, { passive: true });
     this.overlay.addEventListener("pointerdown", tryUnlockAudio, { passive: true });
 
-    this.engine = new Engine(this.canvas, true);
+    this.engine = new Engine(this.canvas, true, {
+      adaptToDeviceRatio: true,
+      antialias: true,
+      stencil: true
+    });
     this.engine.maxFPS = TARGET_FPS;
     this.menuScene = this.createMenuScene();
     this.currentScene = this.menuScene;
     void this.ensureMenuUi();
 
-    window.addEventListener("resize", () => {
-      this.engine.resize();
+    this.mountEngineResizeHandling(rootElement);
+  }
+
+  /** Resize when CSS dimensions change (cheap path for the render loop). */
+  private syncEngineSize(): void {
+    const width = this.canvas.clientWidth;
+    const height = this.canvas.clientHeight;
+    if (width <= 0 || height <= 0) {
+      return;
+    }
+    if (width === this.lastCanvasWidth && height === this.lastCanvasHeight) {
+      return;
+    }
+
+    this.lastCanvasWidth = width;
+    this.lastCanvasHeight = height;
+    this.engine.resize();
+  }
+
+  private startRenderLoop(): void {
+    if (this.renderLoopActive) {
+      return;
+    }
+
+    this.renderLoopActive = true;
+    this.engine.runRenderLoop(() => {
+      this.syncEngineSize();
+      this.currentScene.render();
+      this.refreshGameplayUi();
+      this.updateFpsDisplay();
     });
+  }
+
+  private activateScene(scene: Scene): void {
+    this.currentScene = scene;
+    this.lastCanvasWidth = 0;
+    this.lastCanvasHeight = 0;
+    this.syncEngineSize();
+  }
+
+  private mountEngineResizeHandling(rootElement: HTMLElement): void {
+    const sync = (): void => {
+      this.lastCanvasWidth = 0;
+      this.lastCanvasHeight = 0;
+      this.syncEngineSize();
+    };
+
+    window.addEventListener("resize", sync);
+
+    const resizeObserver = new ResizeObserver(() => {
+      sync();
+    });
+    resizeObserver.observe(rootElement);
+    resizeObserver.observe(this.canvas);
+
+    sync();
+    requestAnimationFrame(sync);
   }
 
   private ensureAudioUnlockButton(rootElement: HTMLElement, onClick: () => void): void {
@@ -173,12 +235,10 @@ export class GameApp {
 
   public start(): void {
     this.renderUi();
-
-    this.engine.runRenderLoop(() => {
-      this.currentScene.render();
-      this.refreshGameplayUi();
-      this.updateFpsDisplay();
-    });
+    this.lastCanvasWidth = 0;
+    this.lastCanvasHeight = 0;
+    this.syncEngineSize();
+    this.startRenderLoop();
   }
 
   private createMenuScene(): Scene {
@@ -190,6 +250,25 @@ export class GameApp {
     scene.activeCamera = camera;
 
     return scene;
+  }
+
+  private getLoadingScene(): Scene {
+    if (!this.loadingScene) {
+      const scene = new Scene(this.engine);
+      scene.clearColor = new Color4(0.05, 0.06, 0.08, 1);
+      const camera = new FreeCamera("loading_camera", new Vector3(0, 0, -10), scene);
+      camera.setTarget(Vector3.Zero());
+      scene.activeCamera = camera;
+      this.loadingScene = scene;
+    }
+    return this.loadingScene;
+  }
+
+  private disposeSceneIfTemporary(scene: Scene): void {
+    if (scene === this.menuScene || scene === this.loadingScene) {
+      return;
+    }
+    scene.dispose();
   }
 
   private setScreen(screen: ScreenState): void {
@@ -431,18 +510,18 @@ export class GameApp {
         summary: null,
         debug: null
     };
+    this.activateScene(this.getLoadingScene());
     this.renderUi();
+    await waitAnimationFrames(2);
 
     try {
       const bundle = await createGameplayScene(this.engine, level, tankConfig, this.canvas);
       const previousScene = this.currentScene;
       this.disposeGameplayBundle();
       this.gameplayBundle = bundle;
-      this.currentScene = bundle.scene;
-      // Keep menu scene + UI alive; dispose only gameplay scenes when leaving gameplay.
-      if (previousScene !== this.menuScene) {
-        previousScene.dispose();
-      }
+      this.activateScene(bundle.scene);
+      this.disposeSceneIfTemporary(previousScene);
+      await waitAnimationFrames(2);
 
       this.gameplayState = {
         levelName: level.name,
@@ -467,7 +546,7 @@ export class GameApp {
   private returnToMainMenu(): void {
     if (this.screen === "gameplay") {
       this.disposeGameplayBundle();
-      this.currentScene.dispose();
+      this.disposeSceneIfTemporary(this.currentScene);
       this.currentScene = this.menuScene;
       this.gameplayState = {
         levelName: "",
@@ -476,6 +555,7 @@ export class GameApp {
         summary: null,
         debug: null
       };
+      this.activateScene(this.menuScene);
     }
 
     void this.ensureMenuUi().then(() => this.showMainMenu());

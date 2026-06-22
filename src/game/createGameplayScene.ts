@@ -39,6 +39,7 @@ import {
 } from "./TankGameplayController";
 import { createTrackTreadParticleBundle } from "./trackTreadParticles";
 import { createTankDamageParticleBundle } from "./tankDamageParticles";
+import { waitAnimationFrames } from "./frameTiming";
 
 export interface GameplaySceneSummary {
   spawnFound: boolean;
@@ -124,17 +125,20 @@ export async function createGameplayScene(
   const havok = await HavokPhysics();
   const havokPlugin = new HavokPlugin(true, havok);
   scene.enablePhysics(new Vector3(0, -9.81, 0), havokPlugin);
+  await waitAnimationFrames(1);
 
   const terrainContainer = await SceneLoader.LoadAssetContainerAsync("", level.terrainUrl, scene);
   terrainContainer.addAllToScene();
   hideColliderMeshes(terrainContainer, scene);
   const worldPhysics = createWorldPhysics(terrainContainer, scene);
+  await waitAnimationFrames(1);
 
   const spawnNode = findTransformNode(terrainContainer, "SPAWN_tank");
 
   const tankContainer = await SceneLoader.LoadAssetContainerAsync("", tankAssetUrl, scene);
   tankContainer.addAllToScene();
   hideColliderMeshes(tankContainer, scene);
+  await waitAnimationFrames(1);
 
   const tankAnchor = new TransformNode("tank_anchor", scene);
   const tankVisualRoot = new TransformNode("tank_visual_root", scene);
@@ -390,8 +394,6 @@ export async function createGameplayScene(
     playerTargetNode,
     enemyTurretSystem
   });
-
-  await scene.whenReadyAsync();
 
   return {
     scene,
