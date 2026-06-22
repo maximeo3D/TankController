@@ -15,6 +15,7 @@ export interface TankInputFrame {
 
 export class TankInput {
   private readonly canvas: HTMLCanvasElement;
+  private readonly shouldRequestPointerLock: () => boolean;
   private readonly pressedKeys = new Set<string>();
   private lookDeltaX = 0;
   private lookDeltaY = 0;
@@ -27,8 +28,10 @@ export class TankInput {
   private selectedWeapon: WeaponType = "shell";
   private pointerLocked = false;
 
-  public constructor(canvas: HTMLCanvasElement) {
+  public constructor(canvas: HTMLCanvasElement, shouldRequestPointerLock: () => boolean = () => true) {
     this.canvas = canvas;
+    this.shouldRequestPointerLock = shouldRequestPointerLock;
+    this.pointerLocked = document.pointerLockElement === this.canvas;
     this.canvas.tabIndex = 0;
 
     window.addEventListener("keydown", this.handleKeyDown);
@@ -69,6 +72,17 @@ export class TankInput {
     this.lookDeltaY = 0;
     this.isPrimaryFireHeld = false;
     this.zoomToggled = false;
+  }
+
+  /** Re-acquire pointer lock (must run inside a user gesture, e.g. Resume click). */
+  public requestPointerLock(): void {
+    if (this.pointerLocked || !this.shouldRequestPointerLock()) {
+      return;
+    }
+
+    void this.canvas.requestPointerLock().catch(() => {
+      // Browser security cooldown after Escape; next regular click can acquire it.
+    });
   }
 
   public dispose(): void {
@@ -149,10 +163,7 @@ export class TankInput {
 
   private readonly handlePointerDown = (event: PointerEvent): void => {
     this.canvas.focus();
-    // Capture pointer for FPS-style camera control. Escape releases it automatically.
-    if (!this.pointerLocked) {
-      void this.canvas.requestPointerLock();
-    }
+    this.requestPointerLock();
     const rect = this.canvas.getBoundingClientRect();
     const scaleX = rect.width > 0 ? this.canvas.width / rect.width : 1;
     const scaleY = rect.height > 0 ? this.canvas.height / rect.height : 1;

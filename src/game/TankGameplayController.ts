@@ -503,7 +503,7 @@ export class TankGameplayController {
         onBulletImpact: (worldPos) => this.spawnSparkImpact(worldPos)
       });
     }
-    this.input = new TankInput(options.canvas);
+    this.input = new TankInput(options.canvas, () => !this.paused);
     this.turretControl = resolveBoneControl(options.tankContainer, "tourelle");
     this.cannonControl = resolveBoneControl(options.tankContainer, "canon");
     this.caisseControl = resolveBoneControl(options.tankContainer, "caisse");

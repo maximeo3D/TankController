@@ -145,6 +145,7 @@ export class GameApp {
     this.canvas.addEventListener("pointerdown", tryUnlockAudio, { passive: true });
     this.overlay.addEventListener("pointerdown", tryUnlockAudio, { passive: true });
     window.addEventListener("keydown", this.handleGlobalKeyDown);
+    document.addEventListener("pointerlockchange", this.handlePointerLockChange);
 
     this.engine = new Engine(this.canvas, true, {
       adaptToDeviceRatio: true,
@@ -194,6 +195,7 @@ export class GameApp {
     this.lastCanvasWidth = 0;
     this.lastCanvasHeight = 0;
     this.syncEngineSize();
+    this.updateCursorMode();
   }
 
   private mountEngineResizeHandling(rootElement: HTMLElement): void {
@@ -216,6 +218,16 @@ export class GameApp {
   }
 
   private readonly handleGlobalKeyDown = (event: KeyboardEvent): void => {
+    if (
+      event.key !== "Escape" &&
+      this.screen === "gameplay" &&
+      !this.isPaused &&
+      !this.gameplayState.isLoading &&
+      document.pointerLockElement !== this.canvas
+    ) {
+      this.requestGameplayPointerLockFromGesture();
+    }
+
     if (event.key !== "Escape" || this.screen !== "gameplay" || this.gameplayState.isLoading) {
       return;
     }
@@ -224,7 +236,21 @@ export class GameApp {
     this.setPaused(!this.isPaused);
   };
 
-  private setPaused(paused: boolean): void {
+  private readonly handlePointerLockChange = (): void => {
+    if (
+      document.pointerLockElement === this.canvas ||
+      this.screen !== "gameplay" ||
+      this.gameplayState.isLoading ||
+      !this.gameplayBundle ||
+      this.isPaused
+    ) {
+      return;
+    }
+
+    this.setPaused(true);
+  };
+
+  private setPaused(paused: boolean, requestPointerLockOnResume = true): void {
     if (!this.gameplayBundle || this.isPaused === paused) {
       return;
     }
@@ -236,10 +262,36 @@ export class GameApp {
       this.pauseUi.rootContainer.isHitTestVisible = paused;
       this.pauseUi.markAsDirty();
     }
+    this.updateCursorMode();
 
     if (paused && document.pointerLockElement) {
       document.exitPointerLock();
+    } else if (requestPointerLockOnResume) {
+      this.requestGameplayPointerLockFromGesture();
     }
+  }
+
+  private requestGameplayPointerLockFromGesture(): void {
+    if (document.pointerLockElement === this.canvas) {
+      return;
+    }
+
+    this.canvas.focus();
+    void this.canvas.requestPointerLock().catch(() => {
+      // Browser may reject if this is not tied to a current user gesture.
+    });
+  }
+
+  private updateCursorMode(): void {
+    const hideCursor =
+      this.screen === "gameplay" &&
+      !this.isPaused &&
+      !this.gameplayState.isLoading;
+    const cursor = hideCursor ? "none" : "default";
+
+    this.canvas.style.cursor = cursor;
+    this.currentScene.defaultCursor = cursor;
+    this.currentScene.hoverCursor = cursor;
   }
 
   private ensureAudioUnlockButton(rootElement: HTMLElement, onClick: () => void): void {
@@ -316,10 +368,14 @@ export class GameApp {
     stack.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
     ui.addControl(stack);
 
-    stack.addControl(this.createPauseButton("RESUME", () => this.setPaused(false)));
+    stack.addControl(this.createPauseButton("RESUME", () => {
+      this.requestGameplayPointerLockFromGesture();
+      this.setPaused(false);
+    }, true));
     stack.addControl(this.createPauseButton("RESTART", () => {
+      this.requestGameplayPointerLockFromGesture();
       void this.restartCurrentLevel();
-    }));
+    }, true));
     stack.addControl(this.createPauseButton("BRIEFING", () => {
       // Placeholder for future briefing panel.
     }));
@@ -334,7 +390,7 @@ export class GameApp {
     return ui;
   }
 
-  private createPauseButton(label: string, onClick: () => void): Button {
+  private createPauseButton(label: string, onActivate: () => void, activateOnPointerDown = false): Button {
     const button = Button.CreateSimpleButton(`pause_btn_${label.toLowerCase()}`, label);
     button.width = "410px";
     button.height = "84px";
@@ -349,7 +405,11 @@ export class GameApp {
     button.onPointerOutObservable.add(() => {
       button.background = "#171b20";
     });
-    button.onPointerClickObservable.add(onClick);
+    if (activateOnPointerDown) {
+      button.onPointerDownObservable.add(onActivate);
+    } else {
+      button.onPointerClickObservable.add(onActivate);
+    }
 
     const text = button.textBlock as TextBlock | undefined;
     if (text) {
@@ -372,6 +432,7 @@ export class GameApp {
   private setScreen(screen: ScreenState): void {
     this.screen = screen;
     this.renderUi();
+    this.updateCursorMode();
   }
 
   private menuUrlRewriter(url: string): string {
@@ -457,8 +518,9 @@ export class GameApp {
       this.menuDebugMsg("ensureLevelSelectUi: ps_btn_back NOT FOUND");
     }
 
-    this.startButton?.onPointerClickObservable.add(() => {
+    this.startButton?.onPointerDownObservable.add(() => {
       if (!this.selectedMap || !this.selectedMission) return;
+      this.requestGameplayPointerLockFromGesture();
       void this.startLevel(this.selectedMap.level);
     });
 
@@ -641,6 +703,7 @@ export class GameApp {
         summary: bundle.summary,
         debug: bundle.getDebugState()
       };
+      this.updateCursorMode();
     } catch (error) {
       this.gameplayState = {
         levelName: level.name,
@@ -649,6 +712,7 @@ export class GameApp {
         summary: null,
         debug: null
       };
+      this.updateCursorMode();
     }
 
     this.isStartingLevel = false;
@@ -664,7 +728,10 @@ export class GameApp {
   }
 
   private async exitToLevelSelect(): Promise<void> {
-    this.setPaused(false);
+    this.setPaused(false, false);
+    if (document.pointerLockElement === this.canvas) {
+      document.exitPointerLock();
+    }
     this.pauseUi?.dispose();
     this.pauseUi = null;
     this.disposeGameplayBundle();
