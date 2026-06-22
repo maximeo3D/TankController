@@ -59,6 +59,8 @@ export interface GameplaySceneBundle {
   dispose: () => void;
 }
 
+export type GameplayLoadingProgressCallback = (progress: number) => void;
+
 const REQUIRED_BONES = ["main", "caisse", "tourelle", "canon"] as const;
 const OPTIONAL_TRACK_BONES = ["track_L", "track_R"] as const;
 
@@ -89,8 +91,10 @@ export async function createGameplayScene(
   engine: Engine,
   level: LevelDefinition,
   config: TankControllerConfig,
-  canvas: HTMLCanvasElement
+  canvas: HTMLCanvasElement,
+  onProgress: GameplayLoadingProgressCallback = () => {}
 ): Promise<GameplaySceneBundle> {
+  onProgress(0.02);
   const scene = new Scene(engine);
   scene.useRightHandedSystem = true;
   scene.clearColor = new Color4(0.05, 0.06, 0.08, 1);
@@ -103,6 +107,7 @@ export async function createGameplayScene(
   await waitForCubeTextureReady(envTex);
   scene.environmentTexture = envTex;
   scene.environmentIntensity = 0.5;
+  onProgress(0.1);
 
   const skyboxReflection = envTex.clone();
   await waitForCubeTextureReady(skyboxReflection);
@@ -126,12 +131,14 @@ export async function createGameplayScene(
   const havok = await HavokPhysics();
   const havokPlugin = new HavokPlugin(true, havok);
   scene.enablePhysics(new Vector3(0, -9.81, 0), havokPlugin);
+  onProgress(0.2);
   await waitAnimationFrames(1);
 
   const terrainContainer = await SceneLoader.LoadAssetContainerAsync("", level.terrainUrl, scene);
   terrainContainer.addAllToScene();
   hideColliderMeshes(terrainContainer, scene);
   const worldPhysics = createWorldPhysics(terrainContainer, scene);
+  onProgress(0.38);
   await waitAnimationFrames(1);
 
   const spawnNode = findTransformNode(terrainContainer, "SPAWN_tank");
@@ -139,6 +146,7 @@ export async function createGameplayScene(
   const tankContainer = await SceneLoader.LoadAssetContainerAsync("", tankAssetUrl, scene);
   tankContainer.addAllToScene();
   hideColliderMeshes(tankContainer, scene);
+  onProgress(0.55);
   await waitAnimationFrames(1);
 
   const tankAnchor = new TransformNode("tank_anchor", scene);
@@ -311,6 +319,7 @@ export async function createGameplayScene(
   } catch (err) {
     console.warn("[TankController] Track tread particles could not be created:", err);
   }
+  onProgress(0.7);
 
   let trackTreadParticlesReverse = null;
   try {
@@ -341,9 +350,12 @@ export async function createGameplayScene(
   } catch (err) {
     console.warn("[TankController] Tank damage particles could not be created:", err);
   }
+  onProgress(0.8);
 
   const powerUpsContainer = await SceneLoader.LoadAssetContainerAsync("", powerUpsAssetUrl, scene);
+  onProgress(0.88);
   const enemiesContainer = await SceneLoader.LoadAssetContainerAsync("", enemiesAssetUrl, scene);
+  onProgress(0.94);
 
   let enemyTurretSystem: EnemyTurretSystem | null = null;
   if (enemiesConfig.turret.enabled) {
@@ -395,6 +407,7 @@ export async function createGameplayScene(
     playerTargetNode,
     enemyTurretSystem
   });
+  onProgress(1);
 
   return {
     scene,

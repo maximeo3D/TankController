@@ -49,6 +49,9 @@ export class GameApp {
   private currentScene: Scene;
   private menuScene: Scene;
   private loadingScene: Scene | null = null;
+  private loadingUi: AdvancedDynamicTexture | null = null;
+  private loadingBackgroundImage: Image | null = null;
+  private loadingProgressFill: Rectangle | null = null;
   /** Main menu only — never load `UI_levels` into this. */
   private menuUi: AdvancedDynamicTexture | null = null;
   /**
@@ -66,6 +69,7 @@ export class GameApp {
   private missionDescriptionText: TextBlock | null = null;
   private pauseUi: AdvancedDynamicTexture | null = null;
   private currentLevel: LevelDefinition | null = null;
+  private currentMission: MenuMission | null = null;
   private isPaused = false;
   private isStartingLevel = false;
   private menuDebugSeq = 0;
@@ -345,9 +349,63 @@ export class GameApp {
       const camera = new FreeCamera("loading_camera", new Vector3(0, 0, -10), scene);
       camera.setTarget(Vector3.Zero());
       scene.activeCamera = camera;
+      this.createLoadingUi(scene);
       this.loadingScene = scene;
     }
     return this.loadingScene;
+  }
+
+  private createLoadingUi(scene: Scene): void {
+    const ui = AdvancedDynamicTexture.CreateFullscreenUI("loading_ui", true, scene);
+    this.loadingUi = ui;
+
+    const background = new Image("loading_mission_background");
+    background.width = "100%";
+    background.height = "100%";
+    background.stretch = Image.STRETCH_FILL;
+    background.source = "";
+    ui.addControl(background);
+    this.loadingBackgroundImage = background;
+
+    const dimmer = new Rectangle("loading_dimmer");
+    dimmer.width = "100%";
+    dimmer.height = "100%";
+    dimmer.thickness = 0;
+    dimmer.background = "rgba(0, 0, 0, 0.34)";
+    ui.addControl(dimmer);
+
+    const progressTrack = new Rectangle("loading_progress_track");
+    progressTrack.width = "78%";
+    progressTrack.height = "8px";
+    progressTrack.thickness = 0;
+    progressTrack.background = "rgba(255, 255, 255, 0.24)";
+    progressTrack.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
+    progressTrack.verticalAlignment = Control.VERTICAL_ALIGNMENT_BOTTOM;
+    progressTrack.top = "-54px";
+    ui.addControl(progressTrack);
+
+    const progressFill = new Rectangle("loading_progress_fill");
+    progressFill.width = "0%";
+    progressFill.height = "100%";
+    progressFill.thickness = 0;
+    progressFill.background = "#FFFFFFFF";
+    progressFill.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_LEFT;
+    progressFill.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
+    progressTrack.addControl(progressFill);
+    this.loadingProgressFill = progressFill;
+
+    applyUiFontToTexture(ui);
+  }
+
+  private updateLoadingScreen(mission: MenuMission | null, progress: number): void {
+    if (this.loadingBackgroundImage) {
+      this.loadingBackgroundImage.source = mission?.imageUrl ?? "";
+    }
+    if (this.loadingProgressFill) {
+      const clampedProgress = Math.max(0, Math.min(1, progress));
+      this.loadingProgressFill.width = `${Math.round(clampedProgress * 100)}%`;
+    }
+    this.loadingUi?.markAsDirty();
   }
 
   private createPauseUi(scene: Scene): AdvancedDynamicTexture {
@@ -525,7 +583,7 @@ export class GameApp {
     this.startButton?.onPointerDownObservable.add(() => {
       if (!this.selectedMap || !this.selectedMission) return;
       this.requestGameplayPointerLockFromGesture();
-      void this.startLevel(this.selectedMap.level);
+      void this.startLevel(this.selectedMap.level, this.selectedMission);
     });
 
     if (GameApp.DEBUG_MENU_NAV) {
@@ -688,7 +746,7 @@ export class GameApp {
     }
   }
 
-  private async startLevel(level: LevelDefinition): Promise<void> {
+  private async startLevel(level: LevelDefinition, mission: MenuMission | null = this.currentMission): Promise<void> {
     if (this.isStartingLevel) {
       return;
     }
@@ -696,6 +754,7 @@ export class GameApp {
     const sceneToDispose = this.currentScene;
     this.isStartingLevel = true;
     this.currentLevel = level;
+    this.currentMission = mission;
     this.setPaused(false);
     this.setMenuSceneUiActive(false);
     this.screen = "gameplay";
@@ -711,11 +770,14 @@ export class GameApp {
     this.disposeGameplayBundle();
     this.disposeSceneIfTemporary(sceneToDispose);
     this.activateScene(this.getLoadingScene());
+    this.updateLoadingScreen(mission, 0);
     this.renderUi();
     await waitAnimationFrames(2);
 
     try {
-      const bundle = await createGameplayScene(this.engine, level, tankConfig, this.canvas);
+      const bundle = await createGameplayScene(this.engine, level, tankConfig, this.canvas, (progress) => {
+        this.updateLoadingScreen(mission, progress);
+      });
       const previousScene = this.currentScene;
       this.disposeGameplayBundle();
       this.gameplayBundle = bundle;
@@ -752,7 +814,7 @@ export class GameApp {
       return;
     }
 
-    await this.startLevel(this.currentLevel);
+    await this.startLevel(this.currentLevel, this.currentMission);
   }
 
   private async exitToLevelSelect(): Promise<void> {
@@ -766,6 +828,7 @@ export class GameApp {
     this.disposeSceneIfTemporary(this.currentScene);
     this.currentScene = this.menuScene;
     this.currentLevel = null;
+    this.currentMission = null;
     this.gameplayState = {
       levelName: "",
       isLoading: false,
@@ -791,12 +854,6 @@ export class GameApp {
     const panel = document.createElement("div");
     panel.className = GameApp.SHOW_GAMEPLAY_DEBUG_PANEL ? "panel panel-debug" : "panel panel-menu";
 
-    if (this.gameplayState.isLoading) {
-      const loading = document.createElement("p");
-      loading.textContent = `Chargement : ${this.gameplayState.levelName}…`;
-      panel.append(loading);
-    }
-
     if (this.gameplayState.errorMessage) {
       const error = document.createElement("p");
       error.textContent = this.gameplayState.errorMessage;
@@ -805,7 +862,7 @@ export class GameApp {
       panel.append(error);
     }
 
-    if (this.gameplayState.isLoading || this.gameplayState.errorMessage) {
+    if (this.gameplayState.errorMessage) {
       this.overlay.append(panel);
     }
   }
