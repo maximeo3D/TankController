@@ -4,6 +4,8 @@ import type { LevelDefinition } from "../app/levels";
 export interface MenuMission {
   id: string;
   label: string;
+  description: string;
+  imageUrl: string;
 }
 
 export interface MenuMapEntry {
@@ -24,7 +26,14 @@ export const MENU_MAPS: readonly MenuMapEntry[] = [
       description: "Terrain de test.",
       terrainUrl: terrainAssetUrl
     },
-    missions: [{ id: "test", label: "test" }]
+    missions: [
+      {
+        id: "test",
+        label: "test",
+        description: "Une zone d'entrainement courte pour tester les commandes du tank et valider les systemes de mission.",
+        imageUrl: new URL("../../assets/ui/level-training-test.png", import.meta.url).href
+      }
+    ]
   },
   {
     id: "living_room",
@@ -35,7 +44,14 @@ export const MENU_MAPS: readonly MenuMapEntry[] = [
       description: "Salon",
       terrainUrl: new URL("../../assets/livingroom.glb", import.meta.url).href
     },
-    missions: [{ id: "destruction", label: "destruction" }]
+    missions: [
+      {
+        id: "destruction",
+        label: "destruction",
+        description: "Un salon transforme en champ de bataille. Avance entre les obstacles et detruis les cibles prioritaires.",
+        imageUrl: new URL("../../assets/ui/level-livingroom-destruction.png", import.meta.url).href
+      }
+    ]
   }
 ] as const;
 

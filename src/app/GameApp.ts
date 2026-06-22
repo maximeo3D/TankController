@@ -16,7 +16,7 @@ import {
   type GameplaySceneSummary
 } from "../game/createGameplayScene";
 import type { TankGameplayDebugState } from "../game/TankGameplayController";
-import { AdvancedDynamicTexture, Button, Control, Rectangle, StackPanel, TextBlock } from "@babylonjs/gui";
+import { AdvancedDynamicTexture, Button, Control, Image, Rectangle, StackPanel, TextBlock } from "@babylonjs/gui";
 import { MENU_MAPS, type MenuMapEntry, type MenuMission } from "../ui/menuData";
 import { applyUiFontToTexture, UI_FONT_FAMILY } from "../ui/applyUiFont";
 import { TARGET_FPS, waitAnimationFrames } from "../game/frameTiming";
@@ -62,6 +62,8 @@ export class GameApp {
   private startButton: Control | null = null;
   private mapsStack: StackPanel | null = null;
   private missionsStack: StackPanel | null = null;
+  private missionPreviewImage: Image | null = null;
+  private missionDescriptionText: TextBlock | null = null;
   private pauseUi: AdvancedDynamicTexture | null = null;
   private currentLevel: LevelDefinition | null = null;
   private isPaused = false;
@@ -503,6 +505,8 @@ export class GameApp {
     this.startButton = ui.getControlByName("ps_btn_start");
     this.mapsStack = ui.getControlByName("ps_stack_maps") as StackPanel | null;
     this.missionsStack = ui.getControlByName("ps_stack_missions") as StackPanel | null;
+    this.missionPreviewImage = ui.getControlByName("ps_mission_preview_image") as Image | null;
+    this.missionDescriptionText = ui.getControlByName("ps_mission_description") as TextBlock | null;
 
     const btnBack = ui.getControlByName("ps_btn_back");
     if (btnBack) {
@@ -578,6 +582,7 @@ export class GameApp {
     this.selectedMission = null;
     this.populateMaps();
     this.populateMissions(null);
+    this.setMissionDetails(null, null);
     this.setStartEnabled(false);
 
     this.menuDebugMsg("showPlaySelect: level vis=" + (this.levelSelectUi?.rootContainer.isVisible ?? "?"));
@@ -599,6 +604,7 @@ export class GameApp {
         this.selectedMap = map;
         this.selectedMission = null;
         this.populateMissions(map);
+        this.setMissionDetails(map, null);
         this.setStartEnabled(false);
       });
       this.mapsStack.addControl(row);
@@ -613,6 +619,7 @@ export class GameApp {
     for (const mission of map.missions) {
       const row = this.createListRow(mission.label, () => {
         this.selectedMission = mission;
+        this.setMissionDetails(map, mission);
         this.setStartEnabled(Boolean(this.selectedMap && this.selectedMission));
       });
       this.missionsStack.addControl(row);
@@ -646,6 +653,27 @@ export class GameApp {
     });
 
     return btn;
+  }
+
+  private setMissionDetails(map: MenuMapEntry | null, mission: MenuMission | null): void {
+    if (!mission || !map) {
+      if (this.missionPreviewImage) {
+        this.missionPreviewImage.isVisible = false;
+        this.missionPreviewImage.source = "";
+      }
+      if (this.missionDescriptionText) {
+        this.missionDescriptionText.text = "Selectionne une mission pour afficher son briefing.";
+      }
+      return;
+    }
+
+    if (this.missionPreviewImage) {
+      this.missionPreviewImage.source = mission.imageUrl;
+      this.missionPreviewImage.isVisible = true;
+    }
+    if (this.missionDescriptionText) {
+      this.missionDescriptionText.text = mission.description;
+    }
   }
 
   private setMenuSceneUiActive(active: boolean): void {
