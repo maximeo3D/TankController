@@ -63,6 +63,14 @@ export class TankInput {
     return frame;
   }
 
+  public resetState(): void {
+    this.pressedKeys.clear();
+    this.lookDeltaX = 0;
+    this.lookDeltaY = 0;
+    this.isPrimaryFireHeld = false;
+    this.zoomToggled = false;
+  }
+
   public dispose(): void {
     window.removeEventListener("keydown", this.handleKeyDown);
     window.removeEventListener("keyup", this.handleKeyUp);

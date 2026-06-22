@@ -55,6 +55,7 @@ export interface GameplaySceneBundle {
   scene: Scene;
   summary: GameplaySceneSummary;
   getDebugState: () => TankGameplayDebugState;
+  setPaused: (paused: boolean) => void;
   dispose: () => void;
 }
 
@@ -407,6 +408,7 @@ export async function createGameplayScene(
       enemyTurretsSpawned: enemyTurretSystem?.instanceCount ?? 0
     },
     getDebugState: () => controller.getDebugState(),
+    setPaused: (paused) => controller.setPaused(paused),
     dispose: () => {
       controller.dispose();
       disposePhysicsGroup(worldPhysics);

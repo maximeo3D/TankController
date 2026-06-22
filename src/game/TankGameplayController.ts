@@ -435,6 +435,7 @@ export class TankGameplayController {
   private turretStopSound: Sound | null = null;
   private turretSoundState: "stopped" | "starting" | "looping" | "stopping" = "stopped";
   private articulationIsRotating = false;
+  private paused = false;
 
   private explosionDefsPromise: Promise<unknown[]> | null = null;
 
@@ -2296,7 +2297,44 @@ export class TankGameplayController {
     this.enemyTurretSystem?.dispose();
   }
 
+  public setPaused(paused: boolean): void {
+    if (this.paused === paused) {
+      return;
+    }
+
+    this.paused = paused;
+    this.input.resetState();
+
+    if (!paused) {
+      return;
+    }
+
+    this.fireHeld = false;
+    this.boostInputHeld = false;
+    this.smoothedMoveAxis = 0;
+    this.smoothedTurnAxis = 0;
+    this.prevSmoothedMoveAxis = 0;
+    this.boostActive = false;
+    this.articulationIsRotating = false;
+
+    this.tankBody.setLinearVelocity(Vector3.Zero());
+    this.tankBody.setAngularVelocity(Vector3.Zero());
+
+    this.tankIdleSound?.stop();
+    this.tankMoveSound?.stop();
+    this.tankMovementSoundMode = "stopped";
+    this.turretStartSound?.stop();
+    this.turretLoopSound?.stop();
+    this.turretStopSound?.stop();
+    this.turretSoundState = "stopped";
+  }
+
   private readonly update = (): void => {
+    if (this.paused) {
+      this.input.consumeFrame();
+      return;
+    }
+
     // Fixed step: engine.maxFPS caps frames; getDeltaTime() is unreliable if render is skipped manually.
     const dt = TARGET_FRAME_SEC;
 

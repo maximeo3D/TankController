@@ -16,7 +16,7 @@ import {
   type GameplaySceneSummary
 } from "../game/createGameplayScene";
 import type { TankGameplayDebugState } from "../game/TankGameplayController";
-import { AdvancedDynamicTexture, Button, Control, StackPanel, TextBlock } from "@babylonjs/gui";
+import { AdvancedDynamicTexture, Button, Control, Rectangle, StackPanel, TextBlock } from "@babylonjs/gui";
 import { MENU_MAPS, type MenuMapEntry, type MenuMission } from "../ui/menuData";
 import { applyUiFontToTexture, UI_FONT_FAMILY } from "../ui/applyUiFont";
 import { TARGET_FPS, waitAnimationFrames } from "../game/frameTiming";
@@ -62,6 +62,10 @@ export class GameApp {
   private startButton: Control | null = null;
   private mapsStack: StackPanel | null = null;
   private missionsStack: StackPanel | null = null;
+  private pauseUi: AdvancedDynamicTexture | null = null;
+  private currentLevel: LevelDefinition | null = null;
+  private isPaused = false;
+  private isStartingLevel = false;
   private menuDebugSeq = 0;
   private lastCanvasWidth = 0;
   private lastCanvasHeight = 0;
@@ -140,6 +144,7 @@ export class GameApp {
     };
     this.canvas.addEventListener("pointerdown", tryUnlockAudio, { passive: true });
     this.overlay.addEventListener("pointerdown", tryUnlockAudio, { passive: true });
+    window.addEventListener("keydown", this.handleGlobalKeyDown);
 
     this.engine = new Engine(this.canvas, true, {
       adaptToDeviceRatio: true,
@@ -210,6 +215,33 @@ export class GameApp {
     requestAnimationFrame(sync);
   }
 
+  private readonly handleGlobalKeyDown = (event: KeyboardEvent): void => {
+    if (event.key !== "Escape" || this.screen !== "gameplay" || this.gameplayState.isLoading) {
+      return;
+    }
+
+    event.preventDefault();
+    this.setPaused(!this.isPaused);
+  };
+
+  private setPaused(paused: boolean): void {
+    if (!this.gameplayBundle || this.isPaused === paused) {
+      return;
+    }
+
+    this.isPaused = paused;
+    this.gameplayBundle.setPaused(paused);
+    if (this.pauseUi) {
+      this.pauseUi.rootContainer.isVisible = paused;
+      this.pauseUi.rootContainer.isHitTestVisible = paused;
+      this.pauseUi.markAsDirty();
+    }
+
+    if (paused && document.pointerLockElement) {
+      document.exitPointerLock();
+    }
+  }
+
   private ensureAudioUnlockButton(rootElement: HTMLElement, onClick: () => void): void {
     if (this.audioUnlockButton) return;
     const btn = document.createElement("button");
@@ -262,6 +294,72 @@ export class GameApp {
       this.loadingScene = scene;
     }
     return this.loadingScene;
+  }
+
+  private createPauseUi(scene: Scene): AdvancedDynamicTexture {
+    const ui = AdvancedDynamicTexture.CreateFullscreenUI("pause_menu_ui", true, scene);
+    ui.rootContainer.isVisible = false;
+    ui.rootContainer.isHitTestVisible = false;
+
+    const dimmer = new Rectangle("pause_menu_dimmer");
+    dimmer.width = "100%";
+    dimmer.height = "100%";
+    dimmer.thickness = 0;
+    dimmer.background = "rgba(25, 30, 36, 0.58)";
+    ui.addControl(dimmer);
+
+    const stack = new StackPanel("pause_menu_stack");
+    stack.width = "420px";
+    stack.isVertical = true;
+    stack.spacing = 10;
+    stack.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
+    stack.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
+    ui.addControl(stack);
+
+    stack.addControl(this.createPauseButton("RESUME", () => this.setPaused(false)));
+    stack.addControl(this.createPauseButton("RESTART", () => {
+      void this.restartCurrentLevel();
+    }));
+    stack.addControl(this.createPauseButton("BRIEFING", () => {
+      // Placeholder for future briefing panel.
+    }));
+    stack.addControl(this.createPauseButton("OPTIONS", () => {
+      // Placeholder for future options panel.
+    }));
+    stack.addControl(this.createPauseButton("EXIT", () => {
+      void this.exitToLevelSelect();
+    }));
+
+    applyUiFontToTexture(ui);
+    return ui;
+  }
+
+  private createPauseButton(label: string, onClick: () => void): Button {
+    const button = Button.CreateSimpleButton(`pause_btn_${label.toLowerCase()}`, label);
+    button.width = "410px";
+    button.height = "84px";
+    button.thickness = 1;
+    button.cornerRadius = 4;
+    button.color = "#d8dadd";
+    button.background = "#171b20";
+    button.hoverCursor = "pointer";
+    button.onPointerEnterObservable.add(() => {
+      button.background = "#232932";
+    });
+    button.onPointerOutObservable.add(() => {
+      button.background = "#171b20";
+    });
+    button.onPointerClickObservable.add(onClick);
+
+    const text = button.textBlock as TextBlock | undefined;
+    if (text) {
+      text.fontFamily = UI_FONT_FAMILY;
+      text.fontStyle = "";
+      text.fontSize = "48px";
+      text.color = "#d8dadd";
+    }
+
+    return button;
   }
 
   private disposeSceneIfTemporary(scene: Scene): void {
@@ -501,15 +599,27 @@ export class GameApp {
   }
 
   private async startLevel(level: LevelDefinition): Promise<void> {
+    if (this.isStartingLevel) {
+      return;
+    }
+
+    const sceneToDispose = this.currentScene;
+    this.isStartingLevel = true;
+    this.currentLevel = level;
+    this.setPaused(false);
     this.setMenuSceneUiActive(false);
     this.screen = "gameplay";
     this.gameplayState = {
       levelName: level.name,
       isLoading: true,
       errorMessage: null,
-        summary: null,
-        debug: null
+      summary: null,
+      debug: null
     };
+    this.pauseUi?.dispose();
+    this.pauseUi = null;
+    this.disposeGameplayBundle();
+    this.disposeSceneIfTemporary(sceneToDispose);
     this.activateScene(this.getLoadingScene());
     this.renderUi();
     await waitAnimationFrames(2);
@@ -519,6 +629,7 @@ export class GameApp {
       const previousScene = this.currentScene;
       this.disposeGameplayBundle();
       this.gameplayBundle = bundle;
+      this.pauseUi = this.createPauseUi(bundle.scene);
       this.activateScene(bundle.scene);
       this.disposeSceneIfTemporary(previousScene);
       await waitAnimationFrames(2);
@@ -540,26 +651,39 @@ export class GameApp {
       };
     }
 
+    this.isStartingLevel = false;
     this.renderUi();
   }
 
-  private returnToMainMenu(): void {
-    if (this.screen === "gameplay") {
-      this.disposeGameplayBundle();
-      this.disposeSceneIfTemporary(this.currentScene);
-      this.currentScene = this.menuScene;
-      this.gameplayState = {
-        levelName: "",
-        isLoading: false,
-        errorMessage: null,
-        summary: null,
-        debug: null
-      };
-      this.activateScene(this.menuScene);
+  private async restartCurrentLevel(): Promise<void> {
+    if (!this.currentLevel) {
+      return;
     }
 
-    void this.ensureMenuUi().then(() => this.showMainMenu());
+    await this.startLevel(this.currentLevel);
+  }
+
+  private async exitToLevelSelect(): Promise<void> {
+    this.setPaused(false);
+    this.pauseUi?.dispose();
+    this.pauseUi = null;
+    this.disposeGameplayBundle();
+    this.disposeSceneIfTemporary(this.currentScene);
+    this.currentScene = this.menuScene;
+    this.currentLevel = null;
+    this.gameplayState = {
+      levelName: "",
+      isLoading: false,
+      errorMessage: null,
+      summary: null,
+      debug: null
+    };
+
+    await this.ensureMenuUi();
+    await this.ensureLevelSelectUi();
     this.setScreen("menu");
+    this.showPlaySelect();
+    this.activateScene(this.menuScene);
   }
 
   private renderUi(): void {
@@ -571,8 +695,6 @@ export class GameApp {
 
     const panel = document.createElement("div");
     panel.className = GameApp.SHOW_GAMEPLAY_DEBUG_PANEL ? "panel panel-debug" : "panel panel-menu";
-
-    panel.append(createButton("Back To Menu", () => this.returnToMainMenu()));
 
     if (this.gameplayState.isLoading) {
       const loading = document.createElement("p");
@@ -588,7 +710,9 @@ export class GameApp {
       panel.append(error);
     }
 
-    this.overlay.append(panel);
+    if (this.gameplayState.isLoading || this.gameplayState.errorMessage) {
+      this.overlay.append(panel);
+    }
   }
 
   private refreshGameplayUi(): void {
@@ -623,14 +747,6 @@ export class GameApp {
     const fps = Math.round(this.engine.getFps());
     this.fpsElement.textContent = `${fps} FPS`;
   }
-}
-
-function createButton(label: string, onClick: () => void): HTMLButtonElement {
-  const button = document.createElement("button");
-  button.className = "ui-button";
-  button.textContent = label;
-  button.addEventListener("click", onClick);
-  return button;
 }
 
 // (formatVector removed; previous HTML debug panel trimmed)
