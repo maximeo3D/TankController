@@ -34,7 +34,7 @@
       "healthMax": 200,
       "contactDamage": 0,
       "shotsPerSecondPerBarrel": 1,
-      "bulletDamage": 10,
+      "bulletDamage": 5,
       "muzzleVelocity": 50,
       "muzzleSpawnOffset": 0.5,
       "gravityMultiplier": 0.5,
