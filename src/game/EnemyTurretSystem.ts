@@ -380,6 +380,58 @@ function parseSpawnId(spawnNodeName: string, prefix: string): string | null {
   return suffix.length > 0 ? suffix : null;
 }
 
+function findLinkedNodeClone(
+  root: TransformNode,
+  sourceNode: TransformNode
+): TransformNode | null {
+  const stack: TransformNode[] = [root];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (!node) {
+      continue;
+    }
+    if (node !== sourceNode && matchNodeName(node.name, sourceNode.name)) {
+      return node;
+    }
+    for (const child of node.getChildren()) {
+      if (child instanceof TransformNode || child instanceof AbstractMesh) {
+        stack.push(child as TransformNode);
+      }
+    }
+  }
+  return null;
+}
+
+/** Babylon partage le skeleton entre clones — chaque tourelle doit avoir le sien, relié à ses nodes clonés. */
+function isolateInstanceSkeletons(root: TransformNode, instanceLabel: string): void {
+  const clonedBySource = new Map<object, NonNullable<AbstractMesh["skeleton"]>>();
+
+  for (const mesh of root.getChildMeshes(true)) {
+    const skeleton = mesh.skeleton;
+    if (!skeleton) {
+      continue;
+    }
+
+    let instanceSkeleton = clonedBySource.get(skeleton);
+    if (!instanceSkeleton) {
+      instanceSkeleton = skeleton.clone(`${skeleton.name}_${instanceLabel}`, mesh.id);
+      for (const bone of instanceSkeleton.bones) {
+        const sourceLinkedNode = bone.getTransformNode();
+        if (!sourceLinkedNode) {
+          continue;
+        }
+        const clonedLinkedNode = findLinkedNodeClone(root, sourceLinkedNode);
+        if (clonedLinkedNode) {
+          bone.linkTransformNode(clonedLinkedNode);
+        }
+      }
+      clonedBySource.set(skeleton, instanceSkeleton);
+    }
+
+    mesh.skeleton = instanceSkeleton;
+  }
+}
+
 function refreshClonedRigMatrices(
   anchor: TransformNode,
   root: TransformNode,
@@ -664,6 +716,8 @@ export class EnemyTurretSystem {
         mesh.setEnabled(true);
         mesh.isVisible = true;
       }
+
+      isolateInstanceSkeletons(root, instanceLabel);
 
       const yawControl = resolveBoneControlOnRoot(root, this.config.rig.yawBone);
       const pitchControl = resolveBoneControlOnRoot(root, this.config.rig.pitchBone);
