@@ -47,6 +47,9 @@ import {
   reticleBarrelAssetUrl,
   reticleGunAssetUrl,
   sparkImpactAssetUrl,
+  explosionFlashJsonUrl,
+  explosionShockwaveJsonUrl,
+  explosionFlareTextureUrl,
   tankCannonSoundAssetUrl,
   tankGunSoundAssetUrl,
   shellInsertSoundAssetUrl,
@@ -2830,16 +2833,19 @@ export class TankGameplayController {
    * Babylon resolves those relative to the page root, so they 404 unless we point at `assets/effects/`.
    */
   private rewriteExplosionParticleTextureUrls(def: unknown): void {
-    const effectsDirHref = new URL("../../assets/effects/track_smoke.json", import.meta.url).href.replace(
-      /[^/]+$/,
-      ""
-    );
     const toAbsolute = (rel: string): string => {
       const trimmed = rel.trim().replace(/^\.?\//, "");
       if (/^(https?:|data:|blob:)/i.test(trimmed)) {
         return trimmed;
       }
-      return new URL(trimmed, effectsDirHref).href;
+
+      const filename = trimmed.split(/[\\/]/).pop()?.toLowerCase() ?? trimmed.toLowerCase();
+      if (filename === "flare.png") {
+        return explosionFlareTextureUrl;
+      }
+
+      console.warn(`[TankController] Unknown explosion texture reference "${rel}".`);
+      return trimmed;
     };
 
     const walk = (node: unknown): void => {
@@ -2876,11 +2882,10 @@ export class TankGameplayController {
       return this.explosionDefsPromise;
     }
 
-    const load = async (file: string): Promise<unknown> => {
-      const url = new URL(`../../assets/effects/${file}`, import.meta.url).href;
+    const load = async (url: string): Promise<unknown> => {
       const res = await fetch(url);
       if (!res.ok) {
-        throw new Error(`Failed to load explosion effect ${file}: ${res.status}`);
+        throw new Error(`Failed to load explosion effect ${url}: ${res.status}`);
       }
       const data = (await res.json()) as unknown;
       this.rewriteExplosionParticleTextureUrls(data);
@@ -2888,8 +2893,8 @@ export class TankGameplayController {
     };
 
     this.explosionDefsPromise = Promise.all([
-      load("explosion_flash.json"),
-      load("explosion_shockwave.json")
+      load(explosionFlashJsonUrl),
+      load(explosionShockwaveJsonUrl)
     ]);
     return this.explosionDefsPromise;
   }
