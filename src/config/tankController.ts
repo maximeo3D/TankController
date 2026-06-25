@@ -121,6 +121,8 @@ export interface TankControllerConfig {
     orbitMinRadius: number;
     orbitMaxRadius: number;
     orbitDefaultRadius: number;
+    shellShotShakeDurationSeconds?: number;
+    shellShotShakeAmplitude?: number;
   };
   aim: {
     cameraMaxTargetDistance: number;

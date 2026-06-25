@@ -88,7 +88,9 @@
     "orbitMaxPitchDeg": 20.0,
     "orbitMinRadius": 0.1,
     "orbitMaxRadius": 18.0,
-    "orbitDefaultRadius": 10.0
+    "orbitDefaultRadius": 10.0,
+    "shellShotShakeDurationSeconds": 0.22,
+    "shellShotShakeAmplitude": 0.06
   },
   "aim": {
     "cameraMaxTargetDistance": 200.0,

@@ -306,6 +306,9 @@ export class TankGameplayController {
   private orbitYawRad = 0;
   private orbitPitchRad = 0;
   private orbitRadius = 0;
+  private cameraShakeTimeRemaining = 0;
+  private cameraShakeDuration = 0;
+  private cameraShakeSeed = 0;
 
   // We distinguish between:
   // - control camera: used for aiming/turret/cannon logic (always the orbit camera)
@@ -2508,7 +2511,7 @@ export class TankGameplayController {
     this.updateWeapons(dt);
     this.applyMovement(frame.moveAxis, frame.turnAxis, frame.boostHeld, dt);
     this.applyVisualSmoothing(dt);
-    this.applyCamera(frame.zoomHeld);
+    this.applyCamera(frame.zoomHeld, dt);
     this.trackSystem?.update(dt);
     this.powerUpSystem?.update(dt);
     this.enemyTurretSystem?.update(
@@ -2907,6 +2910,7 @@ export class TankGameplayController {
     });
     this.pendingCannonRecoilKickY += this.config.cannon.recoilKickY;
     this.applyHullRecoilImpulseFromWorldForward(forward);
+    this.triggerShellShotCameraShake();
   }
 
   private updateProjectiles(dt: number): void {
@@ -3732,6 +3736,54 @@ export class TankGameplayController {
     this.trackTreadParticlesReverse?.setAdvancing(movingReverse);
   }
 
+  private triggerShellShotCameraShake(): void {
+    const duration = Math.max(this.config.camera.shellShotShakeDurationSeconds ?? 0.12, 0);
+    const amplitude = Math.max(this.config.camera.shellShotShakeAmplitude ?? 0.06, 0);
+    if (duration <= 0 || amplitude <= 0) {
+      return;
+    }
+
+    this.cameraShakeDuration = duration;
+    this.cameraShakeTimeRemaining = duration;
+    this.cameraShakeSeed = Math.random() * Math.PI * 2;
+  }
+
+  private getCameraShakeOffset(camera: TargetCamera): Vector3 | null {
+    if (this.cameraShakeTimeRemaining <= 0 || this.cameraShakeDuration <= 0) {
+      return null;
+    }
+
+    const amplitude = Math.max(this.config.camera.shellShotShakeAmplitude ?? 0.06, 0);
+    if (amplitude <= 0) {
+      return null;
+    }
+
+    const remainingRatio = clamp(this.cameraShakeTimeRemaining / this.cameraShakeDuration, 0, 1);
+    const strength = remainingRatio * remainingRatio;
+    const progress = 1 - remainingRatio;
+    const forward = camera.getForwardRay(1).direction;
+    let right = Vector3.Cross(Axis.Y, forward);
+    if (right.lengthSquared() > 1e-6) {
+      right.normalize();
+    } else {
+      right = Axis.X.clone();
+    }
+
+    const horizontal = Math.sin(this.cameraShakeSeed + progress * 78) * amplitude * strength;
+    const vertical = Math.sin(this.cameraShakeSeed * 1.37 + progress * 113) * amplitude * 0.65 * strength;
+    return right.scale(horizontal).add(Axis.Y.scale(vertical));
+  }
+
+  private applyCameraShake(camera: TargetCamera, target: Vector3): void {
+    const offset = this.getCameraShakeOffset(camera);
+    if (!offset) {
+      return;
+    }
+
+    camera.position.addInPlace(offset);
+    camera.setTarget(target);
+  }
+
   private applySuspension(): void {
     const engine = this.scene.getPhysicsEngine();
     if (!engine) {
@@ -3798,7 +3850,7 @@ export class TankGameplayController {
     }
   }
 
-  private applyCamera(zoomHeld: boolean): void {
+  private applyCamera(zoomHeld: boolean, dt: number): void {
     this.zoomActive = zoomHeld;
     const orbitCam = this.tankCamera ?? null;
     const zoomCam = this.tankZoomCamera ?? null;
@@ -3876,7 +3928,9 @@ export class TankGameplayController {
         }
         // Keep aiming consistent even if position is frozen.
         const from = zoomCam.globalPosition ?? zoomCam.position;
-        zoomCam.setTarget(from.add(forward.scale(1000)));
+        const target = from.add(forward.scale(1000));
+        zoomCam.setTarget(target);
+        this.applyCameraShake(zoomCam, target);
 
         if (this.debugLogZoomCamOnNextShellShot) {
           const cannonWorldPos = this.cannonControl.transformNode
@@ -3895,8 +3949,13 @@ export class TankGameplayController {
         // Fallback: keep using orbit forward vector.
         const forward = orbitCam.getForwardRay(1).direction;
         const from = zoomCam.globalPosition ?? zoomCam.position;
-        zoomCam.setTarget(from.add(forward.scale(1000)));
+        const target = from.add(forward.scale(1000));
+        zoomCam.setTarget(target);
+        this.applyCameraShake(zoomCam, target);
       }
+    } else if (orbitCam) {
+      const target = this.cameraPivotNode?.getAbsolutePosition() ?? orbitCam.getTarget();
+      this.applyCameraShake(orbitCam, target);
     }
 
     const boostMultiplier = this.boostActive ? this.config.camera.boostFovMultiplier : 1;
@@ -3911,6 +3970,10 @@ export class TankGameplayController {
     } else if (zoomHeld && orbitCam) {
       // No zoom camera: keep old behavior as fallback.
       orbitCam.fov = zoomFov;
+    }
+
+    if (this.cameraShakeTimeRemaining > 0) {
+      this.cameraShakeTimeRemaining = Math.max(this.cameraShakeTimeRemaining - dt, 0);
     }
   }
 
