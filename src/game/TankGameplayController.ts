@@ -232,6 +232,7 @@ export class TankGameplayController {
   private readonly trackMaterial: BabylonMaterial | null;
   private trackSystem: TrackSegmentSystem | null = null;
   private readonly tankMeshIdsToIgnore = new Set<number>();
+  private readonly tankDeathVisualMeshes: AbstractMesh[];
   private readonly ammoShellMesh: Mesh | null;
   private readonly ammoShellColliderMesh: Mesh | null;
   private readonly ammoBulletMesh: Mesh | null;
@@ -283,6 +284,7 @@ export class TankGameplayController {
   private readonly powerUpSystem: PowerUpSystem | null;
   private readonly playerTargetNode: TransformNode | AbstractMesh | null;
   private readonly enemyTurretSystem: EnemyTurretSystem | null;
+  private deathBlackMaterial: StandardMaterial | null = null;
 
   /** Décalage courant sur l’axe local Y du bone canon (recul). */
   private cannonRecoilOffsetY = 0;
@@ -492,6 +494,9 @@ export class TankGameplayController {
     for (const m of options.tankContainer.meshes) {
       this.tankMeshIdsToIgnore.add(m.uniqueId);
     }
+    this.tankDeathVisualMeshes = options.tankContainer.meshes.filter((mesh) =>
+      this.isTankVisualDeathMesh(mesh)
+    );
     this.shieldHighlightMeshes.push(...collectTankHighlightMeshes(options.tankContainer));
     this.shieldHighlightLayer = this.createShieldHighlightLayer();
     this.ammoShellMesh = options.ammoShellMesh;
@@ -708,11 +713,7 @@ export class TankGameplayController {
     this.tankBody.setLinearVelocity(Vector3.Zero());
     this.tankBody.setAngularVelocity(Vector3.Zero());
 
-    for (const mesh of this.tankAnchor.getChildMeshes(true)) {
-      mesh.setEnabled(false);
-      mesh.isVisible = false;
-      mesh.isPickable = false;
-    }
+    this.applyPlayerDeathMaterial();
 
     this.hudTexture?.dispose();
     this.hudTexture = null;
@@ -724,6 +725,47 @@ export class TankGameplayController {
     this.turretStopSound?.stop();
     this.tankMovementSoundMode = "stopped";
     this.turretSoundState = "stopped";
+  }
+
+  private getPlayerDeathMaterial(): StandardMaterial {
+    if (this.deathBlackMaterial) {
+      return this.deathBlackMaterial;
+    }
+
+    const mat = new StandardMaterial("tank_death_black_mat", this.scene);
+    mat.diffuseColor = new Color3(0.006, 0.005, 0.004);
+    mat.specularColor = new Color3(0.18, 0.16, 0.13);
+    mat.emissiveColor = Color3.Black();
+    mat.specularPower = 18;
+    mat.disableLighting = false;
+    mat.backFaceCulling = false;
+    this.deathBlackMaterial = mat;
+    return mat;
+  }
+
+  private applyPlayerDeathMaterial(): void {
+    const mat = this.getPlayerDeathMaterial();
+    const seen = new Set<number>();
+
+    for (const mesh of this.tankDeathVisualMeshes) {
+      if (seen.has(mesh.uniqueId)) {
+        continue;
+      }
+      seen.add(mesh.uniqueId);
+      mesh.material = mat;
+      mesh.isPickable = false;
+    }
+  }
+
+  private isTankVisualDeathMesh(mesh: AbstractMesh): boolean {
+    const name = mesh.name.trim().toLowerCase();
+    return (
+      mesh.getTotalVertices() > 0 &&
+      !name.startsWith("col_") &&
+      !name.startsWith("ammo_") &&
+      !name.startsWith("ui_") &&
+      !name.startsWith("tex_tracks")
+    );
   }
 
   private repairHealth(amount: number): void {
@@ -2337,6 +2379,8 @@ export class TankGameplayController {
     this.trackTreadParticles?.dispose();
     this.trackTreadParticlesReverse?.dispose();
     this.tankDamageParticles?.dispose();
+    this.deathBlackMaterial?.dispose();
+    this.deathBlackMaterial = null;
     this.shieldHighlightLayer?.removeAllMeshes();
     this.shieldHighlightLayer?.dispose();
     this.shieldHighlightLayer = null;
