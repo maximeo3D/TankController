@@ -805,6 +805,35 @@ export class GameApp {
     }
   }
 
+  private createRadarWorldBounds(mission: MenuMission | null): {
+    minX: number;
+    maxX: number;
+    minZ: number;
+    maxZ: number;
+    rotationDeg?: 0 | 90 | 180 | 270;
+    flipX?: boolean;
+    flipY?: boolean;
+    zoom?: number;
+  } | null {
+    const radar = mission?.radar;
+    if (!radar) {
+      return null;
+    }
+
+    const halfWidth = radar.width / 2;
+    const halfHeight = radar.height / 2;
+    return {
+      minX: radar.centerX - halfWidth,
+      maxX: radar.centerX + halfWidth,
+      minZ: radar.centerZ - halfHeight,
+      maxZ: radar.centerZ + halfHeight,
+      rotationDeg: radar.rotationDeg,
+      flipX: radar.flipX,
+      flipY: radar.flipY,
+      zoom: radar.zoom
+    };
+  }
+
   private async startLevel(level: LevelDefinition, mission: MenuMission | null = this.currentMission): Promise<void> {
     if (this.isStartingLevel) {
       return;
@@ -845,7 +874,9 @@ export class GameApp {
         (progress) => {
           this.updateLoadingScreen(mission, progress);
         },
-        () => this.showDeathScreen()
+        () => this.showDeathScreen(),
+        mission?.radarMapUrl ?? null,
+        this.createRadarWorldBounds(mission)
       );
       const previousScene = this.currentScene;
       this.disposeGameplayBundle();

@@ -40,6 +40,7 @@ import {
 import { createTrackTreadParticleBundle } from "./trackTreadParticles";
 import { createTankDamageParticleBundle } from "./tankDamageParticles";
 import { waitAnimationFrames } from "./frameTiming";
+import type { RadarWorldBounds } from "./RadarHud";
 
 export interface GameplaySceneSummary {
   spawnFound: boolean;
@@ -93,7 +94,9 @@ export async function createGameplayScene(
   config: TankControllerConfig,
   canvas: HTMLCanvasElement,
   onProgress: GameplayLoadingProgressCallback = () => {},
-  onPlayerDeath: () => void = () => {}
+  onPlayerDeath: () => void = () => {},
+  radarMapUrl: string | null = null,
+  radarWorldBoundsOverride: RadarWorldBounds | null = null
 ): Promise<GameplaySceneBundle> {
   onProgress(0.02);
   const scene = new Scene(engine);
@@ -139,6 +142,7 @@ export async function createGameplayScene(
   terrainContainer.addAllToScene();
   hideColliderMeshes(terrainContainer, scene);
   const worldPhysics = createWorldPhysics(terrainContainer, scene);
+  const radarWorldBounds = radarWorldBoundsOverride ?? computeRadarWorldBounds(terrainContainer);
   onProgress(0.38);
   await waitAnimationFrames(1);
 
@@ -407,6 +411,8 @@ export async function createGameplayScene(
     tankDamageParticles,
     playerTargetNode,
     enemyTurretSystem,
+    radarMapUrl,
+    radarWorldBounds,
     onPlayerDeath
   });
   onProgress(1);
@@ -627,6 +633,40 @@ function hideColliderMeshes(container: AssetContainer, scene: Scene): void {
 
 function countNamedMeshes(container: AssetContainer, prefix: string): number {
   return container.meshes.filter((mesh) => mesh.name.startsWith(prefix)).length;
+}
+
+function computeRadarWorldBounds(container: AssetContainer): RadarWorldBounds | null {
+  let minX = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let minZ = Number.POSITIVE_INFINITY;
+  let maxZ = Number.NEGATIVE_INFINITY;
+
+  for (const mesh of container.meshes) {
+    if (mesh.getTotalVertices() <= 0) {
+      continue;
+    }
+
+    mesh.computeWorldMatrix(true);
+    mesh.refreshBoundingInfo(true, true);
+    const box = mesh.getBoundingInfo().boundingBox;
+    minX = Math.min(minX, box.minimumWorld.x);
+    maxX = Math.max(maxX, box.maximumWorld.x);
+    minZ = Math.min(minZ, box.minimumWorld.z);
+    maxZ = Math.max(maxZ, box.maximumWorld.z);
+  }
+
+  if (!Number.isFinite(minX) || !Number.isFinite(maxX) || !Number.isFinite(minZ) || !Number.isFinite(maxZ)) {
+    return null;
+  }
+
+  const paddingX = Math.max((maxX - minX) * 0.03, 0.5);
+  const paddingZ = Math.max((maxZ - minZ) * 0.03, 0.5);
+  return {
+    minX: minX - paddingX,
+    maxX: maxX + paddingX,
+    minZ: minZ - paddingZ,
+    maxZ: maxZ + paddingZ
+  };
 }
 
 function collectBoneMatches(container: AssetContainer): string[] {

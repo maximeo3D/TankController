@@ -6,6 +6,18 @@ export interface MenuMission {
   label: string;
   description: string;
   imageUrl: string;
+  radarMapUrl?: string;
+  radar?: {
+    centerX: number;
+    centerZ: number;
+    width: number;
+    height: number;
+    rotationDeg?: 0 | 90 | 180 | 270;
+    flipX?: boolean;
+    flipY?: boolean;
+    /** 1 = zoom par défaut, >1 = plus proche, <1 = plus éloigné. */
+    zoom?: number;
+  };
 }
 
 export interface MenuMapEntry {
@@ -31,7 +43,18 @@ export const MENU_MAPS: readonly MenuMapEntry[] = [
         id: "test",
         label: "test",
         description: "Une zone d'entrainement courte pour tester les commandes du tank et valider les systemes de mission.",
-        imageUrl: new URL("../../assets/ui/level-training-test.png", import.meta.url).href
+        imageUrl: new URL("../../assets/ui/level-training-test.png", import.meta.url).href,
+        radarMapUrl: new URL("../../assets/maps/map-training-test.png", import.meta.url).href,
+        radar: {
+          centerX: 0,
+          centerZ: 0,
+          width: 60,
+          height: 60,
+          zoom: 0.35,
+          rotationDeg: 90,
+          flipX: true,
+          flipY: false
+        }
       }
     ]
   },

@@ -57,6 +57,11 @@ export interface EnemyTurretPlayerTarget {
   onTurretDestroyed?: (worldPos: Vector3) => void;
 }
 
+export interface EnemyTurretRadarTarget {
+  id: string;
+  position: Vector3;
+}
+
 interface EnemyTurretInstance {
   spawnId: string;
   anchor: TransformNode;
@@ -574,6 +579,15 @@ export class EnemyTurretSystem {
 
   public get instanceCount(): number {
     return this.instances.length;
+  }
+
+  public getRadarTargets(): EnemyTurretRadarTarget[] {
+    return this.instances
+      .filter((instance) => instance.alive)
+      .map((instance) => ({
+        id: instance.spawnId,
+        position: instance.anchor.getAbsolutePosition().clone()
+      }));
   }
 
   public update(dt: number, aimTarget: TransformNode | AbstractMesh): void {

@@ -73,6 +73,7 @@ import type { TrackTreadParticleBundle } from "./trackTreadParticles";
 import type { TankDamageParticleBundle } from "./tankDamageParticles";
 import { PowerUpSystem, type PowerUpTypeId } from "./PowerUpSystem";
 import { EnemyTurretSystem } from "./EnemyTurretSystem";
+import { RadarHud, type RadarWorldBounds } from "./RadarHud";
 
 const WEAPON_SHELL_AMMO_FONT_SIZE = 26;
 const WEAPON_INFINITY_FONT_SIZE = 40;
@@ -184,6 +185,8 @@ export interface TankGameplayControllerOptions {
   /** Empty `TARGET_player_tank` — world aim point for enemy turrets. Falls back to `tankAnchor`. */
   playerTargetNode?: TransformNode | AbstractMesh | null;
   enemyTurretSystem?: EnemyTurretSystem | null;
+  radarMapUrl?: string | null;
+  radarWorldBounds?: RadarWorldBounds | null;
   onPlayerDeath?: () => void;
 }
 
@@ -284,6 +287,9 @@ export class TankGameplayController {
   private readonly powerUpSystem: PowerUpSystem | null;
   private readonly playerTargetNode: TransformNode | AbstractMesh | null;
   private readonly enemyTurretSystem: EnemyTurretSystem | null;
+  private readonly radarMapUrl: string | null;
+  private readonly radarWorldBounds: RadarWorldBounds | null;
+  private radarHud: RadarHud | null = null;
   private deathBlackMaterial: StandardMaterial | null = null;
 
   /** Décalage courant sur l’axe local Y du bone canon (recul). */
@@ -509,6 +515,8 @@ export class TankGameplayController {
     this.powerUpSystem = this.createPowerUpSystem(options);
     this.enemyTurretSystem = options.enemyTurretSystem ?? null;
     this.playerTargetNode = options.playerTargetNode ?? null;
+    this.radarMapUrl = options.radarMapUrl ?? null;
+    this.radarWorldBounds = options.radarWorldBounds ?? null;
     if (this.enemyTurretSystem) {
       this.enemyTurretSystem.bindPlayerTarget({
         tankBody: this.tankBody,
@@ -1184,13 +1192,23 @@ export class TankGameplayController {
       .then(() => {
         this.bindHudLayoutFromJson();
         this.attachHudReticlesIfNeeded();
+        this.initRadarHud();
       })
       .catch((err: unknown) => {
         console.warn("[TankController] UI_hud.json parse failed:", err);
         this.attachHudReticlesIfNeeded();
+        this.initRadarHud();
       });
 
     this.initSparkImpactSprites();
+  }
+
+  private initRadarHud(): void {
+    if (this.radarHud || !this.hudTexture || !this.radarMapUrl || !this.radarWorldBounds) {
+      return;
+    }
+
+    this.radarHud = new RadarHud(this.hudTexture, this.radarMapUrl, this.radarWorldBounds);
   }
 
   private bindHudLayoutFromJson(): void {
@@ -2379,6 +2397,8 @@ export class TankGameplayController {
     this.trackTreadParticles?.dispose();
     this.trackTreadParticlesReverse?.dispose();
     this.tankDamageParticles?.dispose();
+    this.radarHud?.dispose();
+    this.radarHud = null;
     this.deathBlackMaterial?.dispose();
     this.deathBlackMaterial = null;
     this.shieldHighlightLayer?.removeAllMeshes();
@@ -2503,6 +2523,13 @@ export class TankGameplayController {
     this.updateSparks(dt);
     this.updateShockwaves(dt);
     this.updateGameplayHud(dt);
+    const tankForward = this.tankAnchor.getDirection(this.movementForwardAxis);
+    this.radarHud?.update(
+      dt,
+      this.tankAnchor.getAbsolutePosition(),
+      tankForward,
+      this.enemyTurretSystem?.getRadarTargets() ?? []
+    );
     this.tankDamageParticles?.syncHealthPercent(
       clamp((this.health / this.healthMax) * 100, 0, 100)
     );

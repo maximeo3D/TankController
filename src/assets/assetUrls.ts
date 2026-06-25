@@ -9,6 +9,7 @@ export const machinegunWeaponIconUrl = new URL("../../assets/ui/machinegun.png",
 export const healthStatusIconUrl = new URL("../../assets/ui/health.png", import.meta.url).href;
 export const fuelStatusIconUrl = new URL("../../assets/ui/fuel.png", import.meta.url).href;
 export const boostStatusIconUrl = new URL("../../assets/ui/boost.png", import.meta.url).href;
+export const mapPlayerIconUrl = new URL("../../assets/ui/map_icon.png", import.meta.url).href;
 export const reticleCameraAssetUrl = new URL("../../assets/ui/reticle_camera.png", import.meta.url).href;
 export const reticleBarrelAssetUrl = new URL("../../assets/ui/reticle_barrel.png", import.meta.url).href;
 export const reticleGunAssetUrl = new URL("../../assets/ui/reticle_gun.png", import.meta.url).href;
