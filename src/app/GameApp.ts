@@ -68,9 +68,11 @@ export class GameApp {
   private missionPreviewImage: Image | null = null;
   private missionDescriptionText: TextBlock | null = null;
   private pauseUi: AdvancedDynamicTexture | null = null;
+  private deathUi: AdvancedDynamicTexture | null = null;
   private currentLevel: LevelDefinition | null = null;
   private currentMission: MenuMission | null = null;
   private isPaused = false;
+  private isPlayerDead = false;
   private isStartingLevel = false;
   private menuDebugSeq = 0;
   private lastCanvasWidth = 0;
@@ -228,13 +230,14 @@ export class GameApp {
       event.key !== "Escape" &&
       this.screen === "gameplay" &&
       !this.isPaused &&
+      !this.isPlayerDead &&
       !this.gameplayState.isLoading &&
       document.pointerLockElement !== this.canvas
     ) {
       this.requestGameplayPointerLockFromGesture();
     }
 
-    if (event.key !== "Escape" || this.screen !== "gameplay" || this.gameplayState.isLoading) {
+    if (event.key !== "Escape" || this.screen !== "gameplay" || this.gameplayState.isLoading || this.isPlayerDead) {
       return;
     }
 
@@ -248,6 +251,7 @@ export class GameApp {
       this.screen !== "gameplay" ||
       this.gameplayState.isLoading ||
       !this.gameplayBundle ||
+      this.isPlayerDead ||
       this.isPaused
     ) {
       return;
@@ -257,7 +261,7 @@ export class GameApp {
   };
 
   private setPaused(paused: boolean, requestPointerLockOnResume = true): void {
-    if (!this.gameplayBundle || this.isPaused === paused) {
+    if (!this.gameplayBundle || this.isPlayerDead || this.isPaused === paused) {
       return;
     }
 
@@ -292,6 +296,7 @@ export class GameApp {
     const hideCursor =
       this.screen === "gameplay" &&
       !this.isPaused &&
+      !this.isPlayerDead &&
       !this.gameplayState.isLoading;
     const cursor = hideCursor ? "none" : "default";
 
@@ -442,6 +447,38 @@ export class GameApp {
     stack.addControl(this.createPauseButton("OPTIONS", () => {
       // Placeholder for future options panel.
     }));
+    stack.addControl(this.createPauseButton("EXIT", () => {
+      void this.exitToLevelSelect();
+    }));
+
+    applyUiFontToTexture(ui);
+    return ui;
+  }
+
+  private createDeathUi(scene: Scene): AdvancedDynamicTexture {
+    const ui = AdvancedDynamicTexture.CreateFullscreenUI("death_menu_ui", true, scene);
+    ui.rootContainer.isVisible = false;
+    ui.rootContainer.isHitTestVisible = false;
+
+    const dimmer = new Rectangle("death_menu_dimmer");
+    dimmer.width = "100%";
+    dimmer.height = "100%";
+    dimmer.thickness = 0;
+    dimmer.background = "rgba(18, 20, 24, 0.74)";
+    ui.addControl(dimmer);
+
+    const stack = new StackPanel("death_menu_stack");
+    stack.width = "420px";
+    stack.isVertical = true;
+    stack.spacing = 10;
+    stack.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
+    stack.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
+    ui.addControl(stack);
+
+    stack.addControl(this.createPauseButton("RESTART", () => {
+      this.requestGameplayPointerLockFromGesture();
+      void this.restartCurrentLevel();
+    }, true));
     stack.addControl(this.createPauseButton("EXIT", () => {
       void this.exitToLevelSelect();
     }));
@@ -746,6 +783,28 @@ export class GameApp {
     }
   }
 
+  private showDeathScreen(): void {
+    if (!this.gameplayBundle || !this.deathUi) {
+      return;
+    }
+
+    this.isPlayerDead = true;
+    this.isPaused = false;
+    this.gameplayBundle.setPaused(false);
+    if (this.pauseUi) {
+      this.pauseUi.rootContainer.isVisible = false;
+      this.pauseUi.rootContainer.isHitTestVisible = false;
+      this.pauseUi.markAsDirty();
+    }
+    this.deathUi.rootContainer.isVisible = true;
+    this.deathUi.rootContainer.isHitTestVisible = true;
+    this.deathUi.markAsDirty();
+    this.updateCursorMode();
+    if (document.pointerLockElement) {
+      document.exitPointerLock();
+    }
+  }
+
   private async startLevel(level: LevelDefinition, mission: MenuMission | null = this.currentMission): Promise<void> {
     if (this.isStartingLevel) {
       return;
@@ -753,6 +812,7 @@ export class GameApp {
 
     const sceneToDispose = this.currentScene;
     this.isStartingLevel = true;
+    this.isPlayerDead = false;
     this.currentLevel = level;
     this.currentMission = mission;
     this.setPaused(false);
@@ -767,6 +827,8 @@ export class GameApp {
     };
     this.pauseUi?.dispose();
     this.pauseUi = null;
+    this.deathUi?.dispose();
+    this.deathUi = null;
     this.disposeGameplayBundle();
     this.disposeSceneIfTemporary(sceneToDispose);
     this.activateScene(this.getLoadingScene());
@@ -775,13 +837,21 @@ export class GameApp {
     await waitAnimationFrames(2);
 
     try {
-      const bundle = await createGameplayScene(this.engine, level, tankConfig, this.canvas, (progress) => {
-        this.updateLoadingScreen(mission, progress);
-      });
+      const bundle = await createGameplayScene(
+        this.engine,
+        level,
+        tankConfig,
+        this.canvas,
+        (progress) => {
+          this.updateLoadingScreen(mission, progress);
+        },
+        () => this.showDeathScreen()
+      );
       const previousScene = this.currentScene;
       this.disposeGameplayBundle();
       this.gameplayBundle = bundle;
       this.pauseUi = this.createPauseUi(bundle.scene);
+      this.deathUi = this.createDeathUi(bundle.scene);
       this.activateScene(bundle.scene);
       this.disposeSceneIfTemporary(previousScene);
       await waitAnimationFrames(2);
@@ -818,12 +888,15 @@ export class GameApp {
   }
 
   private async exitToLevelSelect(): Promise<void> {
+    this.isPlayerDead = false;
     this.setPaused(false, false);
     if (document.pointerLockElement === this.canvas) {
       document.exitPointerLock();
     }
     this.pauseUi?.dispose();
     this.pauseUi = null;
+    this.deathUi?.dispose();
+    this.deathUi = null;
     this.disposeGameplayBundle();
     this.disposeSceneIfTemporary(this.currentScene);
     this.currentScene = this.menuScene;

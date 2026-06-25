@@ -184,6 +184,7 @@ export interface TankGameplayControllerOptions {
   /** Empty `TARGET_player_tank` — world aim point for enemy turrets. Falls back to `tankAnchor`. */
   playerTargetNode?: TransformNode | AbstractMesh | null;
   enemyTurretSystem?: EnemyTurretSystem | null;
+  onPlayerDeath?: () => void;
 }
 
 export class TankGameplayController {
@@ -439,6 +440,10 @@ export class TankGameplayController {
   private turretSoundState: "stopped" | "starting" | "looping" | "stopping" = "stopped";
   private articulationIsRotating = false;
   private paused = false;
+  private deathTriggered = false;
+  private deathScreenDelaySeconds = 0;
+  private deathNotified = false;
+  private readonly onPlayerDeath: (() => void) | null;
 
   private explosionDefsPromise: Promise<unknown[]> | null = null;
 
@@ -451,6 +456,7 @@ export class TankGameplayController {
     // Babylon `Sound.play()` is gated by `scene.audioEnabled`.
     this.scene.audioEnabled = true;
     this.config = options.config;
+    this.onPlayerDeath = options.onPlayerDeath ?? null;
     this.tracksConfig = options.config.tracks ?? {
       enabled: false,
       spacing: 0.25,
@@ -681,6 +687,43 @@ export class TankGameplayController {
       }
     }
     this.health = Math.max(0, this.health - amount);
+    if (this.health <= 0) {
+      this.triggerPlayerDeath();
+    }
+  }
+
+  private triggerPlayerDeath(): void {
+    if (this.deathTriggered) {
+      return;
+    }
+
+    this.deathTriggered = true;
+    this.deathScreenDelaySeconds = 1;
+    this.input.resetState();
+    this.health = 0;
+
+    const deathPos = this.playerTargetNode?.getAbsolutePosition().clone() ?? this.tankAnchor.getAbsolutePosition().clone();
+    void this.spawnExplosionAt(deathPos);
+
+    this.tankBody.setLinearVelocity(Vector3.Zero());
+    this.tankBody.setAngularVelocity(Vector3.Zero());
+
+    for (const mesh of this.tankAnchor.getChildMeshes(true)) {
+      mesh.setEnabled(false);
+      mesh.isVisible = false;
+      mesh.isPickable = false;
+    }
+
+    this.hudTexture?.dispose();
+    this.hudTexture = null;
+    this.tankDamageParticles?.syncHealthPercent(0);
+    this.tankIdleSound?.stop();
+    this.tankMoveSound?.stop();
+    this.turretStartSound?.stop();
+    this.turretLoopSound?.stop();
+    this.turretStopSound?.stop();
+    this.tankMovementSoundMode = "stopped";
+    this.turretSoundState = "stopped";
   }
 
   private repairHealth(amount: number): void {
@@ -2343,6 +2386,25 @@ export class TankGameplayController {
 
     // Fixed step: engine.maxFPS caps frames; getDeltaTime() is unreliable if render is skipped manually.
     const dt = TARGET_FRAME_SEC;
+
+    if (this.deathTriggered) {
+      this.input.consumeFrame();
+      this.tankBody.setLinearVelocity(Vector3.Zero());
+      this.tankBody.setAngularVelocity(Vector3.Zero());
+      this.updateProjectiles(dt);
+      this.updateGunTracers(dt);
+      this.updateMuzzleFlashes(dt);
+      this.updateSparks(dt);
+      this.updateShockwaves(dt);
+      if (!this.deathNotified) {
+        this.deathScreenDelaySeconds = Math.max(0, this.deathScreenDelaySeconds - dt);
+        if (this.deathScreenDelaySeconds <= 0) {
+          this.deathNotified = true;
+          this.onPlayerDeath?.();
+        }
+      }
+      return;
+    }
 
     if (this.zoomCamFreezeSeconds > 0) {
       this.zoomCamFreezeSeconds = Math.max(this.zoomCamFreezeSeconds - dt, 0);

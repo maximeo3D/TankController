@@ -92,7 +92,8 @@ export async function createGameplayScene(
   level: LevelDefinition,
   config: TankControllerConfig,
   canvas: HTMLCanvasElement,
-  onProgress: GameplayLoadingProgressCallback = () => {}
+  onProgress: GameplayLoadingProgressCallback = () => {},
+  onPlayerDeath: () => void = () => {}
 ): Promise<GameplaySceneBundle> {
   onProgress(0.02);
   const scene = new Scene(engine);
@@ -405,7 +406,8 @@ export async function createGameplayScene(
     trackTreadParticlesReverse,
     tankDamageParticles,
     playerTargetNode,
-    enemyTurretSystem
+    enemyTurretSystem,
+    onPlayerDeath
   });
   onProgress(1);
 
