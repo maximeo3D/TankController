@@ -15,7 +15,7 @@ import {
   type GameplaySceneBundle,
   type GameplaySceneSummary
 } from "../game/createGameplayScene";
-import type { TankGameplayDebugState } from "../game/TankGameplayController";
+import type { VehicleDebugState } from "../game/vehicle/VehicleController";
 import { AdvancedDynamicTexture, Button, Control, Image, Rectangle, StackPanel, TextBlock } from "@babylonjs/gui";
 import { MENU_MAPS, type MenuMapEntry, type MenuMission } from "../ui/menuData";
 import { applyUiFontToTexture, UI_FONT_FAMILY } from "../ui/applyUiFont";
@@ -28,7 +28,7 @@ interface GameplayUiState {
   isLoading: boolean;
   errorMessage: string | null;
   summary: GameplaySceneSummary | null;
-  debug: TankGameplayDebugState | null;
+  debug: VehicleDebugState | null;
 }
 
 export class GameApp {
@@ -869,6 +869,7 @@ export class GameApp {
       const bundle = await createGameplayScene(
         this.engine,
         level,
+        mission,
         tankConfig,
         this.canvas,
         (progress) => {

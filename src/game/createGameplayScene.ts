@@ -33,10 +33,12 @@ import { tankAssetUrl, skyboxAssetUrl, powerUpsAssetUrl, enemiesAssetUrl } from 
 import { enemiesConfig } from "../config/enemiesController";
 import { EnemyTurretSystem } from "./EnemyTurretSystem";
 import type { LevelDefinition } from "../app/levels";
-import {
-  TankGameplayController,
-  type TankGameplayDebugState
-} from "./TankGameplayController";
+import type { MenuMission } from "../ui/menuData";
+import { TankGameplayController } from "./TankGameplayController";
+import { getMissionVehicleSpawn } from "./level/missionConfig";
+import { LevelManager } from "./level/LevelManager";
+import { TankVehicleController } from "./vehicle/TankVehicleController";
+import type { VehicleDebugState } from "./vehicle/VehicleController";
 import { createTrackTreadParticleBundle } from "./trackTreadParticles";
 import { createTankDamageParticleBundle } from "./tankDamageParticles";
 import { waitAnimationFrames } from "./frameTiming";
@@ -54,8 +56,9 @@ export interface GameplaySceneSummary {
 
 export interface GameplaySceneBundle {
   scene: Scene;
+  levelManager: LevelManager;
   summary: GameplaySceneSummary;
-  getDebugState: () => TankGameplayDebugState;
+  getDebugState: () => VehicleDebugState | null;
   setPaused: (paused: boolean) => void;
   dispose: () => void;
 }
@@ -91,6 +94,7 @@ interface TankPhysicsResource {
 export async function createGameplayScene(
   engine: Engine,
   level: LevelDefinition,
+  mission: MenuMission | null,
   config: TankControllerConfig,
   canvas: HTMLCanvasElement,
   onProgress: GameplayLoadingProgressCallback = () => {},
@@ -99,6 +103,9 @@ export async function createGameplayScene(
   radarWorldBoundsOverride: RadarWorldBounds | null = null
 ): Promise<GameplaySceneBundle> {
   onProgress(0.02);
+  const levelManager = new LevelManager(level, mission);
+  const missionContext = levelManager.missionContext;
+  const tankSpawn = getMissionVehicleSpawn(missionContext, "tank");
   const scene = new Scene(engine);
   scene.useRightHandedSystem = true;
   scene.clearColor = new Color4(0.05, 0.06, 0.08, 1);
@@ -146,7 +153,11 @@ export async function createGameplayScene(
   onProgress(0.38);
   await waitAnimationFrames(1);
 
-  const spawnNode = findTransformNode(terrainContainer, "SPAWN_tank");
+  const spawnNodeName = tankSpawn?.spawnNode ?? "SPAWN_tank";
+  const spawnNode = findTransformNode(terrainContainer, spawnNodeName);
+  if (!spawnNode && tankSpawn) {
+    console.warn(`[LevelManager] Spawn node "${spawnNodeName}" not found for vehicle "${tankSpawn.id}".`);
+  }
 
   const tankContainer = await SceneLoader.LoadAssetContainerAsync("", tankAssetUrl, scene);
   tankContainer.addAllToScene();
@@ -415,10 +426,20 @@ export async function createGameplayScene(
     radarWorldBounds,
     onPlayerDeath
   });
+
+  if (tankSpawn) {
+    levelManager.registerVehicle(
+      new TankVehicleController({
+        id: tankSpawn.id,
+        controller
+      })
+    );
+  }
   onProgress(1);
 
   return {
     scene,
+    levelManager,
     summary: {
       spawnFound: Boolean(spawnNode),
       tankCameraFound: Boolean(camStartNode) || Boolean(camPivotNode),
@@ -428,10 +449,10 @@ export async function createGameplayScene(
       tankBones: collectBoneMatches(tankContainer),
       enemyTurretsSpawned: enemyTurretSystem?.instanceCount ?? 0
     },
-    getDebugState: () => controller.getDebugState(),
-    setPaused: (paused) => controller.setPaused(paused),
+    getDebugState: () => levelManager.getDebugState(),
+    setPaused: (paused) => levelManager.setPaused(paused),
     dispose: () => {
-      controller.dispose();
+      levelManager.dispose();
       disposePhysicsGroup(worldPhysics);
       tankPhysics.body.dispose();
       tankPhysics.shape.dispose();

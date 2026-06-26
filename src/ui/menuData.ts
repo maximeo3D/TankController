@@ -1,6 +1,14 @@
 import { terrainAssetUrl } from "../assets/assetUrls";
 import type { LevelDefinition } from "../app/levels";
 
+export type VehicleTypeId = "tank" | "armoredCar";
+
+export interface MissionVehicleSpawn {
+  id: string;
+  type: VehicleTypeId;
+  spawnNode: string;
+}
+
 export interface MenuMission {
   id: string;
   label: string;
@@ -18,6 +26,10 @@ export interface MenuMission {
     /** 1 = zoom par défaut, >1 = plus proche, <1 = plus éloigné. */
     zoom?: number;
   };
+  /** Véhicules disponibles dans ce niveau / mission. */
+  vehicles?: MissionVehicleSpawn[];
+  /** Instance active au démarrage (doit correspondre à un `vehicles[].id`). */
+  startVehicleId?: string;
 }
 
 export interface MenuMapEntry {
@@ -54,7 +66,9 @@ export const MENU_MAPS: readonly MenuMapEntry[] = [
           rotationDeg: 90,
           flipX: true,
           flipY: false
-        }
+        },
+        vehicles: [{ id: "player_tank", type: "tank", spawnNode: "SPAWN_tank" }],
+        startVehicleId: "player_tank"
       }
     ]
   },

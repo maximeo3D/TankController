@@ -477,6 +477,7 @@ export class TankGameplayController {
   private turretSoundState: "stopped" | "starting" | "looping" | "stopping" = "stopped";
   private articulationIsRotating = false;
   private paused = false;
+  private playerActive = false;
   private deathTriggered = false;
   private deathScreenDelaySeconds = 0;
   private deathNotified = false;
@@ -2508,6 +2509,26 @@ export class TankGameplayController {
       return;
     }
 
+    this.applyPauseSideEffects();
+  }
+
+  /** Véhicule sélectionné par le joueur (LevelManager). Distinct de la pause menu. */
+  public setPlayerActive(active: boolean): void {
+    if (this.playerActive === active) {
+      return;
+    }
+
+    this.playerActive = active;
+    this.input.resetState();
+
+    if (active) {
+      return;
+    }
+
+    this.applyPauseSideEffects();
+  }
+
+  private applyPauseSideEffects(): void {
     this.fireHeld = false;
     this.boostInputHeld = false;
     this.smoothedMoveAxis = 0;
@@ -2529,6 +2550,11 @@ export class TankGameplayController {
   }
 
   private readonly update = (): void => {
+    if (!this.playerActive) {
+      this.input.consumeFrame();
+      return;
+    }
+
     if (this.paused) {
       this.input.consumeFrame();
       return;
