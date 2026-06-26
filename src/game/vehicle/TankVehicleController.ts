@@ -24,6 +24,10 @@ export class TankVehicleController implements VehicleController {
     this.controller = options.controller;
   }
 
+  public get gameplayController(): TankGameplayController {
+    return this.controller;
+  }
+
   public activate(): void {
     this.playerActive = true;
     this.controller.setPlayerActive(true);

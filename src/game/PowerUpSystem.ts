@@ -214,13 +214,13 @@ function sanitizeNodeName(name: string): string {
 export class PowerUpSystem {
   private readonly scene: Scene;
   private readonly config: NonNullable<TankControllerConfig["powerUps"]>;
-  private readonly tankColliderMesh: Mesh | null;
+  private tankColliderMesh: Mesh | null;
   private readonly showDebugBounds: boolean;
-  private readonly onAmmoShellPickup: (amount: number) => void;
-  private readonly onFuelPickup: (batteryAmount: number) => void;
-  private readonly onRepairPickup: (healthAmount: number) => void;
-  private readonly onShieldPickup: (durationSeconds: number, damageReduction: number) => void;
-  private readonly onPicked?: (typeId: PowerUpTypeId) => void;
+  private onAmmoShellPickup: (amount: number) => void;
+  private onFuelPickup: (batteryAmount: number) => void;
+  private onRepairPickup: (healthAmount: number) => void;
+  private onShieldPickup: (durationSeconds: number, damageReduction: number) => void;
+  private onPicked?: (typeId: PowerUpTypeId) => void;
   private readonly highlightLayer: HighlightLayer | null;
   private readonly instances: PowerUpInstance[] = [];
 
@@ -241,6 +241,26 @@ export class PowerUpSystem {
     }
 
     this.spawnPowerUps(options.terrainContainer, options.powerUpsContainer);
+  }
+
+  /** Rebind pickup vers le véhicule actif (multi-véhicules). */
+  public bindActivePlayer(
+    colliderMesh: Mesh | null,
+    handlers: Pick<
+      PowerUpSystemOptions,
+      | "onAmmoShellPickup"
+      | "onFuelPickup"
+      | "onRepairPickup"
+      | "onShieldPickup"
+      | "onPicked"
+    >
+  ): void {
+    this.tankColliderMesh = colliderMesh;
+    this.onAmmoShellPickup = handlers.onAmmoShellPickup;
+    this.onFuelPickup = handlers.onFuelPickup;
+    this.onRepairPickup = handlers.onRepairPickup;
+    this.onShieldPickup = handlers.onShieldPickup;
+    this.onPicked = handlers.onPicked;
   }
 
   private createHighlightLayer(): HighlightLayer | null {

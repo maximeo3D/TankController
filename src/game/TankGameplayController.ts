@@ -74,6 +74,11 @@ import type { TankDamageParticleBundle } from "./tankDamageParticles";
 import { PowerUpSystem, type PowerUpTypeId } from "./PowerUpSystem";
 import { EnemyTurretSystem, type EnemyTurretPlayerTarget } from "./EnemyTurretSystem";
 import { RadarHud, type RadarWorldBounds } from "./RadarHud";
+import {
+  clearSceneGameplayUi,
+  getSceneGameplayUi,
+  setSceneGameplayUi
+} from "./sceneGameplayUi";
 
 const WEAPON_SHELL_AMMO_FONT_SIZE = 26;
 const WEAPON_INFINITY_FONT_SIZE = 40;
@@ -210,6 +215,10 @@ export interface TankGameplayControllerOptions {
   /** Empty `TARGET_player_tank` — world aim point for enemy turrets. Falls back to `tankAnchor`. */
   playerTargetNode?: TransformNode | AbstractMesh | null;
   enemyTurretSystem?: EnemyTurretSystem | null;
+  /** Power-ups partagés au niveau scène (évite les doublons multi-véhicules). */
+  sharedPowerUpSystem?: PowerUpSystem | null;
+  /** Ne disposer le système ennemi que si ce contrôleur en est propriétaire. */
+  ownsEnemyTurretSystem?: boolean;
   radarMapUrl?: string | null;
   radarWorldBounds?: RadarWorldBounds | null;
   onPlayerDeath?: () => void;
@@ -320,6 +329,8 @@ export class TankGameplayController {
   private readonly powerUpSystem: PowerUpSystem | null;
   private readonly playerTargetNode: TransformNode | AbstractMesh | null;
   private readonly enemyTurretSystem: EnemyTurretSystem | null;
+  private readonly ownsEnemyTurretSystem: boolean;
+  private ownsSceneHud = false;
   private readonly radarMapUrl: string | null;
   private readonly radarWorldBounds: RadarWorldBounds | null;
   private radarHud: RadarHud | null = null;
@@ -553,6 +564,7 @@ export class TankGameplayController {
     this.tankDamageParticles = options.tankDamageParticles ?? null;
     this.powerUpSystem = this.createPowerUpSystem(options);
     this.enemyTurretSystem = options.enemyTurretSystem ?? null;
+    this.ownsEnemyTurretSystem = options.ownsEnemyTurretSystem === true;
     this.playerTargetNode = options.playerTargetNode ?? null;
     this.radarMapUrl = options.radarMapUrl ?? null;
     this.radarWorldBounds = options.radarWorldBounds ?? null;
@@ -702,6 +714,10 @@ export class TankGameplayController {
   }
 
   private createPowerUpSystem(options: TankGameplayControllerOptions): PowerUpSystem | null {
+    if (options.sharedPowerUpSystem !== undefined) {
+      return options.sharedPowerUpSystem;
+    }
+
     const powerUps = options.config.powerUps;
     if (powerUps?.enabled !== true || !powerUps.types) {
       return null;
@@ -1295,14 +1311,38 @@ export class TankGameplayController {
   }
 
   private initHud(): void {
+    const sharedUi = getSceneGameplayUi(this.scene);
+    if (sharedUi) {
+      this.hudTexture = sharedUi.hudTexture;
+      this.ownsSceneHud = false;
+      this.initRadarHud();
+      return;
+    }
+
     this.hudTexture = AdvancedDynamicTexture.CreateFullscreenUI("hud_ui", true, this.scene);
     this.hudTexture.useSmallestIdeal = true;
+    this.ownsSceneHud = true;
+    setSceneGameplayUi(this.scene, {
+      hudTexture: this.hudTexture,
+      hudLayoutReady: false,
+      hudReticlesAttached: false,
+      radarHud: null
+    });
 
     void AdvancedDynamicTexture.ParseFromFileAsync(hudLayoutJsonUrl, true, this.hudTexture)
       .then(() => {
-        this.bindHudLayoutFromJson();
+        this.bindHudLayoutFromJson(false);
+        const ui = getSceneGameplayUi(this.scene);
+        if (ui) {
+          ui.hudLayoutReady = true;
+        }
         this.attachHudReticlesIfNeeded();
+        const uiAfterReticles = getSceneGameplayUi(this.scene);
+        if (uiAfterReticles) {
+          uiAfterReticles.hudReticlesAttached = this.hudReticlesAttached;
+        }
         this.initRadarHud();
+        this.onSharedHudLayoutReady();
       })
       .catch((err: unknown) => {
         console.warn("[TankController] UI_hud.json parse failed:", err);
@@ -1313,15 +1353,81 @@ export class TankGameplayController {
     this.initSparkImpactSprites();
   }
 
+  /** HUD partagé : lier les contrôles et afficher si ce véhicule est actif. */
+  private attachToSharedHud(): void {
+    const sharedUi = getSceneGameplayUi(this.scene);
+    if (!sharedUi?.hudTexture) {
+      return;
+    }
+
+    this.hudTexture = sharedUi.hudTexture;
+    if (sharedUi.hudLayoutReady && !this.hudJsonLoaded) {
+      this.bindHudLayoutFromJson(true);
+      if (sharedUi.hudReticlesAttached) {
+        this.rebindHudReticleRefs();
+      }
+    }
+
+    if (this.playerActive && this.hudTexture.rootContainer) {
+      this.hudTexture.rootContainer.isVisible = true;
+    }
+  }
+
+  /** Propriétaire du HUD : layout JSON prêt. */
+  private onSharedHudLayoutReady(): void {
+    if (!this.playerActive) {
+      return;
+    }
+
+    this.attachToSharedHud();
+    this.refreshWeaponHudContent();
+  }
+
+  private rebindHudReticleRefs(): void {
+    if (!this.hudTexture) {
+      return;
+    }
+
+    this.hudReticlesAttached = true;
+    this.barrelShellReticle2D = this.hudTexture.getControlByName(
+      "reticle_barrel_shell_img"
+    ) as Rectangle | null;
+    this.barrelGunReticle2D = this.hudTexture.getControlByName(
+      "reticle_barrel_gun_img"
+    ) as Rectangle | null;
+  }
+
+  private showSharedHud(): void {
+    this.attachToSharedHud();
+    if (this.hudTexture?.rootContainer) {
+      this.hudTexture.rootContainer.isVisible = true;
+    }
+  }
+
+  private hideSharedHud(): void {
+    if (this.hudTexture?.rootContainer) {
+      this.hudTexture.rootContainer.isVisible = false;
+    }
+  }
+
   private initRadarHud(): void {
+    const sharedUi = getSceneGameplayUi(this.scene);
+    if (sharedUi?.radarHud) {
+      this.radarHud = sharedUi.radarHud;
+      return;
+    }
+
     if (this.radarHud || !this.hudTexture || !this.radarMapUrl || !this.radarWorldBounds) {
       return;
     }
 
     this.radarHud = new RadarHud(this.hudTexture, this.radarMapUrl, this.radarWorldBounds);
+    if (sharedUi) {
+      sharedUi.radarHud = this.radarHud;
+    }
   }
 
-  private bindHudLayoutFromJson(): void {
+  private bindHudLayoutFromJson(skipLayoutSetup = false): void {
     if (!this.hudTexture) {
       return;
     }
@@ -1329,35 +1435,48 @@ export class TankGameplayController {
     this.hudPanelStatus = t.getControlByName("hud_panel_status") as Rectangle | null;
     this.hudHealthBarBg = t.getControlByName("hud_health_bar_bg") as Rectangle | null;
     this.hudHealthIcon = t.getControlByName("hud_health_icon") as Image | null;
-    this.setupHealthBarSegments();
+    if (!skipLayoutSetup) {
+      this.setupHealthBarSegments();
+    }
     this.hudFuelBarBg = t.getControlByName("hud_fuel_bar_bg") as Rectangle | null;
     this.hudFuelIcon = t.getControlByName("hud_fuel_icon") as Image | null;
-    this.setupFuelBarSegments();
     this.hudBoostFill = t.getControlByName("hud_boost_bar_fill") as Rectangle | null;
     this.hudBoostIcon = t.getControlByName("hud_boost_icon") as Image | null;
-    this.setupStatusHudLayout();
-    this.setupStatusHudSpacing();
-    this.setupStatusHudIcons();
-    this.initStatusHudChrome();
+    if (!skipLayoutSetup) {
+      this.setupFuelBarSegments();
+      this.setupStatusHudLayout();
+      this.setupStatusHudSpacing();
+      this.setupStatusHudIcons();
+      this.initStatusHudChrome();
+    }
+
     this.hudPanelTimer = t.getControlByName("hud_panel_timer") as Rectangle | null;
     this.hudTimerLabel = t.getControlByName("hud_timer_label") as TextBlock | null;
-    this.setupTimerHudLayout();
-    this.initTimerHudChrome();
+    if (!skipLayoutSetup) {
+      this.setupTimerHudLayout();
+      this.initTimerHudChrome();
+    }
+
     this.hudWeaponPrimary = t.getControlByName("hud_weapon_primary") as Rectangle | null;
     this.hudWeaponSecondary = t.getControlByName("hud_weapon_secondary") as Rectangle | null;
     this.hudWeaponPrimaryIcon = t.getControlByName("hud_weapon_primary_icon") as Image | null;
     this.hudWeaponSecondaryIcon = t.getControlByName("hud_weapon_secondary_icon") as Image | null;
     this.hudWeaponPrimaryAmmo = t.getControlByName("hud_weapon_primary_ammo") as TextBlock | null;
     this.hudWeaponSecondaryAmmo = t.getControlByName("hud_weapon_secondary_ammo") as TextBlock | null;
-    this.setupWeaponHudImages();
-    this.setupWeaponHudLayout();
-    this.initWeaponHudReloadGauges();
-    this.initWeaponHudChrome();
-    applyUiFontToTexture(t);
+    if (!skipLayoutSetup) {
+      this.setupWeaponHudImages();
+      this.setupWeaponHudLayout();
+      this.initWeaponHudReloadGauges();
+      this.initWeaponHudChrome();
+      applyUiFontToTexture(t);
+    }
+
     this.hudBoostIndicator = t.getControlByName("hud_boost_indicator") as TextBlock | null;
     this.hudZoomIndicator = t.getControlByName("hud_zoom_indicator") as TextBlock | null;
     this.weaponHudDisplayedWeapon = this.activeWeapon;
-    this.sessionElapsedSeconds = 0;
+    if (!skipLayoutSetup) {
+      this.sessionElapsedSeconds = 0;
+    }
     this.hudJsonLoaded = true;
     this.refreshWeaponHudContent();
     this.resetWeaponSlotTransforms();
@@ -1365,6 +1484,12 @@ export class TankGameplayController {
 
   /** Reticles above HUD layout (`zIndex`). Idempotent. */
   private attachHudReticlesIfNeeded(): void {
+    const sharedUi = getSceneGameplayUi(this.scene);
+    if (sharedUi?.hudReticlesAttached) {
+      this.rebindHudReticleRefs();
+      return;
+    }
+
     if (!this.hudTexture || this.hudReticlesAttached) {
       return;
     }
@@ -1401,6 +1526,10 @@ export class TankGameplayController {
     barrelGun.zIndex = z;
     this.hudTexture.addControl(barrelGun);
     this.barrelGunReticle2D = barrelGun as unknown as Rectangle;
+
+    if (sharedUi) {
+      sharedUi.hudReticlesAttached = true;
+    }
   }
 
   private initSparkImpactSprites(): void {
@@ -1824,10 +1953,15 @@ export class TankGameplayController {
       return;
     }
 
+    const gridName = `${frame.name ?? "weapon"}_grid`;
+    if (frame.getChildByName(gridName)) {
+      return;
+    }
+
     frame.removeControl(icon);
     frame.removeControl(ammo);
 
-    const grid = new Grid(`${frame.name ?? "weapon"}_grid`);
+    const grid = new Grid(gridName);
     grid.width = "100%";
     grid.height = "100%";
     grid.paddingLeft = layout.paddingLeft;
@@ -2416,8 +2550,13 @@ export class TankGameplayController {
     this.muzzleDebugVisuals?.gunLinkLine.dispose();
     this.muzzleDebugVisuals = null;
 
-    this.hudTexture?.dispose();
+    if (this.ownsSceneHud) {
+      this.hudTexture?.dispose();
+      this.radarHud?.dispose();
+      clearSceneGameplayUi(this.scene);
+    }
     this.hudTexture = null;
+    this.radarHud = null;
     this.hudJsonLoaded = false;
     this.hudReticlesAttached = false;
     this.hudPanelStatus = null;
@@ -2507,8 +2646,6 @@ export class TankGameplayController {
     this.trackTreadParticles?.dispose();
     this.trackTreadParticlesReverse?.dispose();
     this.tankDamageParticles?.dispose();
-    this.radarHud?.dispose();
-    this.radarHud = null;
     this.deathBlackMaterial?.dispose();
     this.deathBlackMaterial = null;
     this.shieldHighlightLayer?.removeAllMeshes();
@@ -2516,8 +2653,9 @@ export class TankGameplayController {
     this.shieldHighlightLayer = null;
     this.shieldHighlightVisualActive = false;
 
-    this.powerUpSystem?.dispose();
-    this.enemyTurretSystem?.dispose();
+    if (this.ownsEnemyTurretSystem) {
+      this.enemyTurretSystem?.dispose();
+    }
   }
 
   public setPaused(paused: boolean): void {
@@ -2545,10 +2683,48 @@ export class TankGameplayController {
     this.input.resetState();
 
     if (active) {
+      this.showSharedHud();
+      this.refreshWeaponHudContent();
       return;
     }
 
+    this.hideSharedHud();
     this.applyPauseSideEffects();
+  }
+
+  public getPlayerColliderMesh(): Mesh | null {
+    return this.tankColliderMesh;
+  }
+
+  public applyPowerUpAmmoShell(amount: number): void {
+    this.addShellReserveAmmo(amount);
+  }
+
+  public applyPowerUpFuel(amount: number): void {
+    this.addBattery(amount);
+  }
+
+  public applyPowerUpRepair(amount: number): void {
+    this.repairHealth(amount);
+  }
+
+  public applyPowerUpShield(durationSeconds: number, damageReduction: number): void {
+    this.applyShield(durationSeconds, damageReduction);
+  }
+
+  public notifyPowerUpPicked(typeId: PowerUpTypeId): void {
+    this.playPowerUpSound(typeId);
+  }
+
+  public getPowerUpPickupHandlers() {
+    return {
+      onAmmoShellPickup: (amount: number) => this.applyPowerUpAmmoShell(amount),
+      onFuelPickup: (amount: number) => this.applyPowerUpFuel(amount),
+      onRepairPickup: (amount: number) => this.applyPowerUpRepair(amount),
+      onShieldPickup: (durationSeconds: number, damageReduction: number) =>
+        this.applyPowerUpShield(durationSeconds, damageReduction),
+      onPicked: (typeId: PowerUpTypeId) => this.notifyPowerUpPicked(typeId)
+    };
   }
 
   /** Active la caméra orbit du tank (switch véhicule). */
@@ -4863,6 +5039,10 @@ function clampSpringScalar(state: SpringScalarState, min: number, max: number): 
 }
 
 function addWeaponCornerBrackets(frame: Rectangle, idPrefix: string, alpha: number): void {
+  if (frame.getChildByName(`${idPrefix}_bracket_tl_h`)) {
+    return;
+  }
+
   const arm = 14;
   const thick = 2;
   const color = `rgba(255,255,255,${alpha})`;

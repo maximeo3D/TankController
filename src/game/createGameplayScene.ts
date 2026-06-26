@@ -39,6 +39,7 @@ import type { VehicleTypeId } from "./vehicle/VehicleController";
 import { TankGameplayController } from "./TankGameplayController";
 import { LevelManager } from "./level/LevelManager";
 import { TankVehicleController } from "./vehicle/TankVehicleController";
+import { PowerUpSystem } from "./PowerUpSystem";
 import type { VehicleDebugState } from "./vehicle/VehicleController";
 import { createTrackTreadParticleBundle } from "./trackTreadParticles";
 import { createTankDamageParticleBundle } from "./tankDamageParticles";
@@ -182,6 +183,39 @@ export async function createGameplayScene(
   }
   onProgress(0.58);
 
+  let sharedPowerUpSystem: PowerUpSystem | null = null;
+  let powerUpTargetController: TankGameplayController | null = null;
+  const primaryVehicleType = missionContext.vehicles[0]?.type ?? "tank";
+  const primaryPowerUpConfig = getVehicleConfig(primaryVehicleType).powerUps;
+  if (primaryPowerUpConfig?.enabled && primaryPowerUpConfig.types) {
+    try {
+      sharedPowerUpSystem = new PowerUpSystem({
+        scene,
+        terrainContainer,
+        powerUpsContainer,
+        config: primaryPowerUpConfig,
+        tankColliderMesh: null,
+        showDebugBounds: false,
+        onAmmoShellPickup: (amount) => powerUpTargetController?.applyPowerUpAmmoShell(amount),
+        onFuelPickup: (amount) => powerUpTargetController?.applyPowerUpFuel(amount),
+        onRepairPickup: (amount) => powerUpTargetController?.applyPowerUpRepair(amount),
+        onShieldPickup: (durationSeconds, damageReduction) =>
+          powerUpTargetController?.applyPowerUpShield(durationSeconds, damageReduction),
+        onPicked: (typeId) => powerUpTargetController?.notifyPowerUpPicked(typeId)
+      });
+    } catch (err) {
+      console.warn("[TankController] Shared PowerUpSystem init failed:", err);
+    }
+  }
+
+  const bindSharedSystemsToVehicle = (vehicle: TankVehicleController): void => {
+    powerUpTargetController = vehicle.gameplayController;
+    sharedPowerUpSystem?.bindActivePlayer(
+      vehicle.gameplayController.getPlayerColliderMesh(),
+      vehicle.gameplayController.getPowerUpPickupHandlers()
+    );
+  };
+
   const spawnedVehicles: SpawnedPlayerVehicle[] = [];
   const vehicleProgressStep = 0.38 / Math.max(missionContext.vehicles.length, 1);
   let progressCursor = 0.6;
@@ -201,7 +235,8 @@ export async function createGameplayScene(
         fallbackCamera,
         radarMapUrl,
         radarWorldBounds,
-        onPlayerDeath
+        onPlayerDeath,
+        sharedPowerUpSystem
       });
       spawnedVehicles.push(spawned);
       levelManager.registerVehicle(
@@ -224,7 +259,15 @@ export async function createGameplayScene(
     if (target && enemyTurretSystem) {
       enemyTurretSystem.bindPlayerTarget(target);
     }
+    if (vehicle instanceof TankVehicleController) {
+      bindSharedSystemsToVehicle(vehicle);
+    }
   });
+
+  const initialActive = levelManager.getActiveVehicle();
+  if (initialActive instanceof TankVehicleController) {
+    bindSharedSystemsToVehicle(initialActive);
+  }
 
   if (scene.activeCamera !== fallbackCamera) {
     fallbackCamera.dispose();
@@ -250,6 +293,7 @@ export async function createGameplayScene(
     dispose: () => {
       levelManager.dispose();
       disposePhysicsGroup(worldPhysics);
+      sharedPowerUpSystem?.dispose();
       for (const spawned of spawnedVehicles) {
         spawned.physics.body.dispose();
         spawned.physics.shape.dispose();
@@ -271,6 +315,7 @@ interface SpawnPlayerVehicleOptions {
   radarMapUrl: string | null;
   radarWorldBounds: RadarWorldBounds | null;
   onPlayerDeath: () => void;
+  sharedPowerUpSystem?: PowerUpSystem | null;
 }
 
 function resolveVehicleNodeNames(config: TankControllerConfig) {
@@ -307,6 +352,7 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
     radarWorldBounds,
     onPlayerDeath
   } = options;
+  const sharedPowerUpSystem = options.sharedPowerUpSystem;
   const nodeNames = resolveVehicleNodeNames(vehicleConfig);
   const spawnNode = findTransformNode(terrainContainer, vehicleSpawn.spawnNode);
   if (!spawnNode) {
@@ -552,6 +598,7 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
     tankDamageParticles,
     playerTargetNode,
     enemyTurretSystem,
+    sharedPowerUpSystem,
     radarMapUrl,
     radarWorldBounds,
     onPlayerDeath
