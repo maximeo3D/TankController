@@ -29,13 +29,14 @@ import { Texture } from "@babylonjs/core/Materials/Textures/texture";
 import type { AssetContainer } from "@babylonjs/core/assetContainer";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import type { TankControllerConfig } from "../config/tankController";
-import { tankAssetUrl, skyboxAssetUrl, powerUpsAssetUrl, enemiesAssetUrl } from "../assets/assetUrls";
+import { getVehicleConfig } from "../config/vehicleRegistry";
+import { tankAssetUrl, armoredCarAssetUrl, skyboxAssetUrl, powerUpsAssetUrl, enemiesAssetUrl } from "../assets/assetUrls";
 import { enemiesConfig } from "../config/enemiesController";
 import { EnemyTurretSystem } from "./EnemyTurretSystem";
 import type { LevelDefinition } from "../app/levels";
-import type { MenuMission } from "../ui/menuData";
+import type { MenuMission, MissionVehicleSpawn } from "../ui/menuData";
+import type { VehicleTypeId } from "./vehicle/VehicleController";
 import { TankGameplayController } from "./TankGameplayController";
-import { getMissionVehicleSpawn } from "./level/missionConfig";
 import { LevelManager } from "./level/LevelManager";
 import { TankVehicleController } from "./vehicle/TankVehicleController";
 import type { VehicleDebugState } from "./vehicle/VehicleController";
@@ -65,8 +66,17 @@ export interface GameplaySceneBundle {
 
 export type GameplayLoadingProgressCallback = (progress: number) => void;
 
-const REQUIRED_BONES = ["main", "caisse", "tourelle", "canon"] as const;
-const OPTIONAL_TRACK_BONES = ["track_L", "track_R"] as const;
+interface SpawnedPlayerVehicle {
+  controller: TankGameplayController;
+  physics: TankPhysicsResource;
+  container: AssetContainer;
+  spawnFound: boolean;
+  cameraFound: boolean;
+}
+
+function vehicleAssetUrl(type: VehicleTypeId): string {
+  return type === "armoredCar" ? armoredCarAssetUrl : tankAssetUrl;
+}
 
 interface PhysicsResourceGroup {
   bodies: PhysicsBody[];
@@ -105,14 +115,6 @@ export async function createGameplayScene(
   onProgress(0.02);
   const levelManager = new LevelManager(level, mission);
   const missionContext = levelManager.missionContext;
-  for (const vehicleSpawn of missionContext.vehicles) {
-    if (vehicleSpawn.type === "armoredCar") {
-      console.warn(
-        `[createGameplayScene] Vehicle type "armoredCar" (id: "${vehicleSpawn.id}") is not implemented yet; skipping spawn.`
-      );
-    }
-  }
-  const tankSpawn = getMissionVehicleSpawn(missionContext, "tank");
   const scene = new Scene(engine);
   scene.useRightHandedSystem = true;
   scene.clearColor = new Color4(0.05, 0.06, 0.08, 1);
@@ -160,225 +162,10 @@ export async function createGameplayScene(
   onProgress(0.38);
   await waitAnimationFrames(1);
 
-  const spawnNodeName = tankSpawn?.spawnNode ?? "SPAWN_tank";
-  const spawnNode = findTransformNode(terrainContainer, spawnNodeName);
-  if (!spawnNode && tankSpawn) {
-    console.warn(`[LevelManager] Spawn node "${spawnNodeName}" not found for vehicle "${tankSpawn.id}".`);
-  }
-
-  const tankContainer = await SceneLoader.LoadAssetContainerAsync("", tankAssetUrl, scene);
-  tankContainer.addAllToScene();
-  hideColliderMeshes(tankContainer, scene);
-  onProgress(0.55);
-  await waitAnimationFrames(1);
-
-  const tankAnchor = new TransformNode("tank_anchor", scene);
-  const tankVisualRoot = new TransformNode("tank_visual_root", scene);
-  tankVisualRoot.parent = tankAnchor;
-  if (spawnNode) {
-    tankAnchor.position.copyFrom(spawnNode.getAbsolutePosition());
-    tankAnchor.rotationQuaternion = extractHorizontalSpawnRotation(
-      spawnNode,
-      config.rig.movementForwardAxis,
-      config.rig.movementForwardSign
-    );
-  } else {
-    tankAnchor.rotationQuaternion = Quaternion.Identity();
-  }
-  tankAnchor.rotate(Axis.Y, toRadians(config.rig.spawnYawOffsetDeg));
-
-  parentTankNodes(tankContainer, tankAnchor, tankVisualRoot);
-  const tankColliderMesh = findMeshByName(tankContainer, "COL_tank");
-  refreshTankRigWorldMatrices(tankAnchor, tankContainer);
-  const groundingInfo = createTankGroundingInfo(
-    tankContainer,
-    tankAnchor,
-    tankColliderMesh,
-    config.rig.movementForwardAxis
-  );
-  const suspensionInfo = createTankSuspensionInfo(tankContainer, tankAnchor);
-  const tankPhysics = createTankPhysics(tankAnchor, tankColliderMesh, groundingInfo, scene, config);
-  snapTankAnchorYToTerrain(scene, tankAnchor, tankPhysics.body, suspensionInfo.points, config);
-
-  const camPivotNode = findTransformNode(tankContainer, "CAM_pivot");
-  const camStartNode = findTransformNode(tankContainer, "CAM_tank");
-
-  let tankCamera: UniversalCamera | null = null;
-  let tankZoomCamera: UniversalCamera | null = null;
-  let initialOrbit: { yawRad: number; pitchRad: number; radius: number } | null = null;
-  if (camPivotNode) {
-    const pivotWorld = camPivotNode.getAbsolutePosition();
-    let startWorld: Vector3 | null = null;
-
-    if (camStartNode) {
-      // If CAM_tank exists, always use it as the initial orbit seed (artist-authored pose).
-      startWorld = camStartNode.getAbsolutePosition();
-    }
-
-    if (!startWorld) {
-      const radius = config.camera.orbitDefaultRadius;
-      const height = Math.max(radius * 0.35, 1);
-      const sourceAxis =
-        config.rig.movementForwardAxis === "x"
-          ? Axis.X
-          : config.rig.movementForwardAxis === "y"
-            ? Axis.Y
-            : Axis.Z;
-      const forward = tankAnchor.getDirection(sourceAxis).scale(config.rig.movementForwardSign);
-      forward.y = 0;
-      if (forward.lengthSquared() > 1e-6) {
-        forward.normalize();
-      } else {
-        forward.copyFrom(Axis.Z);
-      }
-
-      startWorld = pivotWorld.subtract(forward.scale(radius)).add(Axis.Y.scale(height));
-    }
-
-    tankCamera = new UniversalCamera("tank_orbit_camera", startWorld.clone(), scene);
-    tankCamera.fov = toRadians(config.camera.defaultFovDeg);
-    tankCamera.minZ = 0.01;
-    tankCamera.inputs.clear();
-    tankCamera.attachControl(canvas, true);
-    tankCamera.setTarget(pivotWorld);
-    scene.activeCamera = tankCamera;
-
-    // Create zoom camera (actual placement handled by controller, based on muzzle forward).
-    tankZoomCamera = new UniversalCamera("tank_zoom_camera", Vector3.Zero(), scene);
-    tankZoomCamera.fov = toRadians(config.camera.zoomViewFovDeg);
-    tankZoomCamera.minZ = 0.01;
-    tankZoomCamera.inputs.clear();
-    tankZoomCamera.rotationQuaternion = Quaternion.Identity();
-    // Do not attach control: input is managed by our own TankInput + controller logic.
-
-    // Seed orbit state from the chosen start pose so the first "orbit step"
-    // keeps the camera exactly where the artist placed it in Blender.
-    const offset = startWorld.subtract(pivotWorld);
-    const horizLen = Math.sqrt(offset.x * offset.x + offset.z * offset.z);
-    const radius = Math.max(offset.length(), 0.001);
-    initialOrbit = {
-      yawRad: Math.atan2(offset.x, offset.z),
-      pitchRad: Math.atan2(offset.y, Math.max(horizLen, 0.001)),
-      radius
-    };
-  } else {
-    // If we stay on fallbackCamera, the view will likely be "wrong" relative to the tank.
-    // This warning helps diagnose GLB naming/hierarchy quickly.
-    const allNames = [...tankContainer.transformNodes, ...tankContainer.meshes]
-      .map((n) => n.name)
-      .filter((n) => n.toLowerCase().includes("cam_"))
-      .slice(0, 30);
-    console.warn(
-      "[TankController] CAM_pivot not found in tank GLB. Falling back to default camera. CAM_* candidates:",
-      allNames
-    );
-  }
-
-  // Camera reticle is now rendered as screen-space Babylon GUI (not a 3D mesh).
-  const reticleCameraMesh: AbstractMesh | null = null;
-  const reticleBarrelMesh = findAbstractMeshByName(tankContainer, "UI_reticle_barrel");
-  const tracksSourceMesh = findAbstractMeshByName(tankContainer, "TEX_tracks");
-  if (tracksSourceMesh) {
-    tracksSourceMesh.isVisible = false;
-    tracksSourceMesh.isPickable = false;
-    tracksSourceMesh.setEnabled(false);
-  }
-
-  // Barrel reticle is now rendered as screen-space Babylon GUI (not a 3D mesh).
-  if (reticleBarrelMesh) {
-    reticleBarrelMesh.isVisible = false;
-    reticleBarrelMesh.isPickable = false;
-    reticleBarrelMesh.setEnabled(false);
-    reticleBarrelMesh.alwaysSelectAsActiveMesh = true;
-    if (reticleBarrelMesh.material) {
-      reticleBarrelMesh.material.backFaceCulling = false;
-    }
-  }
-
-  const ammoShellMesh = findMeshByName(tankContainer, "AMMO_obus");
-  if (ammoShellMesh) {
-    ammoShellMesh.isVisible = false;
-    ammoShellMesh.setParent(null);
-  }
-
-  const ammoShellColliderMesh = findMeshByName(tankContainer, "COL_obus");
-  if (ammoShellColliderMesh) {
-    ammoShellColliderMesh.isVisible = false;
-    ammoShellColliderMesh.isPickable = false;
-    ammoShellColliderMesh.setParent(null);
-  }
-
-  const ammoBulletMesh = findMeshByName(tankContainer, "AMMO_balle");
-  if (ammoBulletMesh) {
-    ammoBulletMesh.isVisible = false;
-    ammoBulletMesh.setParent(null);
-  }
-
-  const muzzleCannonNode = findTransformNode(tankContainer, "MUZZLE_canon_tank");
-  const muzzleGunNode = findTransformNode(tankContainer, "MUZZLE_gun_tank");
-  parentMuzzleNodesToCannonBone(tankContainer, muzzleCannonNode, muzzleGunNode);
-  refreshTankRigWorldMatrices(tankAnchor, tankContainer);
-
-  const suspensionNodes = {
-    fl: findTransformNode(tankContainer, "SUS_FL"),
-    fr: findTransformNode(tankContainer, "SUS_FR"),
-    ml: findTransformNode(tankContainer, "SUS_ML"),
-    mr: findTransformNode(tankContainer, "SUS_MR"),
-    rl: findTransformNode(tankContainer, "SUS_RL"),
-    rr: findTransformNode(tankContainer, "SUS_RR")
-  };
-
-  const susBackLeft =
-    findTransformNode(tankContainer, "SUS_BL") ?? findTransformNode(tankContainer, "SUS_RL");
-  const susBackRight =
-    findTransformNode(tankContainer, "SUS_BR") ?? findTransformNode(tankContainer, "SUS_RR");
-
-  const susFrontLeft = findTransformNode(tankContainer, "SUS_FL");
-  const susFrontRight = findTransformNode(tankContainer, "SUS_FR");
-
-  let trackTreadParticles = null;
-  try {
-    trackTreadParticles = await createTrackTreadParticleBundle(scene, susBackLeft, susBackRight);
-  } catch (err) {
-    console.warn("[TankController] Track tread particles could not be created:", err);
-  }
-  onProgress(0.7);
-
-  let trackTreadParticlesReverse = null;
-  try {
-    trackTreadParticlesReverse = await createTrackTreadParticleBundle(scene, susFrontLeft, susFrontRight);
-  } catch (err) {
-    console.warn("[TankController] Track tread particles (reverse) could not be created:", err);
-  }
-
-  const damageSmoke1 = findTransformNode(tankContainer, "tank_damage_smoke_1");
-  const damageSmoke2 = findTransformNode(tankContainer, "tank_damage_smoke_2");
-  const damageSmoke3 = findTransformNode(tankContainer, "tank_damage_smoke_3");
-  const damageSmoke4 = findTransformNode(tankContainer, "tank_damage_smoke_4");
-  const playerTargetNode = findTransformNode(tankContainer, "TARGET_player_tank");
-  if (!playerTargetNode) {
-    console.warn(
-      "[TankController] TARGET_player_tank not found in tank GLB; enemy turrets will aim at tank anchor."
-    );
-  }
-
-  let tankDamageParticles = null;
-  try {
-    tankDamageParticles = await createTankDamageParticleBundle(scene, {
-      smoke1: damageSmoke1,
-      smoke2: damageSmoke2,
-      smoke3: damageSmoke3,
-      smoke4: damageSmoke4
-    });
-  } catch (err) {
-    console.warn("[TankController] Tank damage particles could not be created:", err);
-  }
-  onProgress(0.8);
-
   const powerUpsContainer = await SceneLoader.LoadAssetContainerAsync("", powerUpsAssetUrl, scene);
-  onProgress(0.88);
+  onProgress(0.45);
   const enemiesContainer = await SceneLoader.LoadAssetContainerAsync("", enemiesAssetUrl, scene);
-  onProgress(0.94);
+  onProgress(0.52);
 
   let enemyTurretSystem: EnemyTurretSystem | null = null;
   if (enemiesConfig.turret.enabled) {
@@ -393,32 +180,368 @@ export async function createGameplayScene(
       console.warn("[TankController] Enemy turret system could not be created:", err);
     }
   }
+  onProgress(0.58);
 
-  // Only dispose the fallback camera if we successfully switched to another active camera.
+  const spawnedVehicles: SpawnedPlayerVehicle[] = [];
+  const vehicleProgressStep = 0.38 / Math.max(missionContext.vehicles.length, 1);
+  let progressCursor = 0.6;
+
+  for (const vehicleSpawn of missionContext.vehicles) {
+    const vehicleConfig = getVehicleConfig(vehicleSpawn.type);
+    try {
+      const spawned = await spawnPlayerVehicle({
+        scene,
+        canvas,
+        terrainContainer,
+        powerUpsContainer,
+        enemyTurretSystem,
+        vehicleSpawn,
+        vehicleConfig,
+        assetUrl: vehicleAssetUrl(vehicleSpawn.type),
+        fallbackCamera,
+        radarMapUrl,
+        radarWorldBounds,
+        onPlayerDeath
+      });
+      spawnedVehicles.push(spawned);
+      levelManager.registerVehicle(
+        new TankVehicleController({
+          id: vehicleSpawn.id,
+          type: vehicleSpawn.type,
+          controller: spawned.controller
+        })
+      );
+    } catch (err) {
+      console.error(`[createGameplayScene] Failed to spawn vehicle "${vehicleSpawn.id}":`, err);
+    }
+    progressCursor += vehicleProgressStep;
+    onProgress(progressCursor);
+  }
+
+  levelManager.setOnActiveVehicleChanged((vehicle) => {
+    vehicle.focusCamera();
+    const target = vehicle.getEnemyPlayerTarget();
+    if (target && enemyTurretSystem) {
+      enemyTurretSystem.bindPlayerTarget(target);
+    }
+  });
+
   if (scene.activeCamera !== fallbackCamera) {
     fallbackCamera.dispose();
   }
+
+  const primarySpawn = spawnedVehicles[0];
+  onProgress(1);
+
+  return {
+    scene,
+    levelManager,
+    summary: {
+      spawnFound: primarySpawn?.spawnFound ?? false,
+      tankCameraFound: primarySpawn?.cameraFound ?? false,
+      terrainStaticMeshes: countNamedMeshes(terrainContainer, "SM_"),
+      terrainDynamicMeshes: countNamedMeshes(terrainContainer, "DM_"),
+      terrainColliderMeshes: countNamedMeshes(terrainContainer, "COL_"),
+      tankBones: primarySpawn ? collectBoneMatches(primarySpawn.container) : [],
+      enemyTurretsSpawned: enemyTurretSystem?.instanceCount ?? 0
+    },
+    getDebugState: () => levelManager.getDebugState(),
+    setPaused: (paused) => levelManager.setPaused(paused),
+    dispose: () => {
+      levelManager.dispose();
+      disposePhysicsGroup(worldPhysics);
+      for (const spawned of spawnedVehicles) {
+        spawned.physics.body.dispose();
+        spawned.physics.shape.dispose();
+      }
+    }
+  };
+}
+
+interface SpawnPlayerVehicleOptions {
+  scene: Scene;
+  canvas: HTMLCanvasElement;
+  terrainContainer: AssetContainer;
+  powerUpsContainer: AssetContainer;
+  enemyTurretSystem: EnemyTurretSystem | null;
+  vehicleSpawn: MissionVehicleSpawn;
+  vehicleConfig: TankControllerConfig;
+  assetUrl: string;
+  fallbackCamera: ArcRotateCamera;
+  radarMapUrl: string | null;
+  radarWorldBounds: RadarWorldBounds | null;
+  onPlayerDeath: () => void;
+}
+
+function resolveVehicleNodeNames(config: TankControllerConfig) {
+  const nodes = config.rig.nodes ?? {};
+  return {
+    colliderMesh: nodes.colliderMesh ?? "COL_tank",
+    cameraPivot: nodes.cameraPivot ?? "CAM_pivot",
+    cameraStart: nodes.cameraStart ?? "CAM_tank",
+    muzzleShell: nodes.muzzleShell ?? "MUZZLE_canon_tank",
+    muzzleGun: nodes.muzzleGun ?? "MUZZLE_gun_tank",
+    playerTarget: nodes.playerTarget ?? "TARGET_player_tank",
+    pitchBone: config.rig.pitchBone ?? "canon",
+    damageSmokes: nodes.damageSmoke ?? [
+      "tank_damage_smoke_1",
+      "tank_damage_smoke_2",
+      "tank_damage_smoke_3",
+      "tank_damage_smoke_4"
+    ]
+  };
+}
+
+async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<SpawnedPlayerVehicle> {
+  const {
+    scene,
+    canvas,
+    terrainContainer,
+    powerUpsContainer,
+    enemyTurretSystem,
+    vehicleSpawn,
+    vehicleConfig,
+    assetUrl,
+    fallbackCamera,
+    radarMapUrl,
+    radarWorldBounds,
+    onPlayerDeath
+  } = options;
+  const nodeNames = resolveVehicleNodeNames(vehicleConfig);
+  const spawnNode = findTransformNode(terrainContainer, vehicleSpawn.spawnNode);
+  if (!spawnNode) {
+    console.warn(
+      `[LevelManager] Spawn node "${vehicleSpawn.spawnNode}" not found for vehicle "${vehicleSpawn.id}".`
+    );
+  }
+
+  const vehicleContainer = await SceneLoader.LoadAssetContainerAsync("", assetUrl, scene);
+  vehicleContainer.addAllToScene();
+  hideColliderMeshes(vehicleContainer, scene);
+  await waitAnimationFrames(1);
+
+  const vehicleAnchor = new TransformNode(`${vehicleSpawn.id}_anchor`, scene);
+  const vehicleVisualRoot = new TransformNode(`${vehicleSpawn.id}_visual_root`, scene);
+  vehicleVisualRoot.parent = vehicleAnchor;
+  if (spawnNode) {
+    vehicleAnchor.position.copyFrom(spawnNode.getAbsolutePosition());
+    vehicleAnchor.rotationQuaternion = extractHorizontalSpawnRotation(
+      spawnNode,
+      vehicleConfig.rig.movementForwardAxis,
+      vehicleConfig.rig.movementForwardSign
+    );
+  } else {
+    vehicleAnchor.rotationQuaternion = Quaternion.Identity();
+  }
+  vehicleAnchor.rotate(Axis.Y, toRadians(vehicleConfig.rig.spawnYawOffsetDeg));
+
+  parentVehicleNodes(vehicleContainer, vehicleAnchor, vehicleVisualRoot, nodeNames.colliderMesh);
+  const colliderMesh = findMeshByName(vehicleContainer, nodeNames.colliderMesh);
+  refreshTankRigWorldMatrices(vehicleAnchor, vehicleContainer);
+  const groundingInfo = createTankGroundingInfo(
+    vehicleContainer,
+    vehicleAnchor,
+    colliderMesh,
+    vehicleConfig.rig.movementForwardAxis
+  );
+  const suspensionInfo = createTankSuspensionInfo(vehicleContainer, vehicleAnchor, vehicleConfig);
+  const vehiclePhysics = createTankPhysics(
+    vehicleAnchor,
+    colliderMesh,
+    groundingInfo,
+    scene,
+    vehicleConfig
+  );
+  snapTankAnchorYToTerrain(
+    scene,
+    vehicleAnchor,
+    vehiclePhysics.body,
+    suspensionInfo.points,
+    vehicleConfig
+  );
+
+  const camPivotNode = findTransformNode(vehicleContainer, nodeNames.cameraPivot);
+  const camStartNode = findTransformNode(vehicleContainer, nodeNames.cameraStart);
+
+  let vehicleCamera: UniversalCamera | null = null;
+  let vehicleZoomCamera: UniversalCamera | null = null;
+  let initialOrbit: { yawRad: number; pitchRad: number; radius: number } | null = null;
+  if (camPivotNode) {
+    const pivotWorld = camPivotNode.getAbsolutePosition();
+    let startWorld: Vector3 | null = camStartNode ? camStartNode.getAbsolutePosition() : null;
+
+    if (!startWorld) {
+      const radius = vehicleConfig.camera.orbitDefaultRadius;
+      const height = Math.max(radius * 0.35, 1);
+      const sourceAxis =
+        vehicleConfig.rig.movementForwardAxis === "x"
+          ? Axis.X
+          : vehicleConfig.rig.movementForwardAxis === "y"
+            ? Axis.Y
+            : Axis.Z;
+      const forward = vehicleAnchor.getDirection(sourceAxis).scale(vehicleConfig.rig.movementForwardSign);
+      forward.y = 0;
+      if (forward.lengthSquared() > 1e-6) {
+        forward.normalize();
+      } else {
+        forward.copyFrom(Axis.Z);
+      }
+      startWorld = pivotWorld.subtract(forward.scale(radius)).add(Axis.Y.scale(height));
+    }
+
+    vehicleCamera = new UniversalCamera(`${vehicleSpawn.id}_orbit_camera`, startWorld.clone(), scene);
+    vehicleCamera.fov = toRadians(vehicleConfig.camera.defaultFovDeg);
+    vehicleCamera.minZ = 0.01;
+    vehicleCamera.inputs.clear();
+    vehicleCamera.attachControl(canvas, true);
+    vehicleCamera.setTarget(pivotWorld);
+
+    if (scene.activeCamera === fallbackCamera) {
+      scene.activeCamera = vehicleCamera;
+    }
+
+    vehicleZoomCamera = new UniversalCamera(`${vehicleSpawn.id}_zoom_camera`, Vector3.Zero(), scene);
+    vehicleZoomCamera.fov = toRadians(vehicleConfig.camera.zoomViewFovDeg);
+    vehicleZoomCamera.minZ = 0.01;
+    vehicleZoomCamera.inputs.clear();
+    vehicleZoomCamera.rotationQuaternion = Quaternion.Identity();
+
+    const offset = startWorld.subtract(pivotWorld);
+    const horizLen = Math.sqrt(offset.x * offset.x + offset.z * offset.z);
+    const radius = Math.max(offset.length(), 0.001);
+    initialOrbit = {
+      yawRad: Math.atan2(offset.x, offset.z),
+      pitchRad: Math.atan2(offset.y, Math.max(horizLen, 0.001)),
+      radius
+    };
+  } else {
+    const allNames = [...vehicleContainer.transformNodes, ...vehicleContainer.meshes]
+      .map((n) => n.name)
+      .filter((n) => n.toLowerCase().includes("cam_"))
+      .slice(0, 30);
+    console.warn(
+      `[TankController] ${nodeNames.cameraPivot} not found in "${vehicleSpawn.id}" GLB. CAM_* candidates:`,
+      allNames
+    );
+  }
+
+  const reticleCameraMesh: AbstractMesh | null = null;
+  const reticleBarrelMesh = findAbstractMeshByName(vehicleContainer, "UI_reticle_barrel");
+  const tracksSourceMesh = findAbstractMeshByName(vehicleContainer, "TEX_tracks");
+  if (tracksSourceMesh) {
+    tracksSourceMesh.isVisible = false;
+    tracksSourceMesh.isPickable = false;
+    tracksSourceMesh.setEnabled(false);
+  }
+  if (reticleBarrelMesh) {
+    reticleBarrelMesh.isVisible = false;
+    reticleBarrelMesh.isPickable = false;
+    reticleBarrelMesh.setEnabled(false);
+    reticleBarrelMesh.alwaysSelectAsActiveMesh = true;
+    if (reticleBarrelMesh.material) {
+      reticleBarrelMesh.material.backFaceCulling = false;
+    }
+  }
+
+  const ammoShellMesh = findMeshByName(vehicleContainer, "AMMO_obus");
+  if (ammoShellMesh) {
+    ammoShellMesh.isVisible = false;
+    ammoShellMesh.setParent(null);
+  }
+  const ammoShellColliderMesh = findMeshByName(vehicleContainer, "COL_obus");
+  if (ammoShellColliderMesh) {
+    ammoShellColliderMesh.isVisible = false;
+    ammoShellColliderMesh.isPickable = false;
+    ammoShellColliderMesh.setParent(null);
+  }
+  const ammoBulletMesh = findMeshByName(vehicleContainer, "AMMO_balle");
+  if (ammoBulletMesh) {
+    ammoBulletMesh.isVisible = false;
+    ammoBulletMesh.setParent(null);
+  }
+
+  const muzzleShellNode = findTransformNode(vehicleContainer, nodeNames.muzzleShell);
+  const muzzleGunNode = findTransformNode(vehicleContainer, nodeNames.muzzleGun);
+  parentMuzzleNodesToPitchBone(vehicleContainer, nodeNames.pitchBone, muzzleShellNode, muzzleGunNode);
+  refreshTankRigWorldMatrices(vehicleAnchor, vehicleContainer);
+
+  const suspensionNodes = {
+    fl: findTransformNode(vehicleContainer, "SUS_FL"),
+    fr: findTransformNode(vehicleContainer, "SUS_FR"),
+    ml: findTransformNode(vehicleContainer, "SUS_ML"),
+    mr: findTransformNode(vehicleContainer, "SUS_MR"),
+    rl: findTransformNode(vehicleContainer, "SUS_RL"),
+    rr: findTransformNode(vehicleContainer, "SUS_RR")
+  };
+
+  const tracksEnabled = vehicleConfig.tracks?.enabled === true;
+  const susBackLeft =
+    findTransformNode(vehicleContainer, "SUS_BL") ?? findTransformNode(vehicleContainer, "SUS_RL");
+  const susBackRight =
+    findTransformNode(vehicleContainer, "SUS_BR") ?? findTransformNode(vehicleContainer, "SUS_RR");
+  const susFrontLeft = findTransformNode(vehicleContainer, "SUS_FL");
+  const susFrontRight = findTransformNode(vehicleContainer, "SUS_FR");
+
+  let trackTreadParticles = null;
+  let trackTreadParticlesReverse = null;
+  if (tracksEnabled) {
+    try {
+      trackTreadParticles = await createTrackTreadParticleBundle(scene, susBackLeft, susBackRight);
+    } catch (err) {
+      console.warn("[TankController] Track tread particles could not be created:", err);
+    }
+    try {
+      trackTreadParticlesReverse = await createTrackTreadParticleBundle(scene, susFrontLeft, susFrontRight);
+    } catch (err) {
+      console.warn("[TankController] Track tread particles (reverse) could not be created:", err);
+    }
+  }
+
+  const [smoke1Name, smoke2Name, smoke3Name, smoke4Name] = nodeNames.damageSmokes;
+  const damageSmoke1 = findTransformNode(vehicleContainer, smoke1Name);
+  const damageSmoke2 = findTransformNode(vehicleContainer, smoke2Name);
+  const damageSmoke3 = findTransformNode(vehicleContainer, smoke3Name);
+  const damageSmoke4 = findTransformNode(vehicleContainer, smoke4Name);
+  const playerTargetNode = findTransformNode(vehicleContainer, nodeNames.playerTarget);
+  if (!playerTargetNode) {
+    console.warn(
+      `[TankController] ${nodeNames.playerTarget} not found in "${vehicleSpawn.id}" GLB; enemies aim at anchor.`
+    );
+  }
+
+  let tankDamageParticles = null;
+  try {
+    tankDamageParticles = await createTankDamageParticleBundle(scene, {
+      smoke1: damageSmoke1,
+      smoke2: damageSmoke2,
+      smoke3: damageSmoke3,
+      smoke4: damageSmoke4
+    });
+  } catch (err) {
+    console.warn("[TankController] Vehicle damage particles could not be created:", err);
+  }
+
   const controller = new TankGameplayController({
     scene,
     canvas,
-    config,
-    tankContainer,
-    tankAnchor,
-    tankVisualRoot,
+    config: vehicleConfig,
+    tankContainer: vehicleContainer,
+    tankAnchor: vehicleAnchor,
+    tankVisualRoot: vehicleVisualRoot,
     terrainContainer,
     powerUpsContainer,
-    tankColliderMesh,
-    groundingInfo: groundingInfo,
+    tankColliderMesh: colliderMesh,
+    groundingInfo,
     suspensionInfo,
     suspensionNodes,
-    tankBody: tankPhysics.body,
-    tankCamera,
-    tankZoomCamera,
+    tankBody: vehiclePhysics.body,
+    tankCamera: vehicleCamera,
+    tankZoomCamera: vehicleZoomCamera,
     cameraPivotNode: camPivotNode,
     initialOrbit,
     reticleCameraMesh,
     reticleBarrelMesh,
-    muzzleCannonNode,
+    muzzleCannonNode: muzzleShellNode,
     muzzleGunNode,
     tracksSourceMesh,
     ammoShellMesh,
@@ -434,44 +557,12 @@ export async function createGameplayScene(
     onPlayerDeath
   });
 
-  levelManager.setOnActiveVehicleChanged((vehicle) => {
-    vehicle.focusCamera();
-    const target = vehicle.getEnemyPlayerTarget();
-    if (target && enemyTurretSystem) {
-      enemyTurretSystem.bindPlayerTarget(target);
-    }
-  });
-
-  if (tankSpawn) {
-    levelManager.registerVehicle(
-      new TankVehicleController({
-        id: tankSpawn.id,
-        controller
-      })
-    );
-  }
-  onProgress(1);
-
   return {
-    scene,
-    levelManager,
-    summary: {
-      spawnFound: Boolean(spawnNode),
-      tankCameraFound: Boolean(camStartNode) || Boolean(camPivotNode),
-      terrainStaticMeshes: countNamedMeshes(terrainContainer, "SM_"),
-      terrainDynamicMeshes: countNamedMeshes(terrainContainer, "DM_"),
-      terrainColliderMeshes: countNamedMeshes(terrainContainer, "COL_"),
-      tankBones: collectBoneMatches(tankContainer),
-      enemyTurretsSpawned: enemyTurretSystem?.instanceCount ?? 0
-    },
-    getDebugState: () => levelManager.getDebugState(),
-    setPaused: (paused) => levelManager.setPaused(paused),
-    dispose: () => {
-      levelManager.dispose();
-      disposePhysicsGroup(worldPhysics);
-      tankPhysics.body.dispose();
-      tankPhysics.shape.dispose();
-    }
+    controller,
+    physics: vehiclePhysics,
+    container: vehicleContainer,
+    spawnFound: Boolean(spawnNode),
+    cameraFound: Boolean(camStartNode) || Boolean(camPivotNode)
   };
 }
 
@@ -497,13 +588,14 @@ function attachEnvironmentSkybox(scene: Scene, reflectionTexture: CubeTexture): 
   skybox.ignoreCameraMaxZ = true;
 }
 
-function parentTankNodes(
+function parentVehicleNodes(
   container: AssetContainer,
   physicsAnchor: TransformNode,
-  visualRoot: TransformNode
+  visualRoot: TransformNode,
+  colliderMeshName: string
 ): void {
   for (const mesh of container.meshes.filter((candidate) => !candidate.parent)) {
-    mesh.parent = mesh.name === "COL_tank" ? physicsAnchor : visualRoot;
+    mesh.parent = mesh.name === colliderMeshName ? physicsAnchor : visualRoot;
   }
 
   for (const node of container.transformNodes.filter((candidate) => !candidate.parent)) {
@@ -533,8 +625,8 @@ function findTransformNode(
   );
 }
 
-function findCannonBoneTransform(container: AssetContainer): TransformNode | null {
-  const wanted = "canon";
+function findPitchBoneTransform(container: AssetContainer, pitchBoneName: string): TransformNode | null {
+  const wanted = pitchBoneName.trim().toLowerCase();
   const bone =
     container.skeletons
       .flatMap((skeleton) => skeleton.bones)
@@ -546,26 +638,29 @@ function findCannonBoneTransform(container: AssetContainer): TransformNode | nul
   return bone?.getTransformNode() ?? null;
 }
 
-/** Les MUZZLE_* doivent suivre le pitch du bone `canon` (piloté en code sur son TransformNode). */
-function parentMuzzleNodesToCannonBone(
+/** Les MUZZLE_* doivent suivre le pitch du bone armes/canon. */
+function parentMuzzleNodesToPitchBone(
   container: AssetContainer,
-  muzzleCannonNode: TransformNode | AbstractMesh | null,
+  pitchBoneName: string,
+  muzzleShellNode: TransformNode | AbstractMesh | null,
   muzzleGunNode: TransformNode | AbstractMesh | null
 ): void {
-  const cannonTransform = findCannonBoneTransform(container);
-  if (!cannonTransform) {
-    console.warn("[TankController] canon bone transform not found; MUZZLE_* nodes were not reparented.");
+  const pitchTransform = findPitchBoneTransform(container, pitchBoneName);
+  if (!pitchTransform) {
+    console.warn(
+      `[TankController] pitch bone "${pitchBoneName}" not found; MUZZLE_* nodes were not reparented.`
+    );
     return;
   }
 
-  for (const muzzle of [muzzleCannonNode, muzzleGunNode]) {
+  for (const muzzle of [muzzleShellNode, muzzleGunNode]) {
     if (!muzzle) {
       continue;
     }
-    if (muzzle.parent === cannonTransform) {
+    if (muzzle.parent === pitchTransform) {
       continue;
     }
-    muzzle.setParent(cannonTransform, true);
+    muzzle.setParent(pitchTransform, true);
   }
 }
 
@@ -706,7 +801,7 @@ function computeRadarWorldBounds(container: AssetContainer): RadarWorldBounds | 
 }
 
 function collectBoneMatches(container: AssetContainer): string[] {
-  const names = [...REQUIRED_BONES, ...OPTIONAL_TRACK_BONES] as const;
+  const names = ["main", "caisse", "tourelle", "canon", "armes", "minigun", "track_L", "track_R"] as const;
   return names.filter((boneName) =>
     container.skeletons.some((skeleton) => skeleton.bones.some((bone) => bone.name === boneName))
   );
@@ -821,13 +916,19 @@ function createTankPhysics(
   return { body, shape, grounding };
 }
 
-function createTankSuspensionInfo(container: AssetContainer, tankAnchor: TransformNode): TankSuspensionInfo {
-  const names = ["SUS_FL", "SUS_FR", "SUS_ML", "SUS_MR", "SUS_RL", "SUS_RR"] as const;
+function createTankSuspensionInfo(
+  container: AssetContainer,
+  tankAnchor: TransformNode,
+  config?: TankControllerConfig
+): TankSuspensionInfo {
+  const names =
+    config?.rig.suspensionProbeNames ??
+    (["SUS_FL", "SUS_FR", "SUS_ML", "SUS_MR", "SUS_RL", "SUS_RR"] as const);
   const nodes = names
     .map((name) => findTransformNode(container, name))
     .filter((n): n is TransformNode | AbstractMesh => n !== null);
 
-  if (nodes.length === 6) {
+  if (nodes.length >= 4) {
     return { points: nodes.map((n) => toAnchorLocalPosition(n, tankAnchor)) };
   }
 

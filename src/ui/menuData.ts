@@ -67,7 +67,10 @@ export const MENU_MAPS: readonly MenuMapEntry[] = [
           flipX: true,
           flipY: false
         },
-        vehicles: [{ id: "player_tank", type: "tank", spawnNode: "SPAWN_tank" }],
+        vehicles: [
+          { id: "player_tank", type: "tank", spawnNode: "SPAWN_tank" },
+          { id: "player_armoredcar", type: "armoredCar", spawnNode: "SPAWN_armoredcar" }
+        ],
         startVehicleId: "player_tank"
       }
     ]

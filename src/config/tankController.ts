@@ -35,6 +35,28 @@ export interface TankControllerConfig {
     turretYawSign: 1 | -1;
     cannonPitchAxis: "x" | "y" | "z";
     cannonPitchSign: 1 | -1;
+    /** Bone de pitch des armes (défaut `canon`, voiture blindée : `armes`). */
+    pitchBone?: string;
+    /** Bone minigun enfant du pitch — rotation Y pendant les tirs. */
+    minigunBone?: string;
+    /** Vitesse de rotation du minigun (deg/s) pendant le tir. */
+    minigunSpinDegPerSec?: number;
+    /** Bones de roues (`wheel_FL`, …) — rotation visuelle au roulement. */
+    wheelBones?: string[];
+    wheelSpinAxis?: "x" | "y" | "z";
+    wheelSpinSign?: 1 | -1;
+    /** Probes suspension ; défaut 6 points tank, voiture : 4 roues. */
+    suspensionProbeNames?: string[];
+    /** Noms de nodes GLB (suffixe véhicule). */
+    nodes?: {
+      colliderMesh?: string;
+      cameraPivot?: string;
+      cameraStart?: string;
+      muzzleShell?: string;
+      muzzleGun?: string;
+      playerTarget?: string;
+      damageSmoke?: string[];
+    };
   };
   movement: {
     moveSpeed: number;

@@ -6,19 +6,21 @@ import type { VehicleController, VehicleDebugState, VehicleInstanceId, VehicleTy
 
 export interface TankVehicleControllerOptions {
   id: VehicleInstanceId;
+  type?: VehicleTypeId;
   controller: TankGameplayController;
 }
 
-/** Adaptateur tank → contrat véhicule générique. */
+/** Adaptateur gameplay → contrat véhicule générique (tank, voiture blindée, …). */
 export class TankVehicleController implements VehicleController {
   public readonly id: VehicleInstanceId;
-  public readonly type: VehicleTypeId = "tank";
+  public readonly type: VehicleTypeId;
   private readonly controller: TankGameplayController;
   private playerActive = false;
   private levelPaused = false;
 
   public constructor(options: TankVehicleControllerOptions) {
     this.id = options.id;
+    this.type = options.type ?? "tank";
     this.controller = options.controller;
   }
 

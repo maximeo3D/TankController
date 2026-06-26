@@ -237,6 +237,12 @@ export class TankGameplayController {
   private readonly caisseControl: BoneControl;
   private readonly trackLeftControl: BoneControl;
   private readonly trackRightControl: BoneControl;
+  private readonly minigunControl: BoneControl;
+  private readonly minigunBaseLocalRotation: Quaternion;
+  private minigunSpinRad = 0;
+  private readonly wheelControls: BoneControl[] = [];
+  private readonly wheelBaseLocalRotations: Quaternion[] = [];
+  private wheelSpinRad = 0;
   private readonly caisseBaseLocalRotation: Quaternion;
   private readonly trackLeftBaseLocalPosition: Vector3;
   private readonly trackRightBaseLocalPosition: Vector3;
@@ -563,10 +569,25 @@ export class TankGameplayController {
     }
     this.input = new TankInput(options.canvas, () => !this.paused);
     this.turretControl = resolveBoneControl(options.tankContainer, "tourelle");
-    this.cannonControl = resolveBoneControl(options.tankContainer, "canon");
+    const pitchBoneName = options.config.rig.pitchBone ?? "canon";
+    this.cannonControl = resolveBoneControl(options.tankContainer, pitchBoneName);
     this.caisseControl = resolveBoneControl(options.tankContainer, "caisse");
     this.trackLeftControl = resolveBoneControl(options.tankContainer, "track_L");
     this.trackRightControl = resolveBoneControl(options.tankContainer, "track_R");
+    const minigunBoneName = options.config.rig.minigunBone;
+    this.minigunControl = minigunBoneName
+      ? resolveBoneControl(options.tankContainer, minigunBoneName)
+      : { bone: null, transformNode: null };
+    this.minigunBaseLocalRotation = getControlLocalRotation(this.minigunControl, this.tankAnchor);
+    this.minigunSpinRad = 0;
+    this.wheelControls.length = 0;
+    this.wheelBaseLocalRotations.length = 0;
+    for (const wheelBoneName of options.config.rig.wheelBones ?? []) {
+      const wheelControl = resolveBoneControl(options.tankContainer, wheelBoneName);
+      this.wheelControls.push(wheelControl);
+      this.wheelBaseLocalRotations.push(getControlLocalRotation(wheelControl, this.tankAnchor));
+    }
+    this.wheelSpinRad = 0;
     this.initWheelAnchorLocalPositions();
     if (this.tracksConfig.suspensionVisual?.enabled) {
       if (!this.trackLeftControl.bone && !this.trackLeftControl.transformNode) {
@@ -2642,6 +2663,7 @@ export class TankGameplayController {
     }
     this.syncShieldHighlight();
     this.applyTurretAndCannon(frame.pointerX, frame.pointerY, dt);
+    this.applyMinigunSpin(dt);
     this.updateWeapons(dt);
     this.applyMovement(frame.moveAxis, frame.turnAxis, frame.boostHeld, dt);
     this.applyVisualSmoothing(dt);
@@ -3463,6 +3485,51 @@ export class TankGameplayController {
     setControlLocalPosition(this.cannonControl, cannonPos);
   }
 
+  /** Rotation visuelle du minigun (axe Y local) pendant le tir mitrailleuse. */
+  private applyMinigunSpin(dt: number): void {
+    if (!this.minigunControl.bone && !this.minigunControl.transformNode) {
+      return;
+    }
+
+    const isMinigunFiring =
+      this.fireHeld && this.battery > 0 && this.activeWeapon === "bullet" && !this.paused && this.playerActive;
+    if (isMinigunFiring) {
+      const spinDegPerSec = this.config.rig.minigunSpinDegPerSec ?? 720;
+      this.minigunSpinRad += toRadians(spinDegPerSec) * dt;
+    }
+
+    setControlAxisAngle(
+      this.minigunControl,
+      this.minigunBaseLocalRotation,
+      Axis.Y,
+      this.minigunSpinRad,
+      this.tankAnchor
+    );
+  }
+
+  private applyWheelVisualSpin(forwardWorld: Vector3, dt: number): void {
+    if (this.wheelControls.length === 0) {
+      return;
+    }
+
+    const v = this.tankBody.getLinearVelocity();
+    const forwardSpeed = Vector3.Dot(v, forwardWorld);
+    const wheelRadius = 0.35;
+    const spinSign = this.config.rig.wheelSpinSign ?? 1;
+    this.wheelSpinRad += (forwardSpeed / Math.max(wheelRadius, 0.05)) * dt * spinSign;
+
+    const wheelAxis = axisFromConfig(this.config.rig.wheelSpinAxis ?? "x", 1);
+    for (let i = 0; i < this.wheelControls.length; i++) {
+      setControlAxisAngle(
+        this.wheelControls[i],
+        this.wheelBaseLocalRotations[i],
+        wheelAxis,
+        this.wheelSpinRad,
+        this.tankAnchor
+      );
+    }
+  }
+
   private initAimDebugMeshes(): void {
     if (!TankGameplayController.DEBUG_AIM_VECTORS) {
       return;
@@ -3851,6 +3918,7 @@ export class TankGameplayController {
       this.tankBody.applyForce(tractionForce, center);
     }
 
+    this.applyWheelVisualSpin(forwardWorld, dt);
     this.updateTrackTreadDust(forwardWorld);
     this.updateTrackUvScroll(dt);
     this.syncTankMovementSounds();
