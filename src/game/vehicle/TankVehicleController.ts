@@ -43,6 +43,18 @@ export class TankVehicleController implements VehicleController {
     return toVehicleDebugState(this.controller.getDebugState());
   }
 
+  public focusCamera(): void {
+    this.controller.focusCamera();
+  }
+
+  public getEnemyPlayerTarget() {
+    return this.controller.getEnemyPlayerTarget();
+  }
+
+  public getAimTargetNode() {
+    return this.controller.getAimTargetNode();
+  }
+
   public dispose(): void {
     this.controller.dispose();
   }

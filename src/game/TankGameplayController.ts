@@ -72,7 +72,7 @@ import { HighlightLayer } from "@babylonjs/core/Layers/highlightLayer";
 import type { TrackTreadParticleBundle } from "./trackTreadParticles";
 import type { TankDamageParticleBundle } from "./tankDamageParticles";
 import { PowerUpSystem, type PowerUpTypeId } from "./PowerUpSystem";
-import { EnemyTurretSystem } from "./EnemyTurretSystem";
+import { EnemyTurretSystem, type EnemyTurretPlayerTarget } from "./EnemyTurretSystem";
 import { RadarHud, type RadarWorldBounds } from "./RadarHud";
 
 const WEAPON_SHELL_AMMO_FONT_SIZE = 26;
@@ -227,6 +227,7 @@ export class TankGameplayController {
   private readonly suspensionPointsLocal: Vector3[];
   private readonly suspensionNodes: NonNullable<TankGameplayControllerOptions["suspensionNodes"]>;
   private readonly tankBody: PhysicsBody;
+  private readonly tankColliderMesh: Mesh | null;
   private readonly tankCamera: TargetCamera | null;
   private readonly tankZoomCamera: TargetCamera | null;
   private readonly cameraPivotNode: TransformNode | AbstractMesh | null;
@@ -521,6 +522,7 @@ export class TankGameplayController {
       rr: null
     };
     this.tankBody = options.tankBody;
+    this.tankColliderMesh = options.tankColliderMesh ?? null;
     this.tankCamera = options.tankCamera;
     this.tankZoomCamera = options.tankZoomCamera ?? null;
     this.cameraPivotNode = options.cameraPivotNode ?? null;
@@ -2526,6 +2528,29 @@ export class TankGameplayController {
     }
 
     this.applyPauseSideEffects();
+  }
+
+  /** Active la caméra orbit du tank (switch véhicule). */
+  public focusCamera(): void {
+    if (this.tankCamera) {
+      this.scene.activeCamera = this.tankCamera;
+    }
+  }
+
+  public getEnemyPlayerTarget(): EnemyTurretPlayerTarget {
+    return {
+      tankBody: this.tankBody,
+      tankColliderMesh: this.tankColliderMesh,
+      onDamage: (amount) => this.takeDamage(amount),
+      onBulletImpact: (worldPos) => this.spawnSparkImpact(worldPos),
+      onTurretDestroyed: (worldPos) => {
+        void this.spawnExplosionAt(worldPos);
+      }
+    };
+  }
+
+  public getAimTargetNode(): TransformNode | AbstractMesh {
+    return this.playerTargetNode ?? this.tankAnchor;
   }
 
   private applyPauseSideEffects(): void {

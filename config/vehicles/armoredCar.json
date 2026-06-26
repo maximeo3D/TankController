@@ -1,0 +1,37 @@
+{
+  "id": "armoredCar",
+  "label": "Armored Car",
+  "assetFile": "armoredCar.glb",
+  "rig": {
+    "spawnYawOffsetDeg": 0,
+    "movementForwardAxis": "z",
+    "movementForwardSign": 1,
+    "movementInputSign": -1,
+    "turretYawAxis": "y",
+    "turretYawSign": 1,
+    "weaponPitchAxis": "x",
+    "weaponPitchSign": 1
+  },
+  "movement": {
+    "moveSpeed": 0.55,
+    "boostMultiplier": 1.35,
+    "steerSpeedDeg": 90,
+    "inputRiseRate": 2,
+    "inputFallRate": 2.5
+  },
+  "camera": {
+    "defaultFovDeg": 60,
+    "zoomViewFovDeg": 45,
+    "orbitDefaultRadius": 8
+  },
+  "weapons": {
+    "machinegun": {
+      "fireRatePerSecond": 12,
+      "spreadDeg": 0.8
+    },
+    "rocketPod": {
+      "salvoSize": 4,
+      "reloadSeconds": 2.5
+    }
+  }
+}

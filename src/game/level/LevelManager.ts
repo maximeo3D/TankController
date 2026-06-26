@@ -8,9 +8,14 @@ export class LevelManager {
   private readonly vehicles = new Map<VehicleInstanceId, VehicleController>();
   private activeVehicleId: VehicleInstanceId | null = null;
   private levelPaused = false;
+  private onActiveVehicleChanged: ((vehicle: VehicleController) => void) | null = null;
 
   public constructor(level: LevelDefinition, mission: MenuMission | null) {
     this.context = resolveLevelMissionContext(level, mission);
+  }
+
+  public setOnActiveVehicleChanged(callback: (vehicle: VehicleController) => void): void {
+    this.onActiveVehicleChanged = callback;
   }
 
   public get missionContext(): LevelMissionContext {
@@ -47,10 +52,11 @@ export class LevelManager {
     this.activeVehicleId = id;
     next.activate();
     this.syncPauseState();
+    this.onActiveVehicleChanged?.(next);
     return true;
   }
 
-  /** Cycle vers le véhicule suivant (touche V — wiring à venir). */
+  /** Cycle vers le véhicule suivant (touche V). */
   public cycleActiveVehicle(): boolean {
     const ids = this.getVehicleIds();
     if (ids.length <= 1 || !this.activeVehicleId) {

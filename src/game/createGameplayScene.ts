@@ -105,6 +105,13 @@ export async function createGameplayScene(
   onProgress(0.02);
   const levelManager = new LevelManager(level, mission);
   const missionContext = levelManager.missionContext;
+  for (const vehicleSpawn of missionContext.vehicles) {
+    if (vehicleSpawn.type === "armoredCar") {
+      console.warn(
+        `[createGameplayScene] Vehicle type "armoredCar" (id: "${vehicleSpawn.id}") is not implemented yet; skipping spawn.`
+      );
+    }
+  }
   const tankSpawn = getMissionVehicleSpawn(missionContext, "tank");
   const scene = new Scene(engine);
   scene.useRightHandedSystem = true;
@@ -425,6 +432,14 @@ export async function createGameplayScene(
     radarMapUrl,
     radarWorldBounds,
     onPlayerDeath
+  });
+
+  levelManager.setOnActiveVehicleChanged((vehicle) => {
+    vehicle.focusCamera();
+    const target = vehicle.getEnemyPlayerTarget();
+    if (target && enemyTurretSystem) {
+      enemyTurretSystem.bindPlayerTarget(target);
+    }
   });
 
   if (tankSpawn) {

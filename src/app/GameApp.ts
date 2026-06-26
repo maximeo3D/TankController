@@ -237,6 +237,20 @@ export class GameApp {
       this.requestGameplayPointerLockFromGesture();
     }
 
+    if (
+      (event.key === "v" || event.key === "V") &&
+      this.screen === "gameplay" &&
+      !this.isPaused &&
+      !this.isPlayerDead &&
+      !this.gameplayState.isLoading &&
+      this.gameplayBundle
+    ) {
+      if (this.gameplayBundle.levelManager.cycleActiveVehicle()) {
+        event.preventDefault();
+      }
+      return;
+    }
+
     if (event.key !== "Escape" || this.screen !== "gameplay" || this.gameplayState.isLoading || this.isPlayerDead) {
       return;
     }
