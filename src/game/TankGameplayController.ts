@@ -131,6 +131,31 @@ export interface TankGameplayDebugState {
   position: Vector3;
 }
 
+interface TrackUvScroller {
+  mesh: AbstractMesh;
+  textures: ScrollableTexture[];
+}
+
+interface ScrollableTexture {
+  vOffset: number;
+  clone?: () => unknown;
+}
+
+const TRACK_UV_TEXTURE_PROPERTIES = [
+  "albedoTexture",
+  "diffuseTexture",
+  "bumpTexture",
+  "normalTexture",
+  "ambientTexture",
+  "opacityTexture",
+  "emissiveTexture",
+  "specularTexture",
+  "metallicTexture",
+  "reflectivityTexture",
+  "microSurfaceTexture",
+  "lightmapTexture"
+] as const;
+
 import type { PhysicsViewer } from "@babylonjs/core/Debug/physicsViewer";
 
 export interface TankGameplayControllerOptions {
@@ -234,6 +259,7 @@ export class TankGameplayController {
   private readonly muzzleGunNode: TransformNode | AbstractMesh | null;
   private readonly trackMaterial: BabylonMaterial | null;
   private trackSystem: TrackSegmentSystem | null = null;
+  private readonly trackUvScrollers: TrackUvScroller[] = [];
   private readonly tankMeshIdsToIgnore = new Set<number>();
   private readonly tankDeathVisualMeshes: AbstractMesh[];
   private readonly ammoShellMesh: Mesh | null;
@@ -503,6 +529,7 @@ export class TankGameplayController {
     for (const m of options.tankContainer.meshes) {
       this.tankMeshIdsToIgnore.add(m.uniqueId);
     }
+    this.initTrackUvScrollers(options.tankContainer);
     this.tankDeathVisualMeshes = options.tankContainer.meshes.filter((mesh) =>
       this.isTankVisualDeathMesh(mesh)
     );
@@ -777,6 +804,62 @@ export class TankGameplayController {
       !name.startsWith("ui_") &&
       !name.startsWith("tex_tracks")
     );
+  }
+
+  private initTrackUvScrollers(tankContainer: AssetContainer): void {
+    const names = ["tank_tracks_L", "tank_tracks_R"];
+    for (const meshName of names) {
+      const mesh = tankContainer.meshes.find((candidate) => candidate.name === meshName) ?? null;
+      if (!mesh) {
+        console.warn(`[TankController][tracks] ${meshName} mesh missing; tread UV animation disabled for this side.`);
+        continue;
+      }
+
+      const textures = this.prepareIndependentTrackTextures(mesh);
+      if (textures.length === 0) {
+        console.warn(`[TankController][tracks] ${meshName} has no scrollable texture slots.`);
+        continue;
+      }
+
+      this.trackUvScrollers.push({ mesh, textures });
+    }
+  }
+
+  private prepareIndependentTrackTextures(mesh: AbstractMesh): ScrollableTexture[] {
+    const sourceMaterial = mesh.material;
+    if (!sourceMaterial) {
+      return [];
+    }
+
+    const materialClone = sourceMaterial.clone(`${sourceMaterial.name}_${mesh.name}_uv_scroll`);
+    mesh.material = materialClone ?? sourceMaterial;
+    const material = mesh.material as unknown as Record<string, unknown>;
+    const textures: ScrollableTexture[] = [];
+    const seen = new Set<ScrollableTexture>();
+
+    for (const textureProperty of TRACK_UV_TEXTURE_PROPERTIES) {
+      const sourceTexture = material[textureProperty];
+      if (!isScrollableTexture(sourceTexture)) {
+        continue;
+      }
+
+      const textureClone = sourceTexture.clone?.();
+      if (isScrollableTexture(textureClone)) {
+        material[textureProperty] = textureClone;
+        if (!seen.has(textureClone)) {
+          seen.add(textureClone);
+          textures.push(textureClone);
+        }
+        continue;
+      }
+
+      if (!seen.has(sourceTexture)) {
+        seen.add(sourceTexture);
+        textures.push(sourceTexture);
+      }
+    }
+
+    return textures;
   }
 
   private repairHealth(amount: number): void {
@@ -3718,6 +3801,7 @@ export class TankGameplayController {
     }
 
     this.updateTrackTreadDust(forwardWorld);
+    this.updateTrackUvScroll(dt);
     this.syncTankMovementSounds();
   }
 
@@ -3734,6 +3818,30 @@ export class TankGameplayController {
     const movingReverse = this.battery > 0 && vForward > minSpeed;
     this.trackTreadParticles?.setAdvancing(movingForward);
     this.trackTreadParticlesReverse?.setAdvancing(movingReverse);
+  }
+
+  private updateTrackUvScroll(dt: number): void {
+    if (this.trackUvScrollers.length === 0 || dt <= 0) {
+      return;
+    }
+
+    const speed = Math.max(this.tracksConfig.treadUvScrollSpeed ?? 2, 0);
+    if (speed <= 0) {
+      return;
+    }
+
+    const forwardUvAxis = -this.smoothedMoveAxis * this.movementInputSign;
+    const turnUvAxis = this.smoothedTurnAxis;
+    const leftDelta = (forwardUvAxis + turnUvAxis) * speed * dt;
+    const rightDelta = (forwardUvAxis - turnUvAxis) * speed * dt;
+
+    for (const scroller of this.trackUvScrollers) {
+      const name = scroller.mesh.name.toLowerCase();
+      const delta = name.endsWith("_l") ? leftDelta : rightDelta;
+      for (const texture of scroller.textures) {
+        texture.vOffset = wrapUnit(texture.vOffset + delta);
+      }
+    }
   }
 
   private triggerShellShotCameraShake(): void {
@@ -4757,6 +4865,18 @@ function clamp(value: number, min: number, max: number): number {
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
+}
+
+function wrapUnit(value: number): number {
+  return ((value % 1) + 1) % 1;
+}
+
+function isScrollableTexture(value: unknown): value is ScrollableTexture {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { vOffset?: unknown }).vOffset === "number"
+  );
 }
 
 function toRadians(valueInDegrees: number): number {

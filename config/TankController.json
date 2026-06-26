@@ -104,6 +104,7 @@
     "segmentWidth": 0.15,
     "uvRepeatU": 1.0,
     "uvRepeatV": 6.0,
+    "treadUvScrollSpeed": 3.0,
     "yOffset": 0.015,
     "raycastStartHeight": 0.35,
     "raycastLength": 2.5,
@@ -215,8 +216,8 @@
       "gravityMultiplier": 1
     },
     "bullet": {
-      "shotsPerSecond": 4.0,
-      "damage": 10.0,
+      "shotsPerSecond": 6.0,
+      "damage": 5.0,
       "muzzleVelocity": 100.0,
       "gravityMultiplier": 1.0
     }

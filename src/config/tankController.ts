@@ -137,6 +137,8 @@ export interface TankControllerConfig {
     segmentWidth: number;
     uvRepeatU: number;
     uvRepeatV: number;
+    /** Vitesse de défilement V des meshes `tank_tracks_L/R` (cycles UV/s à input max). */
+    treadUvScrollSpeed?: number;
     yOffset: number;
     raycastStartHeight: number;
     raycastLength: number;
