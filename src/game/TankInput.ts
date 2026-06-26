@@ -1,4 +1,5 @@
-export type WeaponType = "shell" | "bullet";
+export type WeaponType = "shell" | "missile" | "bullet";
+export type PrimaryWeaponType = "shell" | "missile";
 
 export interface TankInputFrame {
   moveAxis: number;
@@ -25,12 +26,19 @@ export class TankInput {
   // Zoom is implemented as a toggle (RMB click) instead of "hold",
   // because holding RMB can prevent LMB events on some browsers.
   private zoomToggled = false;
-  private selectedWeapon: WeaponType = "shell";
+  private readonly primaryWeapon: PrimaryWeaponType;
+  private selectedWeapon: WeaponType;
   private pointerLocked = false;
 
-  public constructor(canvas: HTMLCanvasElement, shouldRequestPointerLock: () => boolean = () => true) {
+  public constructor(
+    canvas: HTMLCanvasElement,
+    shouldRequestPointerLock: () => boolean = () => true,
+    primaryWeapon: PrimaryWeaponType = "shell"
+  ) {
     this.canvas = canvas;
     this.shouldRequestPointerLock = shouldRequestPointerLock;
+    this.primaryWeapon = primaryWeapon;
+    this.selectedWeapon = primaryWeapon;
     this.pointerLocked = document.pointerLockElement === this.canvas;
     this.canvas.tabIndex = 0;
 
@@ -104,7 +112,7 @@ export class TankInput {
     this.trackShiftCode(event.code, true);
 
     if (key === "1") {
-      this.selectedWeapon = "shell";
+      this.selectedWeapon = this.primaryWeapon;
       event.preventDefault();
     }
 
@@ -123,7 +131,8 @@ export class TankInput {
     if (event.deltaY === 0) {
       return;
     }
-    this.selectedWeapon = this.selectedWeapon === "shell" ? "bullet" : "shell";
+    this.selectedWeapon =
+      this.selectedWeapon === this.primaryWeapon ? "bullet" : this.primaryWeapon;
     event.preventDefault();
   };
 

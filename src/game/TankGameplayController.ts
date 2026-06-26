@@ -25,7 +25,8 @@ import type { Bone } from "@babylonjs/core/Bones/bone";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import type { Scene } from "@babylonjs/core/scene";
 import { ParticleSystem } from "@babylonjs/core/Particles/particleSystem";
-import type { TankControllerConfig } from "../config/tankController";
+import type { TankControllerConfig, ProjectileWeaponConfig, PrimaryWeaponKind } from "../config/tankController";
+import { getPrimaryWeaponKind, getPrimaryWeaponConfig } from "../config/tankController";
 import { TankInput, type WeaponType } from "./TankInput";
 import {
   AdvancedDynamicTexture,
@@ -39,6 +40,7 @@ import {
 import {
   hudLayoutJsonUrl,
   shellWeaponIconUrl,
+  missileWeaponIconUrl,
   machinegunWeaponIconUrl,
   healthStatusIconUrl,
   fuelStatusIconUrl,
@@ -52,6 +54,10 @@ import {
   explosionFlareTextureUrl,
   tankCannonSoundAssetUrl,
   tankGunSoundAssetUrl,
+  missile1SoundAssetUrl,
+  missile2SoundAssetUrl,
+  missile3SoundAssetUrl,
+  missile4SoundAssetUrl,
   shellInsertSoundAssetUrl,
   powerUpAmmoSoundAssetUrl,
   powerUpFuelSoundAssetUrl,
@@ -296,13 +302,18 @@ export class TankGameplayController {
   private static readonly SHIELD_GLOW_COLOR = new Color3(0.26, 0.65, 0.96);
   private battery: number;
   private overcharge: number;
-  private activeWeapon: WeaponType = "shell";
+  private readonly primaryWeaponKind: PrimaryWeaponKind;
+  private readonly primaryWeaponConfig: ProjectileWeaponConfig;
+  private activeWeapon: WeaponType;
   private boostActive = false;
   private zoomActive = false;
   private fireHeld = false;
   private boostInputHeld = false;
   private shellReserveAmmo: number;
   private shellChambered: boolean;
+  private readonly shellMagazineSize: number;
+  private shellLoadedAmmo: number;
+  private shellFireWasHeld = false;
 
   private targetTurretYawDeg = 0;
   private currentTurretYawDeg = 0;
@@ -406,10 +417,10 @@ export class TankGameplayController {
   private weaponHudChromeReady = false;
   private weaponHudLayoutReady = false;
   private weaponHudReloadGaugesReady = false;
-  private weaponHudDisplayedWeapon: WeaponType = "shell";
+  private weaponHudDisplayedWeapon: WeaponType;
   private weaponHudAnimPhase: WeaponHudAnimPhase = "idle";
   private weaponHudAnimTime = 0;
-  private weaponHudAnimTargetWeapon: WeaponType = "shell";
+  private weaponHudAnimTargetWeapon: WeaponType;
   private hudBoostIndicator: TextBlock | null = null;
   private hudZoomIndicator: TextBlock | null = null;
   private hudReticlesAttached = false;
@@ -478,6 +489,7 @@ export class TankGameplayController {
 
   // Audio
   private cannonShotSound: Sound | null = null;
+  private missileShotSounds: Sound[] = [];
   private shellInsertSound: Sound | null = null;
   private shellInsertSoundPlayed = false;
   private static readonly SHELL_INSERT_SOUND_BEFORE_END_S = 2.5;
@@ -512,6 +524,11 @@ export class TankGameplayController {
     // Babylon `Sound.play()` is gated by `scene.audioEnabled`.
     this.scene.audioEnabled = true;
     this.config = options.config;
+    this.primaryWeaponKind = getPrimaryWeaponKind(options.config);
+    this.primaryWeaponConfig = getPrimaryWeaponConfig(options.config);
+    this.activeWeapon = this.primaryWeaponKind;
+    this.weaponHudDisplayedWeapon = this.primaryWeaponKind;
+    this.weaponHudAnimTargetWeapon = this.primaryWeaponKind;
     this.onPlayerDeath = options.onPlayerDeath ?? null;
     this.tracksConfig = options.config.tracks ?? {
       enabled: false,
@@ -579,7 +596,7 @@ export class TankGameplayController {
         }
       });
     }
-    this.input = new TankInput(options.canvas, () => !this.paused);
+    this.input = new TankInput(options.canvas, () => !this.paused, this.primaryWeaponKind);
     this.turretControl = resolveBoneControl(options.tankContainer, "tourelle");
     const pitchBoneName = options.config.rig.pitchBone ?? "canon";
     this.cannonControl = resolveBoneControl(options.tankContainer, pitchBoneName);
@@ -637,8 +654,10 @@ export class TankGameplayController {
 
     this.battery = options.config.energy.startingBattery;
     this.overcharge = options.config.energy.startingOvercharge;
-    this.shellReserveAmmo = options.config.weapons.shell.startingReserveAmmo;
-    this.shellChambered = options.config.weapons.shell.startsChambered;
+    this.shellReserveAmmo = this.primaryWeaponConfig.startingReserveAmmo;
+    this.shellMagazineSize = Math.max(1, Math.floor(this.primaryWeaponConfig.magazineSize ?? 1));
+    this.shellLoadedAmmo = this.primaryWeaponConfig.startsChambered ? this.shellMagazineSize : 0;
+    this.shellChambered = this.shellLoadedAmmo > 0;
 
     if (!this.tankAnchor.rotationQuaternion) {
       this.tankAnchor.rotationQuaternion = Quaternion.Identity();
@@ -1213,6 +1232,28 @@ export class TankGameplayController {
       (this.cannonShotSound as any).onErrorObservable?.add((err: unknown) =>
         console.warn("[TankController][audio] cannon sound load failed:", err)
       );
+
+      const missileSoundUrls = [
+        missile1SoundAssetUrl,
+        missile2SoundAssetUrl,
+        missile3SoundAssetUrl,
+        missile4SoundAssetUrl
+      ];
+      this.missileShotSounds = missileSoundUrls.map(
+        (url, index) =>
+          new Sound(
+            `missile_shot_${index + 1}`,
+            url,
+            this.scene,
+            null,
+            { autoplay: false, loop: false, volume: 1.0 }
+          )
+      );
+      for (const [index, sound] of this.missileShotSounds.entries()) {
+        (sound as any).onErrorObservable?.add((err: unknown) =>
+          console.warn(`[TankController][audio] missile_${index + 1} sound load failed:`, err)
+        );
+      }
 
       this.shellInsertSound = new Sound(
         "shell_insert",
@@ -2045,18 +2086,18 @@ export class TankGameplayController {
   }
 
   private updateShellReloadGauge(): void {
-    const reloadTotal = this.config.weapons.shell.reloadSeconds;
+    const reloadTotal = this.primaryWeaponConfig.reloadSeconds;
     const isReloading =
-      !this.shellChambered && this.shellReserveAmmo > 0 && this.shellReloadTimer > 0;
+      this.shellLoadedAmmo <= 0 && this.shellReserveAmmo > 0 && this.shellReloadTimer > 0;
     const progress = isReloading
       ? clamp(1 - this.shellReloadTimer / reloadTotal, 0, 1)
       : 0;
-    const shellIsPrimary = this.weaponHudDisplayedWeapon === "shell";
+    const primaryIsDisplayed = this.isPrimaryWeapon(this.weaponHudDisplayedWeapon);
 
-    this.applyReloadGauge(this.hudWeaponPrimaryReloadFill, shellIsPrimary && isReloading, progress);
+    this.applyReloadGauge(this.hudWeaponPrimaryReloadFill, primaryIsDisplayed && isReloading, progress);
     this.applyReloadGauge(
       this.hudWeaponSecondaryReloadFill,
-      !shellIsPrimary && isReloading,
+      !primaryIsDisplayed && isReloading,
       progress
     );
   }
@@ -2197,12 +2238,14 @@ export class TankGameplayController {
   }
 
   private refreshWeaponHudContent(): void {
-    const shellAmmoText = `${this.shellChambered ? 1 : 0}/${this.shellReserveAmmo}`;
-    const shellIsPrimary = this.weaponHudDisplayedWeapon === "shell";
+    const shellAmmoText = `${this.shellLoadedAmmo}/${this.shellReserveAmmo}`;
+    const primaryIsDisplayed = this.isPrimaryWeapon(this.weaponHudDisplayedWeapon);
+    const primaryProjectileIconUrl =
+      this.primaryWeaponKind === "missile" ? missileWeaponIconUrl : shellWeaponIconUrl;
 
-    if (shellIsPrimary) {
+    if (primaryIsDisplayed) {
       if (this.hudWeaponPrimaryIcon) {
-        this.hudWeaponPrimaryIcon.source = shellWeaponIconUrl;
+        this.hudWeaponPrimaryIcon.source = primaryProjectileIconUrl;
       }
       this.setWeaponAmmoText(this.hudWeaponPrimaryAmmo, shellAmmoText, "white");
       if (this.hudWeaponSecondaryIcon) {
@@ -2215,7 +2258,7 @@ export class TankGameplayController {
       }
       this.setWeaponAmmoText(this.hudWeaponPrimaryAmmo, "∞", "white");
       if (this.hudWeaponSecondaryIcon) {
-        this.hudWeaponSecondaryIcon.source = shellWeaponIconUrl;
+        this.hudWeaponSecondaryIcon.source = primaryProjectileIconUrl;
       }
       this.setWeaponAmmoText(this.hudWeaponSecondaryAmmo, shellAmmoText, "#d8d8d8");
     }
@@ -2584,7 +2627,7 @@ export class TankGameplayController {
     this.weaponHudChromeReady = false;
     this.weaponHudLayoutReady = false;
     this.weaponHudReloadGaugesReady = false;
-    this.weaponHudDisplayedWeapon = "shell";
+    this.weaponHudDisplayedWeapon = this.primaryWeaponKind;
     this.weaponHudAnimPhase = "idle";
     this.weaponHudAnimTime = 0;
     this.hudBoostIndicator = null;
@@ -2598,6 +2641,10 @@ export class TankGameplayController {
 
     this.cannonShotSound?.dispose();
     this.cannonShotSound = null;
+    for (const sound of this.missileShotSounds) {
+      sound.dispose();
+    }
+    this.missileShotSounds = [];
     this.shellInsertSound?.dispose();
     this.shellInsertSound = null;
     this.shellInsertSoundPlayed = false;
@@ -2752,6 +2799,7 @@ export class TankGameplayController {
 
   private applyPauseSideEffects(): void {
     this.fireHeld = false;
+    this.shellFireWasHeld = false;
     this.boostInputHeld = false;
     this.smoothedMoveAxis = 0;
     this.smoothedTurnAxis = 0;
@@ -2901,9 +2949,10 @@ export class TankGameplayController {
     }
     this.gunReticleKickTime += dt;
 
-    // Shell reload
-    if (!this.shellChambered && this.shellReserveAmmo > 0 && this.shellReloadTimer > 0) {
+    // Shell / missile magazine reload.
+    if (this.shellLoadedAmmo <= 0 && this.shellReserveAmmo > 0 && this.shellReloadTimer > 0) {
       if (
+        this.shellMagazineSize === 1 &&
         !this.shellInsertSoundPlayed &&
         this.shellReloadTimer <= TankGameplayController.SHELL_INSERT_SOUND_BEFORE_END_S
       ) {
@@ -2912,19 +2961,27 @@ export class TankGameplayController {
       }
       this.shellReloadTimer -= dt;
       if (this.shellReloadTimer <= 0) {
-        this.shellChambered = true;
-        this.shellReserveAmmo--;
+        const reloadAmount = Math.min(this.shellMagazineSize, this.shellReserveAmmo);
+        this.shellLoadedAmmo = reloadAmount;
+        this.shellReserveAmmo -= reloadAmount;
+        this.shellChambered = this.shellLoadedAmmo > 0;
       }
     }
 
     // Firing
+    const shellFirePressed = this.fireHeld && !this.shellFireWasHeld;
     if (this.fireHeld && this.battery > 0) {
-      if (this.activeWeapon === "shell" && this.shellChambered) {
-        this.fireShell();
+      const canFirePrimary =
+        this.isPrimaryWeapon(this.activeWeapon) &&
+        this.shellLoadedAmmo > 0 &&
+        (this.shellMagazineSize === 1 || shellFirePressed);
+      if (canFirePrimary) {
+        this.firePrimaryProjectile();
       } else if (this.activeWeapon === "bullet" && this.bulletCooldownTimer <= 0) {
         this.fireBullet();
       }
     }
+    this.shellFireWasHeld = this.fireHeld;
 
     // Coax spread model (0 -> max while firing; relax back when not firing).
     const isGunTriggerHeld = this.fireHeld && this.battery > 0 && this.activeWeapon === "bullet";
@@ -2943,11 +3000,15 @@ export class TankGameplayController {
     }
   }
 
-  private fireShell(): void {
-    this.shellChambered = false;
-    this.shellReloadTimer = this.config.weapons.shell.reloadSeconds;
+  private firePrimaryProjectile(): void {
+    const loadedBeforeShot = this.shellLoadedAmmo;
+    this.shellLoadedAmmo = Math.max(0, this.shellLoadedAmmo - 1);
+    this.shellChambered = this.shellLoadedAmmo > 0;
+    if (this.shellLoadedAmmo <= 0 && this.shellReserveAmmo > 0) {
+      this.shellReloadTimer = this.primaryWeaponConfig.reloadSeconds;
+    }
     this.shellInsertSoundPlayed = false;
-    this.cannonShotSound?.play();
+    this.playPrimaryProjectileSound(loadedBeforeShot);
     this.debugLogZoomCamOnNextShellShot = this.zoomActive;
     // Freeze zoom camera position briefly after firing to avoid visible "snap".
     if (this.zoomActive) {
@@ -2962,7 +3023,39 @@ export class TankGameplayController {
         TankGameplayController.CANNON_MUZZLE_FLASH_LIFE_S
       );
     }
-    this.spawnProjectile(this.ammoShellMesh, this.ammoShellColliderMesh, this.config.weapons.shell, 0.4);
+    this.spawnProjectile(
+      this.ammoShellMesh,
+      this.ammoShellColliderMesh,
+      this.primaryWeaponConfig,
+      0.4
+    );
+  }
+
+  private isPrimaryWeapon(weapon: WeaponType): boolean {
+    return weapon === this.primaryWeaponKind;
+  }
+
+  private playPrimaryProjectileSound(loadedBeforeShot: number): void {
+    if (this.primaryWeaponKind !== "missile") {
+      this.cannonShotSound?.play();
+      return;
+    }
+
+    const shotIndex = clamp(this.shellMagazineSize - loadedBeforeShot, 0, this.shellMagazineSize - 1);
+    const sound = this.missileShotSounds[Math.min(shotIndex, this.missileShotSounds.length - 1)] ?? null;
+    if (!sound) {
+      this.cannonShotSound?.play();
+      return;
+    }
+
+    try {
+      if (sound.isPlaying) {
+        sound.stop();
+      }
+      sound.play();
+    } catch {
+      // Ignore playback errors (autoplay restrictions, etc.).
+    }
   }
 
   private initMuzzleFlashLights(): void {
@@ -3454,7 +3547,7 @@ export class TankGameplayController {
   }
 
   private applyShellDamageAt(worldPos: Vector3): void {
-    const damage = this.config.weapons.shell.damage;
+    const damage = this.primaryWeaponConfig.damage;
     if (damage <= 0 || !this.enemyTurretSystem) {
       return;
     }
@@ -3832,7 +3925,7 @@ export class TankGameplayController {
     // Also keep shell aim point aligned with the camera aim target so the projectile uses the same target.
     if (this.zoomActive) {
       if (this.barrelShellReticle2D) {
-        this.barrelShellReticle2D.isVisible = this.activeWeapon === "shell";
+        this.barrelShellReticle2D.isVisible = this.isPrimaryWeapon(this.activeWeapon);
         this.barrelShellReticle2D.leftInPixels = 0;
         this.barrelShellReticle2D.topInPixels = 0;
       }
@@ -3917,7 +4010,7 @@ export class TankGameplayController {
           hitPoint = to;
         }
 
-        if (this.activeWeapon === "shell") {
+        if (this.isPrimaryWeapon(this.activeWeapon)) {
           updateUiFromHit(hitPoint, this.barrelShellReticle2D);
         } else if (this.barrelShellReticle2D) {
           this.barrelShellReticle2D.isVisible = false;

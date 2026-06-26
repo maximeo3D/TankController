@@ -324,8 +324,11 @@ function resolveVehicleNodeNames(config: TankControllerConfig) {
     colliderMesh: nodes.colliderMesh ?? "COL_tank",
     cameraPivot: nodes.cameraPivot ?? "CAM_pivot",
     cameraStart: nodes.cameraStart ?? "CAM_tank",
-    muzzleShell: nodes.muzzleShell ?? "MUZZLE_canon_tank",
+    muzzleShell: nodes.muzzleMissile ?? nodes.muzzleShell ?? "MUZZLE_canon_tank",
     muzzleGun: nodes.muzzleGun ?? "MUZZLE_gun_tank",
+    ammoShellMesh: nodes.ammoMissileMesh ?? nodes.ammoShellMesh ?? "AMMO_obus",
+    ammoShellColliderMesh:
+      nodes.ammoMissileColliderMesh ?? nodes.ammoShellColliderMesh ?? "COL_obus",
     playerTarget: nodes.playerTarget ?? "TARGET_player_tank",
     pitchBone: config.rig.pitchBone ?? "canon",
     damageSmokes: nodes.damageSmoke ?? [
@@ -489,12 +492,12 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
     }
   }
 
-  const ammoShellMesh = findMeshByName(vehicleContainer, "AMMO_obus");
+  const ammoShellMesh = findMeshByName(vehicleContainer, nodeNames.ammoShellMesh);
   if (ammoShellMesh) {
     ammoShellMesh.isVisible = false;
     ammoShellMesh.setParent(null);
   }
-  const ammoShellColliderMesh = findMeshByName(vehicleContainer, "COL_obus");
+  const ammoShellColliderMesh = findMeshByName(vehicleContainer, nodeNames.ammoShellColliderMesh);
   if (ammoShellColliderMesh) {
     ammoShellColliderMesh.isVisible = false;
     ammoShellColliderMesh.isPickable = false;

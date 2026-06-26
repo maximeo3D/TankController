@@ -53,7 +53,12 @@ export interface TankControllerConfig {
       cameraPivot?: string;
       cameraStart?: string;
       muzzleShell?: string;
+      muzzleMissile?: string;
       muzzleGun?: string;
+      ammoShellMesh?: string;
+      ammoShellColliderMesh?: string;
+      ammoMissileMesh?: string;
+      ammoMissileColliderMesh?: string;
       playerTarget?: string;
       damageSmoke?: string[];
     };
@@ -236,14 +241,10 @@ export interface TankControllerConfig {
   weapons: {
     powerUpBonusPerStack: number;
     maxStacks: number;
-    shell: {
-      startingReserveAmmo: number;
-      startsChambered: boolean;
-      reloadSeconds: number;
-      damage: number;
-      muzzleVelocity: number;
-      gravityMultiplier: number;
-    };
+    /** Obus (tank). */
+    shell?: ProjectileWeaponConfig;
+    /** Missiles (voiture blindée, etc.). */
+    missile?: ProjectileWeaponConfig;
     bullet: {
       shotsPerSecond: number;
       damage: number;
@@ -251,6 +252,39 @@ export interface TankControllerConfig {
       gravityMultiplier: number;
     };
   };
+}
+
+/** Arme principale à projectile unique (obus ou missile). */
+export interface ProjectileWeaponConfig {
+  startingReserveAmmo: number;
+  startsChambered: boolean;
+  /** Chargeur interne. 1 = obus classique ; >1 = salve rechargée ensemble. */
+  magazineSize?: number;
+  reloadSeconds: number;
+  damage: number;
+  muzzleVelocity: number;
+  gravityMultiplier: number;
+}
+
+export type PrimaryWeaponKind = "shell" | "missile";
+
+export function getPrimaryWeaponKind(config: TankControllerConfig): PrimaryWeaponKind {
+  if (config.weapons.missile) {
+    return "missile";
+  }
+  if (config.weapons.shell) {
+    return "shell";
+  }
+  throw new Error("Vehicle config must define weapons.shell or weapons.missile");
+}
+
+export function getPrimaryWeaponConfig(config: TankControllerConfig): ProjectileWeaponConfig {
+  const kind = getPrimaryWeaponKind(config);
+  const weapon = config.weapons[kind];
+  if (!weapon) {
+    throw new Error(`Missing weapons.${kind} in vehicle config`);
+  }
+  return weapon;
 }
 
 export const tankConfig = tankControllerConfig as TankControllerConfig;
