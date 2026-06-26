@@ -2,7 +2,7 @@
 
 ## Objective
 
-Reach a first playable build where the player can navigate menus, load a level, control the tank, aim, shoot both weapons, and validate the core feel.
+Reach a first playable build where the player can navigate menus, load a level, control a vehicle (tank or armored car), aim, shoot both weapons, switch vehicles, and validate the core feel.
 
 Status notes below reflect the **current codebase** as of the latest documentation pass.
 
@@ -79,6 +79,8 @@ Notes:
 - implement shell reserve and reload timing
 - implement bullet weapon with continuous fire while held
 - make both projectile types ballistic (Havok bodies; filters exclude tank + projectiles)
+- per-vehicle primary weapon: `weapons.shell` (tank) **or** `weapons.missile` (armored car)
+- missiles: magazine of 4 (one per click), 4s salvo reload, gravity-immune, `missile_1..4` sounds, `50` damage
 
 **Status:** done.
 
@@ -131,6 +133,17 @@ Notes:
 - currently spawned from `SUS_ML` and `SUS_MR` to reduce noise; tuning via `tracks.*` config
 
 **Status:** implemented; tuning ongoing.
+
+## Phase 12 - Multi-Vehicle Support
+
+- generic `VehicleController` interface + `TankVehicleController` adapter (shared `TankGameplayController`)
+- `LevelManager` vehicle roster with `cycleActiveVehicle()` / `setActiveVehicle()` and `V` key switching
+- per-vehicle JSON config resolved via `vehicleRegistry.ts` (`tank`, `armoredCar`)
+- mission declares `vehicles[]` + `startVehicleId` (`menuData.ts`)
+- shared scene resources across vehicles: single HUD (`sceneGameplayUi`), single `PowerUpSystem` (`bindActivePlayer`), single `EnemyTurretSystem` (rebound on switch)
+- armored car rig: `armes` pitch bone, spinning `minigun`, four wheels, four suspension probes, missile + minigun muzzles
+
+**Status:** implemented (tank + armored car); ongoing tuning.
 
 ## Deferred After Vertical Slice
 

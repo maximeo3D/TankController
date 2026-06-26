@@ -4,14 +4,15 @@
 
 Create a small-scale tank game using `Babylon.js 9.1.0` with `Havok Physics`.
 
-The player controls a toy tank on a terrain loaded from `GLB` assets. The first milestone is a clean vertical slice with:
+The player controls one or more vehicles on a terrain loaded from `GLB` assets. The first milestone is a clean vertical slice with:
 
 - front-end menu flow
-- tank movement and aiming
-- ballistic weapons
+- vehicle movement and aiming
+- ballistic / guided weapons
 - camera orbit and zoom
 - fuel (battery) and boost (overcharge) resources
 - vehicle health, power-ups, and HUD feedback
+- **multiple playable vehicles** (tank + armored car) switchable in-mission
 - asset loading conventions stable enough to support later content
 
 ## Engine and Runtime
@@ -19,7 +20,10 @@ The player controls a toy tank on a terrain loaded from `GLB` assets. The first 
 - Rendering: `Babylon.js 9.1.0`
 - Physics: `Havok Physics` plugin for Babylon.js
 - Assets: `GLB`
-- Parameters: external JSON config file (`config/TankController.json`)
+- Parameters: external JSON config files, one per vehicle type:
+  - `config/TankController.json` (tank — also the default/base schema)
+  - `config/vehicles/armoredCar.json` (armored car)
+  - resolved at runtime via `src/config/vehicleRegistry.ts` (`getVehicleConfig(type)`)
 
 ## Scale
 
@@ -65,7 +69,9 @@ The game is built as a single application with UI states, not as a multi-page we
 ### Current Files
 
 - `assets/tank.glb`
+- `assets/armoredcar.glb`
 - `assets/terrain.glb`
+- `assets/power-ups.glb`
 
 ### Terrain
 
@@ -74,7 +80,7 @@ The terrain file contains:
 - visible static meshes prefixed `SM_`
 - visible dynamic meshes prefixed `DM_`
 - invisible collider meshes prefixed `COL_`
-- an empty `SPAWN_tank` used as the player spawn point
+- one spawn empty per playable vehicle, e.g. `SPAWN_tank`, `SPAWN_armoredcar` (referenced by `MissionVehicleSpawn.spawnNode`)
 - empties `PU_<typeId>` (and Blender duplicates such as `PU_ammo_shell.001`) defining power-up spawn locations
 
 ### Tank
@@ -92,6 +98,42 @@ The tank file contains:
 - mesh **`TEX_tracks`**: hidden source mesh used to provide the track material
 - meshes **`AMMO_obus`** / **`AMMO_balle`**: projectile templates (hidden, cloned on fire)
 - invisible mesh **`COL_tank`**: convex hull physics collider for the tank
+
+### Armored car
+
+`assets/armoredcar.glb` follows the same generic vehicle contract, with armored-car node names declared in `config/vehicles/armoredCar.json` (`rig.nodes` / `rig.*Bone`). See `docs/ASSET_CONTRACT.md` → **Armored Car Contract** for the full list. Highlights:
+
+- pitch bone `armes` (instead of the tank's `canon`)
+- **minigun** bone `minigun` (child of `armes`) spun on its Y axis while firing
+- four wheel bones `wheel_FL/FR/RL/RR` spun visually while rolling
+- four suspension probes `SUS_FL/FR/RL/RR`
+- muzzles `MUZZLE_rocket_armoredcar` (missiles) + `MUZZLE_mg_armoredcar` (minigun)
+- projectile templates `AMMO_missile` / `COL_missile`
+
+## Multi-Vehicle Architecture
+
+A mission can declare several playable vehicles; the player cycles the active one in-game.
+
+### Configuration
+
+- `MenuMission.vehicles: MissionVehicleSpawn[]` (`src/ui/menuData.ts`) lists `{ id, type, spawnNode }` entries; `startVehicleId` selects the one active at load.
+- `VehicleTypeId = "tank" | "armoredCar"` maps to a config via `vehicleRegistry.ts`.
+- Each vehicle type owns its JSON config; shared schema is `TankControllerConfig` (`src/config/tankController.ts`).
+
+### Runtime
+
+- **`VehicleController`** (`src/game/vehicle/VehicleController.ts`) is the common contract: `activate`, `deactivate`, `setPaused`, `getDebugState`, `focusCamera`, `getEnemyPlayerTarget`, `getAimTargetNode`, `dispose`.
+- **`TankVehicleController`** adapts `TankGameplayController` to that interface; the same gameplay controller drives both tank and armored car (behavior diverges only through config).
+- **`LevelManager`** (`src/game/level/LevelManager.ts`) holds the vehicle roster and the active vehicle. Switching is done via `cycleActiveVehicle()` / `setActiveVehicle(id)`; `setOnActiveVehicleChanged()` lets the scene re-focus the camera, rebind enemy targeting, and rebind power-up handlers to the newly active vehicle.
+- **Input:** the **`V`** key cycles the active vehicle (wired in `GameApp`, ignored while paused / loading / dead).
+
+### Shared scene resources
+
+Because multiple vehicles coexist in one scene, the following are created **once** and shared (not duplicated per vehicle):
+
+- **HUD:** a single `AdvancedDynamicTexture` + radar, tracked in `scene.metadata` via `src/game/sceneGameplayUi.ts` (`getSceneGameplayUi` / `setSceneGameplayUi`). Only the active vehicle's HUD is shown.
+- **Power-ups:** a single `PowerUpSystem`; `bindActivePlayer()` re-points its collider + pickup handlers to the active vehicle on switch.
+- **Enemy turrets:** a single `EnemyTurretSystem`; `bindPlayerTarget()` is repointed on switch.
 
 ## Visibility Rules
 
@@ -166,13 +208,19 @@ If boost gauge (overcharge) is `0%`:
 - **Turret yaw** and **cannon pitch** targets are derived from that world target in hull space, then rotated toward limits at configured speeds (`turret` / `cannon` in JSON).
 - With **`CAM_pivot`** present and a **`TargetCamera`**-compatible `CAM_tank`, **mouse movement applies an orbit** (yaw/pitch around the pivot in hull space, distance clamped) before the ray is cast, so the view rotates around the tank like a third-person tank game.
 
+### Vehicle switching
+
+- `V`: cycle the active vehicle when a mission declares several (`LevelManager.cycleActiveVehicle()`).
+
 ### Weapons
 
-- `1`: shell weapon
-- `2`: machine gun weapon
-- left mouse button held:
-  - shells fire automatically when chambered and cooldown allows
-  - bullets fire continuously while held
+- `1`: primary projectile weapon (shell on the tank, **missile** on the armored car)
+- `2`: machine gun / minigun weapon
+- mouse wheel: toggle between the two weapons
+- left mouse button:
+  - **shell** (tank): fires automatically when chambered and cooldown allows while held
+  - **missile** (armored car): one missile per click (not auto-repeat) — see **Missiles** below
+  - **bullets / minigun**: fire continuously while held
 
 ### Zoom
 
@@ -211,23 +259,35 @@ Key config values live under `tracks` in `TankController.json`:
 
 ## Weapon Rules
 
-### Shells
+The primary projectile weapon is defined per vehicle under `weapons`. A vehicle declares **either** `weapons.shell` (tank, obus) **or** `weapons.missile` (armored car) — both share the `ProjectileWeaponConfig` schema. Code resolves the active one via `getPrimaryWeaponKind()` / `getPrimaryWeaponConfig()` (`src/config/tankController.ts`), so `WeaponType` is `"shell" | "missile" | "bullet"`.
+
+### Shells (tank — `weapons.shell`)
 
 - finite reserve
 - starting ammo: `14` (configurable)
-- one shell available in chamber at start (configurable)
-- chamber reload time: `4` seconds (configurable)
+- `magazineSize: 1` (one shell chambered at a time)
+- chamber reload time: `~4` seconds (configurable, `reloadSeconds`)
 - shell pickups refill ammo reserve
-- ballistic projectile
-- high damage
-- lower velocity (configurable)
+- ballistic projectile (`gravityMultiplier` ≈ 1)
+- high damage, lower velocity (configurable)
+- sound: `tank_cannon` + `shell_insert` on reload
 
-### Bullets
+### Missiles (armored car — `weapons.missile`)
+
+- finite reserve (`startingReserveAmmo: 16`)
+- **magazine of `magazineSize: 4`**: HUD shows `4/16`, one missile per left-click
+- when the magazine empties, a **`reloadSeconds: 4`** reload refills the next salvo from the reserve
+- `damage: 50`
+- **gravity-immune** (`gravityMultiplier: 0`) — flies straight
+- each missile of a salvo plays its own sound `missile_1` → `missile_4` (`assets/sounds/missile_*.wav`)
+- HUD icon: `missile.png` (selected automatically when the primary weapon kind is `missile`)
+
+### Bullets / minigun (`weapons.bullet`)
 
 - fire rate configurable (`shotsPerSecond`)
 - ballistic projectile
-- lower damage
-- higher velocity (configurable)
+- lower damage, higher velocity (configurable)
+- on the armored car, the `minigun` bone spins on its Y axis while firing (`rig.minigunSpinDegPerSec`)
 
 ## Turret and Cannon Constraints
 
@@ -316,11 +376,11 @@ Legacy JSON child `hud_health_bar_fill` / `hud_fuel_bar_fill` are removed at run
 |---------|------|
 | `hud_weapon_primary` | Active weapon frame (larger, full opacity) |
 | `hud_weapon_secondary` | Inactive weapon frame (~75% size, 50% opacity) |
-| `hud_weapon_primary_icon` / `hud_weapon_secondary_icon` | `shell.png` or `machinegun.png` |
-| `hud_weapon_primary_ammo` / `hud_weapon_secondary_ammo` | `1/14` or `∞`; Square font |
-| Reload fill rects | Spawned in code on the primary slot for shell reload progress |
+| `hud_weapon_primary_icon` / `hud_weapon_secondary_icon` | `shell.png`, `missile.png` (armored car) or `machinegun.png` |
+| `hud_weapon_primary_ammo` / `hud_weapon_secondary_ammo` | `1/14` (shells), `4/16` (missile magazine) or `∞`; Square font |
+| Reload fill rects | Spawned in code on the primary slot for shell / missile-salvo reload progress |
 
-Weapon switch uses a short animated transition (`updateWeaponHud`). Ammo layout is rebuilt as a `Grid` in `buildWeaponHudGrid()` so text aligns to the right of the icon.
+Weapon switch uses a short animated transition (`updateWeaponHud`). Ammo layout is rebuilt as a `Grid` in `buildWeaponHudGrid()` so text aligns to the right of the icon. The primary projectile icon is chosen from the vehicle's primary weapon kind (`shell` vs `missile`).
 
 ### Session timer (`hud_panel_timer`)
 
@@ -365,16 +425,17 @@ Fonts are injected as `@font-face` rules in `src/ui/applyUiFont.ts`. In dev, `di
 
 ## Configuration Strategy
 
-All tank gameplay tuning must be externalized in `config/TankController.json`.
+All vehicle gameplay tuning must be externalized in the per-vehicle JSON config (`config/TankController.json` for the tank, `config/vehicles/<type>.json` for others), resolved through `vehicleRegistry.ts`.
 
-This file is the source of truth for:
+Each config is the source of truth for:
 
+- `rig` node/bone names and axes (per-vehicle: `pitchBone`, `minigunBone`, `wheelBones`, `suspensionProbeNames`, `nodes.*`)
 - movement, suspension, grounding
 - `vehicle` health
 - turn rates, pitch limits
 - camera FOV and **orbit** parameters
 - fuel (`energy` battery) and boost (`energy` overcharge) drain/recharge
-- weapon values
+- weapon values (`weapons.shell` **or** `weapons.missile`, plus `weapons.bullet`)
 - `powerUps` global + per-type settings (`types.*`)
 
 The game code should avoid hardcoding gameplay numbers except for small glue constants (e.g. reticle `baseScale` in `TankGameplayController.ts` until moved to JSON).
@@ -388,10 +449,13 @@ Optional debug visuals can be enabled via `debug` in `config/TankController.json
 
 ## Recommended Module Layout (actual)
 
-- `src/app/` — bootstrap, state transitions
-- `src/game/` — `createGameplayScene`, `TankGameplayController`, `TankInput`, `PowerUpSystem`
-- `src/config/` — typed config + JSON import
+- `src/app/` — bootstrap, state transitions, global input (`V` switch wiring)
+- `src/game/` — `createGameplayScene`, `TankGameplayController`, `TankInput`, `PowerUpSystem`, `sceneGameplayUi`
+- `src/game/vehicle/` — `VehicleController` interface + `TankVehicleController` adapter
+- `src/game/level/` — `LevelManager` (vehicle roster + active vehicle switching)
+- `src/config/` — typed config + JSON import + `vehicleRegistry`
 - `src/assets/` — asset URLs
+- `config/vehicles/` — per-vehicle JSON configs (e.g. `armoredCar.json`)
 
 ## Vertical Slice Scope
 
