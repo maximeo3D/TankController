@@ -80,6 +80,10 @@ export class LevelManager {
     return [...this.vehicles.keys()];
   }
 
+  public getVehicles(): VehicleController[] {
+    return [...this.vehicles.values()];
+  }
+
   public setPaused(paused: boolean): void {
     if (this.levelPaused === paused) {
       return;

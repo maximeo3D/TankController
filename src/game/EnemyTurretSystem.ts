@@ -51,6 +51,8 @@ export interface EnemyTurretPlayerTarget {
   tankBody: PhysicsBody;
   tankColliderMesh: Mesh | null;
   onDamage: (amount: number) => void;
+  /** Corps des autres véhicules joueur (inactifs) — ignorés par les raycasts ennemis. */
+  ignoreBodies?: PhysicsBody[];
   /** Spark d'impact (même effet que le mitrailleur du tank). */
   onBulletImpact?: (worldPos: Vector3) => void;
   /** Explosion visuelle à la destruction (même FX qu'un obus). */
@@ -244,6 +246,8 @@ interface EnemyBulletTracer {
   speed: number;
   rotation: Quaternion;
   hitsTank: boolean;
+  /** Callback figé au tir — évite qu'un switch de véhicule redirige les dégâts en vol. */
+  onHitPlayerDamage: ((amount: number) => void) | null;
   debugVisual: BulletDebugVisual | null;
 }
 
@@ -485,6 +489,8 @@ export class EnemyTurretSystem {
   private bulletCloneSerial = 0;
   private tankBody: PhysicsBody | null = null;
   private tankColliderMesh: Mesh | null = null;
+  private ignoredPlayerBodies: PhysicsBody[] = [];
+  private playerAimWorldPos: Vector3 | null = null;
   private onPlayerDamage: ((amount: number) => void) | null = null;
   private onBulletImpact: ((worldPos: Vector3) => void) | null = null;
   private onTurretDestroyed: ((worldPos: Vector3) => void) | null = null;
@@ -572,6 +578,7 @@ export class EnemyTurretSystem {
   public bindPlayerTarget(target: EnemyTurretPlayerTarget): void {
     this.tankBody = target.tankBody;
     this.tankColliderMesh = target.tankColliderMesh;
+    this.ignoredPlayerBodies = target.ignoreBodies ?? [];
     this.onPlayerDamage = target.onDamage;
     this.onBulletImpact = target.onBulletImpact ?? null;
     this.onTurretDestroyed = target.onTurretDestroyed ?? null;
@@ -597,6 +604,7 @@ export class EnemyTurretSystem {
 
     aimTarget.computeWorldMatrix(true);
     const targetWorldPos = aimTarget.getAbsolutePosition();
+    this.playerAimWorldPos = targetWorldPos.clone();
     const detectionRangeSq = this.config.detectionRange * this.config.detectionRange;
 
     for (const instance of this.instances) {
@@ -1165,9 +1173,9 @@ export class EnemyTurretSystem {
     }
 
     const barrelIndex = instance.nextBarrelIndex % muzzles.length;
-    const aimPoint = this.getAimPointWorldPos(
-      instance.anchor.getAbsolutePosition()
-    );
+    const aimPoint =
+      this.playerAimWorldPos?.clone() ??
+      this.getAimPointWorldPos(instance.anchor.getAbsolutePosition());
     if (!this.isReadyToFire(instance, aimPoint, barrelIndex)) {
       return;
     }
@@ -1295,6 +1303,7 @@ export class EnemyTurretSystem {
       speed: this.config.combat.muzzleVelocity,
       rotation: bulletRotation,
       hitsTank,
+      onHitPlayerDamage: hitsTank && this.onPlayerDamage ? this.onPlayerDamage : null,
       debugVisual
     });
   }
@@ -1371,34 +1380,76 @@ export class EnemyTurretSystem {
     dir: Vector3,
     maxDistance: number
   ): { hitPoint: Vector3; hitDistance: number; hitsTank: boolean } {
-    const end = origin.add(dir.scale(maxDistance));
-    let hitDistance = maxDistance;
-    let hitPoint = end.clone();
-    let hitsTank = false;
-
+    const fallbackEnd = origin.add(dir.scale(maxDistance));
     const physics = this.scene.getPhysicsEngine();
     if (!physics) {
-      return { hitPoint, hitDistance, hitsTank };
+      return { hitPoint: fallbackEnd.clone(), hitDistance: maxDistance, hitsTank: false };
     }
 
-    const hit = physics.raycast(origin, end, {
-      shouldHitTriggers: false,
-      collideWith: 0xffffffff
-    });
-    if (!hit.hasHit) {
-      return { hitPoint, hitDistance, hitsTank };
+    let segmentStart = origin.clone();
+    let traveled = 0;
+    const passthroughEpsilon = 0.05;
+    const maxSegments = 1 + this.ignoredPlayerBodies.length;
+
+    for (let segment = 0; segment < maxSegments; segment++) {
+      const remaining = maxDistance - traveled;
+      if (remaining <= 1e-6) {
+        break;
+      }
+
+      const segmentEnd = segmentStart.add(dir.scale(remaining));
+      const hit = physics.raycast(segmentStart, segmentEnd, {
+        shouldHitTriggers: false,
+        collideWith: 0xffffffff
+      });
+
+      if (!hit.hasHit) {
+        return {
+          hitPoint: segmentEnd.clone(),
+          hitDistance: maxDistance,
+          hitsTank: false
+        };
+      }
+
+      hit.calculateHitDistance();
+      let hitPoint = segmentEnd.clone();
+      let segmentHitDistance = remaining;
+      if (hit.hitPointWorld) {
+        hitPoint = hit.hitPointWorld.clone();
+        segmentHitDistance = Math.max(Vector3.Distance(segmentStart, hitPoint), 0.001);
+      } else if (typeof hit.hitDistance === "number") {
+        segmentHitDistance = Math.max(hit.hitDistance, 0.001);
+        hitPoint = segmentStart.add(dir.scale(segmentHitDistance));
+      }
+
+      traveled += segmentHitDistance;
+
+      if (this.isIgnoredPlayerBodyHit(hit)) {
+        segmentStart = hitPoint.add(dir.scale(passthroughEpsilon));
+        traveled = Math.min(traveled + passthroughEpsilon, maxDistance);
+        continue;
+      }
+
+      return {
+        hitPoint,
+        hitDistance: Math.min(traveled, maxDistance),
+        hitsTank: this.isTankRaycastHit(hit)
+      };
     }
 
-    hit.calculateHitDistance();
-    if (hit.hitPointWorld) {
-      hitPoint = hit.hitPointWorld.clone();
-    } else if (typeof hit.hitDistance === "number") {
-      hitPoint = origin.add(dir.scale(hit.hitDistance));
-    }
-    hitDistance = Math.max(Vector3.Distance(origin, hitPoint), 0.001);
-    hitsTank = this.isTankRaycastHit(hit);
+    return { hitPoint: fallbackEnd.clone(), hitDistance: maxDistance, hitsTank: false };
+  }
 
-    return { hitPoint, hitDistance, hitsTank };
+  private isIgnoredPlayerBodyHit(hit: unknown): boolean {
+    if (this.ignoredPlayerBodies.length === 0) {
+      return false;
+    }
+
+    const collidedAgainst = (hit as { collidedAgainst?: PhysicsBody }).collidedAgainst;
+    const body = (hit as { body?: PhysicsBody }).body;
+    return this.ignoredPlayerBodies.some(
+      (ignored) => ignored === collidedAgainst || ignored === body
+    );
   }
 
   private isTankRaycastHit(hit: unknown): boolean {
@@ -1431,10 +1482,10 @@ export class EnemyTurretSystem {
       tracer.traveled += tracer.speed * dt;
       if (tracer.traveled >= tracer.hitDistance) {
         this.onBulletImpact?.(tracer.hitPoint);
-        if (tracer.hitsTank) {
+        if (tracer.onHitPlayerDamage) {
           const damage = this.config.combat.bulletDamage;
-          if (damage > 0 && this.onPlayerDamage) {
-            this.onPlayerDamage(damage);
+          if (damage > 0) {
+            tracer.onHitPlayerDamage(damage);
           }
         }
         if (tracer.debugVisual) {

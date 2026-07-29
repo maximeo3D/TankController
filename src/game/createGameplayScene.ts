@@ -216,6 +216,38 @@ export async function createGameplayScene(
     );
   };
 
+  const bindEnemyTurretsToActiveVehicle = (): void => {
+    if (!enemyTurretSystem) {
+      return;
+    }
+
+    const active = levelManager.getActiveVehicle();
+    if (!active) {
+      return;
+    }
+
+    const target = active.getEnemyPlayerTarget();
+    if (!target) {
+      return;
+    }
+
+    const ignoreBodies: PhysicsBody[] = [];
+    for (const vehicle of levelManager.getVehicles()) {
+      if (vehicle === active) {
+        continue;
+      }
+      const otherTarget = vehicle.getEnemyPlayerTarget();
+      if (otherTarget) {
+        ignoreBodies.push(otherTarget.tankBody);
+      }
+    }
+
+    enemyTurretSystem.bindPlayerTarget({
+      ...target,
+      ignoreBodies
+    });
+  };
+
   const spawnedVehicles: SpawnedPlayerVehicle[] = [];
   const vehicleProgressStep = 0.38 / Math.max(missionContext.vehicles.length, 1);
   let progressCursor = 0.6;
@@ -255,14 +287,13 @@ export async function createGameplayScene(
 
   levelManager.setOnActiveVehicleChanged((vehicle) => {
     vehicle.focusCamera();
-    const target = vehicle.getEnemyPlayerTarget();
-    if (target && enemyTurretSystem) {
-      enemyTurretSystem.bindPlayerTarget(target);
-    }
+    bindEnemyTurretsToActiveVehicle();
     if (vehicle instanceof TankVehicleController) {
       bindSharedSystemsToVehicle(vehicle);
     }
   });
+
+  bindEnemyTurretsToActiveVehicle();
 
   const initialActive = levelManager.getActiveVehicle();
   if (initialActive instanceof TankVehicleController) {

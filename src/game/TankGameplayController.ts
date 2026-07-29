@@ -585,17 +585,6 @@ export class TankGameplayController {
     this.playerTargetNode = options.playerTargetNode ?? null;
     this.radarMapUrl = options.radarMapUrl ?? null;
     this.radarWorldBounds = options.radarWorldBounds ?? null;
-    if (this.enemyTurretSystem) {
-      this.enemyTurretSystem.bindPlayerTarget({
-        tankBody: this.tankBody,
-        tankColliderMesh: options.tankColliderMesh,
-        onDamage: (amount) => this.takeDamage(amount),
-        onBulletImpact: (worldPos) => this.spawnSparkImpact(worldPos),
-        onTurretDestroyed: (worldPos) => {
-          void this.spawnExplosionAt(worldPos);
-        }
-      });
-    }
     this.input = new TankInput(options.canvas, () => !this.paused, this.primaryWeaponKind);
     this.turretControl = resolveBoneControl(options.tankContainer, "tourelle");
     const pitchBoneName = options.config.rig.pitchBone ?? "canon";
@@ -952,7 +941,7 @@ export class TankGameplayController {
   }
 
   private syncShieldHighlight(): void {
-    const active = this.shieldTimeRemaining > 0;
+    const active = this.playerActive && this.shieldTimeRemaining > 0;
     if (active === this.shieldHighlightVisualActive) {
       return;
     }
@@ -1422,6 +1411,7 @@ export class TankGameplayController {
 
     this.attachToSharedHud();
     this.refreshWeaponHudContent();
+    this.refreshStatusHudContent();
   }
 
   private rebindHudReticleRefs(): void {
@@ -1478,6 +1468,8 @@ export class TankGameplayController {
     this.hudHealthIcon = t.getControlByName("hud_health_icon") as Image | null;
     if (!skipLayoutSetup) {
       this.setupHealthBarSegments();
+    } else {
+      this.rebindStatusBarSegmentRefs();
     }
     this.hudFuelBarBg = t.getControlByName("hud_fuel_bar_bg") as Rectangle | null;
     this.hudFuelIcon = t.getControlByName("hud_fuel_icon") as Image | null;
@@ -1520,7 +1512,61 @@ export class TankGameplayController {
     }
     this.hudJsonLoaded = true;
     this.refreshWeaponHudContent();
+    this.refreshStatusHudContent();
     this.resetWeaponSlotTransforms();
+  }
+
+  /** HUD partagé : retrouver les segments déjà créés par le premier véhicule. */
+  private rebindStatusBarSegmentRefs(): void {
+    if (!this.hudTexture) {
+      return;
+    }
+
+    this.hudHealthSegmentFills = [];
+    for (let i = 0; i < HEALTH_BAR_SEGMENT_COUNT; i++) {
+      const fill = this.hudTexture.getControlByName(
+        `hud_health_seg_fill_${i}`
+      ) as Rectangle | null;
+      if (fill) {
+        this.hudHealthSegmentFills.push(fill);
+      }
+    }
+    this.healthBarSegmentsReady =
+      this.hudHealthSegmentFills.length === HEALTH_BAR_SEGMENT_COUNT;
+
+    this.hudFuelSegmentFills = [];
+    for (let i = 0; i < 2; i++) {
+      const fill = this.hudTexture.getControlByName(`hud_fuel_seg_fill_${i}`) as Rectangle | null;
+      if (fill) {
+        this.hudFuelSegmentFills.push(fill);
+      }
+    }
+    this.fuelBarSegmentsReady = this.hudFuelSegmentFills.length === 2;
+  }
+
+  /** Met à jour santé / carburant / boost pour le véhicule actif (switch immédiat). */
+  private refreshStatusHudContent(): void {
+    if (!this.hudJsonLoaded || !this.hudTexture) {
+      return;
+    }
+
+    const shieldActive = this.shieldTimeRemaining > 0;
+    const hpPct = clamp((this.health / this.healthMax) * 100, 0, 100);
+    this.updateHealthBarSegments(hpPct, shieldActive);
+
+    const batteryMax = this.config.energy.batteryMax;
+    const overchargeMax = this.config.energy.overchargeMax;
+    const batPct = clamp((this.battery / batteryMax) * 100, 0, 100);
+    const ocPct = clamp((this.overcharge / overchargeMax) * 100, 0, 100);
+    const ocHud = this.boostInputHeld ? Math.floor(ocPct) : Math.round(ocPct);
+    this.fuelLowBlinkPhase = 0;
+    this.updateFuelBarSegments(batPct, 0);
+    if (this.hudBoostFill) {
+      this.hudBoostFill.width = `${ocHud}%`;
+      this.hudBoostFill.background = VEHICLE_STATUS_BAR_FILL;
+    }
+
+    this.tankDamageParticles?.syncHealthPercent(hpPct);
   }
 
   /** Reticles above HUD layout (`zIndex`). Idempotent. */
@@ -2732,10 +2778,13 @@ export class TankGameplayController {
     if (active) {
       this.showSharedHud();
       this.refreshWeaponHudContent();
+      this.refreshStatusHudContent();
+      this.syncShieldHighlight();
       return;
     }
 
     this.hideSharedHud();
+    this.syncShieldHighlight();
     this.applyPauseSideEffects();
   }
 
