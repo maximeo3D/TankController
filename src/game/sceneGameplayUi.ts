@@ -1,12 +1,14 @@
 import type { AdvancedDynamicTexture } from "@babylonjs/gui/2D/advancedDynamicTexture";
 import type { Scene } from "@babylonjs/core/scene";
 import type { RadarHud } from "./RadarHud";
+import type { VehicleSelectorHud } from "./VehicleSelectorHud";
 
 export interface SceneGameplayUiState {
   hudTexture: AdvancedDynamicTexture;
   hudLayoutReady: boolean;
   hudReticlesAttached: boolean;
   radarHud: RadarHud | null;
+  vehicleSelectorHud: VehicleSelectorHud | null;
 }
 
 const SCENE_UI_METADATA_KEY = "gameplayUi";

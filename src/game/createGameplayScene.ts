@@ -31,7 +31,7 @@ import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import type { TankControllerConfig } from "../config/tankController";
 import { getSuspensionContactOffset } from "../config/tankController";
 import { getVehicleConfig } from "../config/vehicleRegistry";
-import { tankAssetUrl, armoredCarAssetUrl, skyboxAssetUrl, powerUpsAssetUrl, enemiesAssetUrl } from "../assets/assetUrls";
+import { tankAssetUrl, armoredCarAssetUrl, skyboxAssetUrl, powerUpsAssetUrl, enemiesAssetUrl, vehicleTankIconUrl, vehicleArmoredCarIconUrl } from "../assets/assetUrls";
 import { enemiesConfig } from "../config/enemiesController";
 import { EnemyTurretSystem } from "./EnemyTurretSystem";
 import type { LevelDefinition } from "../app/levels";
@@ -43,6 +43,10 @@ import { TankVehicleController } from "./vehicle/TankVehicleController";
 import { PowerUpSystem } from "./PowerUpSystem";
 import type { VehicleDebugState } from "./vehicle/VehicleController";
 import { createTrackTreadParticleBundle } from "./trackTreadParticles";
+import { getSceneGameplayUi } from "./sceneGameplayUi";
+import { VehicleSelectorHud, type VehicleSelectorEntry } from "./VehicleSelectorHud";
+import { TARGET_FRAME_SEC } from "./frameTiming";
+import { StackPanel } from "@babylonjs/gui";
 import { createTankDamageParticleBundle } from "./tankDamageParticles";
 import { waitAnimationFrames } from "./frameTiming";
 import type { RadarWorldBounds } from "./RadarHud";
@@ -78,6 +82,28 @@ interface SpawnedPlayerVehicle {
 
 function vehicleAssetUrl(type: VehicleTypeId): string {
   return type === "armoredCar" ? armoredCarAssetUrl : tankAssetUrl;
+}
+
+function resolveVehicleSelectorIconUrl(type: VehicleTypeId): string | null {
+  if (type === "tank") {
+    return vehicleTankIconUrl;
+  }
+  if (type === "armoredCar") {
+    return vehicleArmoredCarIconUrl;
+  }
+  return null;
+}
+
+function buildVehicleSelectorEntries(vehicles: MissionVehicleSpawn[]): VehicleSelectorEntry[] {
+  const entries: VehicleSelectorEntry[] = [];
+  for (const vehicle of vehicles) {
+    const iconUrl = resolveVehicleSelectorIconUrl(vehicle.type);
+    if (!iconUrl) {
+      continue;
+    }
+    entries.push({ id: vehicle.id, type: vehicle.type, iconUrl });
+  }
+  return entries;
 }
 
 interface PhysicsResourceGroup {
@@ -292,7 +318,42 @@ export async function createGameplayScene(
     if (vehicle instanceof TankVehicleController) {
       bindSharedSystemsToVehicle(vehicle);
     }
+    const ui = getSceneGameplayUi(scene);
+    ui?.vehicleSelectorHud?.setActiveVehicle(vehicle.id);
   });
+
+  const vehicleSelectorEntries = buildVehicleSelectorEntries(missionContext.vehicles);
+  let vehicleSelectorInitDone = false;
+  const ensureVehicleSelectorHud = (): void => {
+    if (vehicleSelectorInitDone || vehicleSelectorEntries.length <= 1) {
+      return;
+    }
+
+    const ui = getSceneGameplayUi(scene);
+    if (!ui?.hudLayoutReady || !ui.hudTexture) {
+      return;
+    }
+
+    const panel = ui.hudTexture.getControlByName("hud_panel_vehicles") as StackPanel | null;
+    if (!panel) {
+      return;
+    }
+
+    const initialActiveId = levelManager.getActiveVehicleId() ?? vehicleSelectorEntries[0].id;
+    ui.vehicleSelectorHud = new VehicleSelectorHud(
+      ui.hudTexture,
+      panel,
+      vehicleSelectorEntries,
+      initialActiveId
+    );
+    vehicleSelectorInitDone = true;
+  };
+
+  const updateVehicleSelectorHud = (): void => {
+    ensureVehicleSelectorHud();
+    getSceneGameplayUi(scene)?.vehicleSelectorHud?.update(TARGET_FRAME_SEC);
+  };
+  scene.onBeforeRenderObservable.add(updateVehicleSelectorHud);
 
   bindEnemyTurretsToActiveVehicle();
 
@@ -323,6 +384,12 @@ export async function createGameplayScene(
     getDebugState: () => levelManager.getDebugState(),
     setPaused: (paused) => levelManager.setPaused(paused),
     dispose: () => {
+      scene.onBeforeRenderObservable.removeCallback(updateVehicleSelectorHud);
+      const ui = getSceneGameplayUi(scene);
+      ui?.vehicleSelectorHud?.dispose();
+      if (ui) {
+        ui.vehicleSelectorHud = null;
+      }
       levelManager.dispose();
       disposePhysicsGroup(worldPhysics);
       sharedPowerUpSystem?.dispose();

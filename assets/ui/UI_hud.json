@@ -399,6 +399,24 @@
             "isVisible": true
           }
         ]
+      },
+      {
+        "name": "hud_panel_vehicles",
+        "className": "StackPanel",
+        "isVertical": true,
+        "width": "88px",
+        "height": "200px",
+        "alpha": 1,
+        "isPointerBlocker": false,
+        "horizontalAlignment": 2,
+        "verticalAlignment": 0,
+        "left": "-16px",
+        "top": "40%",
+        "clipChildren": false,
+        "clipContent": false,
+        "zIndex": 0,
+        "isVisible": true,
+        "children": []
       }
     ]
   }
