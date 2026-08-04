@@ -213,7 +213,7 @@
     "shell": {
       "startingReserveAmmo": 14,
       "startsChambered": true,
-      "reloadSeconds": 4.0,
+      "reloadSeconds": 0.25,
       "damage": 100.0,
       "muzzleVelocity": 100.0,
       "gravityMultiplier": 1

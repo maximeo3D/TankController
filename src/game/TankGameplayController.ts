@@ -1530,6 +1530,8 @@ export class TankGameplayController {
       this.initWeaponHudReloadGauges();
       this.initWeaponHudChrome();
       applyUiFontToTexture(t);
+    } else {
+      this.rebindWeaponHudReloadGaugeRefs();
     }
 
     this.hudBoostIndicator = t.getControlByName("hud_boost_indicator") as TextBlock | null;
@@ -1570,6 +1572,22 @@ export class TankGameplayController {
       }
     }
     this.fuelBarSegmentsReady = this.hudFuelSegmentFills.length === 2;
+  }
+
+  /** HUD partagé : retrouver les jauges de rechargement créées par le premier véhicule. */
+  private rebindWeaponHudReloadGaugeRefs(): void {
+    if (!this.hudTexture) {
+      return;
+    }
+
+    this.hudWeaponPrimaryReloadFill = this.hudTexture.getControlByName(
+      "hud_weapon_primary_reload"
+    ) as Rectangle | null;
+    this.hudWeaponSecondaryReloadFill = this.hudTexture.getControlByName(
+      "hud_weapon_secondary_reload"
+    ) as Rectangle | null;
+    this.weaponHudReloadGaugesReady =
+      this.hudWeaponPrimaryReloadFill !== null || this.hudWeaponSecondaryReloadFill !== null;
   }
 
   /** Met à jour santé / carburant / boost pour le véhicule actif (switch immédiat). */
@@ -3027,7 +3045,11 @@ export class TankGameplayController {
     this.gunReticleKickTime += dt;
 
     // Shell / missile magazine reload.
-    if (this.shellLoadedAmmo <= 0 && this.shellReserveAmmo > 0 && this.shellReloadTimer > 0) {
+    if (this.shellLoadedAmmo <= 0 && this.shellReserveAmmo > 0) {
+      if (this.shellReloadTimer <= 0) {
+        this.shellReloadTimer = this.primaryWeaponConfig.reloadSeconds;
+        this.shellInsertSoundPlayed = false;
+      }
       if (
         this.shellMagazineSize === 1 &&
         !this.shellInsertSoundPlayed &&
