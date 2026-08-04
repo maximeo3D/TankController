@@ -96,6 +96,8 @@ const WEAPON_SWITCH_EXIT_SEC = 0.14;
 const WEAPON_SWITCH_ENTER_SEC = 0.14;
 const WEAPON_SWITCH_BLINK_SEC = 0.24;
 const WEAPON_SLOT_SECONDARY_ALPHA = 0.9;
+const UPRIGHT_RESET_COOLDOWN_SEC = 3;
+const UPRIGHT_RESET_LIFT_M = 2.5;
 const VEHICLE_STATUS_BAR_FILL = "#d9d9d9";
 const VEHICLE_STATUS_BAR_EMPTY = "#3a3a3a";
 const VEHICLE_STATUS_BAR_SHIELD = "#42a5f5";
@@ -522,6 +524,9 @@ export class TankGameplayController {
   private deathTriggered = false;
   private deathScreenDelaySeconds = 0;
   private deathNotified = false;
+  private uprightResetCooldown = 0;
+  private pendingUprightReset = false;
+  private uprightResetPrestepFrames = 0;
   private readonly onPlayerDeath: (() => void) | null;
 
   private explosionDefsPromise: Promise<unknown[]> | null = null;
@@ -747,6 +752,8 @@ export class TankGameplayController {
       { passive: true }
     );
     this.scene.onBeforeRenderObservable.add(this.update);
+    this.scene.onBeforePhysicsObservable.add(this.syncUprightResetBeforePhysics);
+    this.scene.onAfterPhysicsObservable.add(this.finishUprightResetPrestep);
   }
 
   private createPowerUpSystem(options: TankGameplayControllerOptions): PowerUpSystem | null {
@@ -2666,6 +2673,8 @@ export class TankGameplayController {
 
   public dispose(): void {
     this.scene.onBeforeRenderObservable.removeCallback(this.update);
+    this.scene.onBeforePhysicsObservable.removeCallback(this.syncUprightResetBeforePhysics);
+    this.scene.onAfterPhysicsObservable.removeCallback(this.finishUprightResetPrestep);
     this.input.dispose();
 
     this.debugCameraRayLine?.dispose();
@@ -2812,6 +2821,167 @@ export class TankGameplayController {
     this.applyPauseSideEffects();
   }
 
+  /** Remet le véhicule à plat au même XZ, légèrement au-dessus du sol, puis le laisse retomber. Touche Y. */
+  private tryResetVehicleUpright(): void {
+    if (
+      this.uprightResetCooldown > 0 ||
+      this.deathTriggered ||
+      this.pendingUprightReset ||
+      this.suspensionPointsLocal.length === 0
+    ) {
+      return;
+    }
+
+    if (!this.scene.getPhysicsEngine()) {
+      return;
+    }
+
+    const pos = this.tankAnchor.position;
+    const forward = this.tankAnchor.getDirection(this.movementForwardAxis);
+    forward.y = 0;
+    if (forward.lengthSquared() < 1e-6) {
+      forward.copyFrom(Axis.Z);
+    } else {
+      forward.normalize();
+    }
+
+    const uprightRotation = Quaternion.FromLookDirectionRH(forward, Axis.Y);
+    const restAnchorY = this.computeRestAnchorY(pos.x, pos.z, pos.y, uprightRotation);
+    const spawnY = (restAnchorY ?? pos.y) + UPRIGHT_RESET_LIFT_M;
+
+    this.tankAnchor.rotationQuaternion = uprightRotation;
+    this.tankAnchor.position.set(pos.x, spawnY, pos.z);
+    this.tankAnchor.computeWorldMatrix(true);
+
+    if (this.tankVisualRoot) {
+      this.tankVisualRoot.rotationQuaternion ??= Quaternion.Identity();
+      this.tankVisualRoot.rotationQuaternion.copyFrom(Quaternion.Identity());
+      this.tankVisualRoot.position.copyFromFloats(0, 0, 0);
+    }
+
+    this.resetVehicleUprightSideEffects();
+    this.pendingUprightReset = true;
+    this.uprightResetCooldown = UPRIGHT_RESET_COOLDOWN_SEC;
+  }
+
+  /** Appliqué avant la physique : téléporte le rigidbody sur la pose de l'ancre (prestep Havok). */
+  private readonly syncUprightResetBeforePhysics = (): void => {
+    if (!this.pendingUprightReset) {
+      return;
+    }
+
+    this.pendingUprightReset = false;
+    this.tankAnchor.computeWorldMatrix(true);
+    this.tankBody.disablePreStep = false;
+    this.tankBody.setLinearVelocity(Vector3.Zero());
+    this.tankBody.setAngularVelocity(Vector3.Zero());
+    this.uprightResetPrestepFrames = 2;
+  };
+
+  private readonly finishUprightResetPrestep = (): void => {
+    if (this.uprightResetPrestepFrames <= 0) {
+      return;
+    }
+
+    this.uprightResetPrestepFrames--;
+    if (this.uprightResetPrestepFrames === 0) {
+      this.tankBody.disablePreStep = true;
+    }
+  };
+
+  private computeRestAnchorY(
+    x: number,
+    z: number,
+    referenceY: number,
+    uprightRotation: Quaternion
+  ): number | null {
+    const effectiveRest =
+      this.config.suspension.restLength + getSuspensionContactOffset(this.config);
+
+    let maxAnchorY: number | null = null;
+    for (const local of this.suspensionPointsLocal) {
+      const worldOffset = local.clone().applyRotationQuaternion(uprightRotation);
+      const probeGroundY = this.findLowestGroundYAt(
+        x + worldOffset.x,
+        z + worldOffset.z,
+        referenceY
+      );
+      if (probeGroundY === null) {
+        continue;
+      }
+
+      const neededAnchorY = probeGroundY + effectiveRest - worldOffset.y;
+      maxAnchorY = maxAnchorY === null ? neededAnchorY : Math.max(maxAnchorY, neededAnchorY);
+    }
+
+    return maxAnchorY;
+  }
+
+  private findLowestGroundYAt(x: number, z: number, referenceY: number): number | null {
+    const engine = this.scene.getPhysicsEngine();
+    if (!engine) {
+      return null;
+    }
+
+    let origin = new Vector3(x, Math.max(referenceY + 80, 80), z);
+    let lowestY: number | null = null;
+
+    for (let i = 0; i < 8; i++) {
+      const from = origin;
+      const to = from.add(Axis.Y.scale(-400));
+      const hit = engine.raycast(from, to, {
+        ignoreBody: this.tankBody,
+        shouldHitTriggers: false,
+        collideWith: 0xffffffff
+      });
+      if (!hit.hasHit) {
+        break;
+      }
+
+      hit.calculateHitDistance();
+      const hitY = hit.hitPointWorld.y;
+      lowestY = lowestY === null ? hitY : Math.min(lowestY, hitY);
+      origin = hit.hitPointWorld.add(Axis.Y.scale(-0.4));
+    }
+
+    return lowestY;
+  }
+
+  private resetVehicleUprightSideEffects(): void {
+    this.smoothedMoveAxis = 0;
+    this.smoothedTurnAxis = 0;
+    this.prevSmoothedMoveAxis = 0;
+    this.boostActive = false;
+    this.airborneSeconds = 0;
+    this.suspensionContactCount = 0;
+    this.suspensionCompressions.fill(0);
+    this.wheelSteerRad = 0;
+    this.wheelSpinRad = 0;
+    this.wheelTravelSmoothed.fill(0);
+    this.hullDrivePitchTarget = 0;
+    this.hullDrivePitchSmoothed = 0;
+    this.hullRecoilPitch = 0;
+    this.hullRecoilRoll = 0;
+    this.pendingHullRecoilPitch = 0;
+    this.pendingHullRecoilRoll = 0;
+    this.resetVisualSprings();
+  }
+
+  private resetVisualSprings(): void {
+    for (const spring of [
+      this.trackLeftDropSpring,
+      this.trackRightDropSpring,
+      this.trackLeftPitchSpring,
+      this.trackRightPitchSpring,
+      this.hullSuspensionPitchSpring,
+      this.hullSuspensionRollSpring,
+      this.bodyBobSpring
+    ]) {
+      spring.value = 0;
+      spring.velocity = 0;
+    }
+  }
+
   /** Véhicule sélectionné par le joueur (LevelManager). Distinct de la pause menu. */
   public setPlayerActive(active: boolean): void {
     if (this.playerActive === active) {
@@ -2955,6 +3125,13 @@ export class TankGameplayController {
     this.activeWeapon = frame.selectedWeapon;
     this.fireHeld = frame.fireHeld;
     this.boostInputHeld = frame.boostHeld;
+
+    if (this.uprightResetCooldown > 0) {
+      this.uprightResetCooldown = Math.max(0, this.uprightResetCooldown - dt);
+    }
+    if (frame.uprightResetRequested) {
+      this.tryResetVehicleUpright();
+    }
 
     // In zoom view, limit camera rotation so the turret/cannon can keep up.
     // This prevents the barrel reticle from "catching up" to the camera reticle.

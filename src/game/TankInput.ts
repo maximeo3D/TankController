@@ -12,6 +12,8 @@ export interface TankInputFrame {
   zoomHeld: boolean;
   fireHeld: boolean;
   selectedWeapon: WeaponType;
+  /** Remise à plat / respawn sur place (touche Y, front montant). */
+  uprightResetRequested: boolean;
 }
 
 export class TankInput {
@@ -29,6 +31,7 @@ export class TankInput {
   private readonly primaryWeapon: PrimaryWeaponType;
   private selectedWeapon: WeaponType;
   private pointerLocked = false;
+  private uprightResetRequested = false;
 
   public constructor(
     canvas: HTMLCanvasElement,
@@ -65,11 +68,13 @@ export class TankInput {
       boostHeld: this.isBoostHeld(),
       zoomHeld: this.zoomToggled,
       fireHeld: this.isPrimaryFireHeld,
-      selectedWeapon: this.selectedWeapon
+      selectedWeapon: this.selectedWeapon,
+      uprightResetRequested: this.uprightResetRequested
     };
 
     this.lookDeltaX = 0;
     this.lookDeltaY = 0;
+    this.uprightResetRequested = false;
 
     return frame;
   }
@@ -118,6 +123,11 @@ export class TankInput {
 
     if (key === "2") {
       this.selectedWeapon = "bullet";
+      event.preventDefault();
+    }
+
+    if (key === "y") {
+      this.uprightResetRequested = true;
       event.preventDefault();
     }
 
@@ -239,5 +249,5 @@ function normalizeKey(key: string): string {
 }
 
 function isTrackedKey(key: string): boolean {
-  return ["z", "q", "s", "d", "1", "2", "shift"].includes(key);
+  return ["z", "q", "s", "d", "1", "2", "y", "shift"].includes(key);
 }
