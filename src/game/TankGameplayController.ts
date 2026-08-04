@@ -4258,6 +4258,7 @@ export class TankGameplayController {
     } else {
       this.airborneSeconds += dt;
     }
+    this.syncPhysicsDamping(grounded);
     // Wheels off the ground: no steering torque, no traction, no lateral grip.
     const hasGroundControl = grounded || this.config.movement.requireGroundContactForControl !== true;
 
@@ -4525,6 +4526,19 @@ export class TankGameplayController {
     }
 
     this.suspensionContactCount = contactCount;
+  }
+
+  /** Réduit l'amortissement en vol pour conserver l'inertie après une rampe ou un saut. */
+  private syncPhysicsDamping(grounded: boolean): void {
+    const physics = this.config.physics;
+    if (grounded) {
+      this.tankBody.setLinearDamping(physics.tankLinearDamping);
+      this.tankBody.setAngularDamping(physics.tankAngularDamping);
+      return;
+    }
+
+    this.tankBody.setLinearDamping(physics.airborneLinearDamping ?? physics.tankLinearDamping);
+    this.tankBody.setAngularDamping(physics.airborneAngularDamping ?? physics.tankAngularDamping);
   }
 
   /** Rebond vertical à la réception d’un saut : impulsion vers le haut selon la vitesse de chute. */

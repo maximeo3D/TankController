@@ -108,6 +108,10 @@ export interface TankControllerConfig {
     tankMass: number;
     tankLinearDamping: number;
     tankAngularDamping: number;
+    /** Amortissement linéaire sans contact au sol (défaut = `tankLinearDamping`). */
+    airborneLinearDamping?: number;
+    /** Amortissement angulaire sans contact au sol (défaut = `tankAngularDamping`). */
+    airborneAngularDamping?: number;
     tankCenterOfMassYOffset: number;
     tankFriction: number;
     tankRestitution: number;
