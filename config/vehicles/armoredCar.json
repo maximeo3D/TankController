@@ -89,7 +89,7 @@
   "suspension": {
     "rayStartHeight": 0.8,
     "rayLength": 3.0,
-    "restLength": 0.042,
+    "restLength": 0.02,
     "springForcesEnabled": true,
     "groundContactTolerance": 0.12,
     "springStrength": 2000.0,
