@@ -176,7 +176,7 @@ Meshes in `power-ups.glb` are disabled at load; clones appear only at `PU_*` pos
 
 - `armes`: pitch pivot for the weapon mount (equivalent of the tank's `canon`).
 - `minigun`: child of `armes`, rotated on its **Y** axis in code while the machine-gun weapon fires (`rig.minigunSpinDegPerSec`). Author the geometry so a Y spin looks like rotating barrels.
-- `wheel_*`: spun visually while rolling (`rig.wheelSpinAxis` / `rig.wheelSpinSign`).
+- `wheel_*`: spun visually while rolling (`rig.wheelSpinAxis` / `rig.wheelSpinSign`). **In rest pose, each wheel bone origin should sit at the same height as its matching `SUS_*` empty** (tire contact). The physics raycasts use `SUS_*`; if wheel bones are offset, the mesh will appear to sink or float while suspension is correct.
 - Missiles are **gravity-immune** and fire as salvos (magazine of 4); see `docs/TECHNICAL_SPEC.md` → **Missiles**.
 - Suspension uses four probes instead of the tank's six.
 

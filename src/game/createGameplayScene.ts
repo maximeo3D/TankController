@@ -29,6 +29,7 @@ import { Texture } from "@babylonjs/core/Materials/Textures/texture";
 import type { AssetContainer } from "@babylonjs/core/assetContainer";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import type { TankControllerConfig } from "../config/tankController";
+import { getSuspensionContactOffset } from "../config/tankController";
 import { getVehicleConfig } from "../config/vehicleRegistry";
 import { tankAssetUrl, armoredCarAssetUrl, skyboxAssetUrl, powerUpsAssetUrl, enemiesAssetUrl } from "../assets/assetUrls";
 import { enemiesConfig } from "../config/enemiesController";
@@ -775,7 +776,7 @@ function snapTankAnchorYToTerrain(
   const q = tankAnchor.absoluteRotationQuaternion ?? tankAnchor.rotationQuaternion ?? Quaternion.Identity();
   const rayStartHeight = config.suspension.rayStartHeight;
   const restLength = config.suspension.restLength;
-  const targetDist = rayStartHeight + restLength;
+  const targetDist = rayStartHeight + restLength + getSuspensionContactOffset(config);
   const longDown = 80;
   let maxDrop = 0;
 

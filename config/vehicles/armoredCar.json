@@ -17,8 +17,13 @@
     "minigunBone": "minigun",
     "minigunSpinDegPerSec": 1080,
     "wheelBones": ["wheel_FL", "wheel_FR", "wheel_RL", "wheel_RR"],
+    "frontWheelBones": ["wheel_FL", "wheel_FR"],
     "wheelSpinAxis": "x",
     "wheelSpinSign": 1,
+    "wheelSteerAxis": "y",
+    "wheelSteerSign": 1,
+    "wheelSteerMaxDeg": 32.0,
+    "wheelSteerSharpness": 14.0,
     "suspensionProbeNames": ["SUS_FL", "SUS_FR", "SUS_RL", "SUS_RR"],
     "nodes": {
       "colliderMesh": "COL_armoredcar",
@@ -38,19 +43,24 @@
     }
   },
   "movement": {
-    "moveSpeed": 0.55,
+    "steeringMode": "car",
+    "moveSpeed": 0.275,
     "boostMultiplier": 1.35,
-    "hullTurnSpeedDeg": 85.0,
+    "hullTurnSpeedDeg": 115.0,
+    "carMinSteerSpeed": 0.35,
+    "carSteerReferenceSpeed": 2.25,
+    "carSteerMinSpeedFactor": 0.85,
+    "carSteerGripMultiplier": 2.8,
     "acceleration": 6.0,
     "brakeDeceleration": 5.0,
     "inputRiseRate": 2.0,
     "inputFallRate": 2.5,
-    "lateralGrip": 0.85
+    "lateralGrip": 1.275
   },
   "physics": {
     "tankMass": 12.0,
-    "tankLinearDamping": 1.8,
-    "tankAngularDamping": 2.0,
+    "tankLinearDamping": 5.4,
+    "tankAngularDamping": 1.35,
     "tankCenterOfMassYOffset": -0.05,
     "tankFriction": 0.9,
     "tankRestitution": 0.02
@@ -77,11 +87,11 @@
     "reboundDampingScale": 0.72,
     "extensionSpringScale": 0.0,
     "maxForce": 5000.0,
-    "tractionForce": 520.0,
-    "lateralFriction": 4.5
+    "tractionForce": 780.0,
+    "lateralFriction": 10.5
   },
   "turret": {
-    "yawSpeedDeg": 75.0,
+    "yawSpeedDeg": 110.0,
     "mouseSensitivityDegPerPixel": 0.35
   },
   "cannon": {
@@ -89,10 +99,10 @@
     "mouseSensitivityDegPerPixel": 0.2,
     "minPitchDeg": -8.0,
     "maxPitchDeg": 45.0,
-    "recoilKickY": -0.05,
+    "recoilKickY": 0.0,
     "recoilReturnSpeed": 0.35,
     "hullRecoilReturnSpeed": 0.12,
-    "hullRecoilKickDeg": 0.6,
+    "hullRecoilKickDeg": 0.0,
     "hullRecoilSign": 1
   },
   "camera": {
@@ -118,31 +128,6 @@
   "aim": {
     "cameraMaxTargetDistance": 200.0,
     "barrelRayMaxDistance": 200.0
-  },
-  "tracks": {
-    "enabled": false,
-    "spacing": 0.25,
-    "maxPointsPerRibbon": 20,
-    "segmentLength": 1.2,
-    "segmentWidth": 0.15,
-    "uvRepeatU": 1.0,
-    "uvRepeatV": 6.0,
-    "treadUvScrollSpeed": 0.0,
-    "yOffset": 0.015,
-    "raycastStartHeight": 0.35,
-    "raycastLength": 2.5,
-    "opacityMultiplier": 0.0,
-    "suspensionVisual": {
-      "enabled": false,
-      "maxDropMeters": 0.0,
-      "maxTrackPitchDeg": 0.0,
-      "maxHullPitchDeg": 3.0,
-      "maxHullRollDeg": 4.0,
-      "springStiffness": 80.0,
-      "springDamping": 14.0,
-      "springBounceDamping": 6.0,
-      "maxBodyBobMeters": 0.0
-    }
   },
   "vehicle": {
     "healthMax": 280,
@@ -171,7 +156,7 @@
     },
     "types": {
       "ammo_shell": {
-        "enabled": true,
+        "enabled": false,
         "respawnSeconds": 30.0,
         "pickedAlpha": 0.25,
         "singleUse": false,

@@ -43,8 +43,19 @@ export interface TankControllerConfig {
     minigunSpinDegPerSec?: number;
     /** Bones de roues (`wheel_FL`, …) — rotation visuelle au roulement. */
     wheelBones?: string[];
+    /** Sous-ensemble de `wheelBones` — braquage visuel (typ. roues avant). */
+    frontWheelBones?: string[];
     wheelSpinAxis?: "x" | "y" | "z";
     wheelSpinSign?: 1 | -1;
+    /** Axe local de braquage des roues avant (typ. `y`). */
+    wheelSteerAxis?: "x" | "y" | "z";
+    wheelSteerSign?: 1 | -1;
+    /** Angle max de braquage visuel (degrés). */
+    wheelSteerMaxDeg?: number;
+    /** Vitesse de convergence du braquage visuel (rad/s). */
+    wheelSteerSharpness?: number;
+    /** Rayon roue (m) — requis si les `SUS_*` sont au centre de la roue et non au contact sol. */
+    wheelRadius?: number;
     /** Probes suspension ; défaut 6 points tank, voiture : 4 roues. */
     suspensionProbeNames?: string[];
     /** Noms de nodes GLB (suffixe véhicule). */
@@ -72,6 +83,16 @@ export interface TankControllerConfig {
     inputRiseRate: number;
     inputFallRate: number;
     lateralGrip: number;
+    /** `tank` = rotation sur place ; `car` = braquage lié à la vitesse avant/arrière. */
+    steeringMode?: "tank" | "car";
+    /** Vitesse linéaire min. (m/s) pour entamer un virage en mode `car`. */
+    carMinSteerSpeed?: number;
+    /** Vitesse de référence pour le facteur de braquage en mode `car` (défaut ≈ moveSpeed × 8). */
+    carSteerReferenceSpeed?: number;
+    /** Facteur min. (0–1) du taux de braquage en mode `car` à basse vitesse. */
+    carSteerMinSpeedFactor?: number;
+    /** Multiplicateur de friction latérale en mode `car` à braquage plein (réduit le dérapage). */
+    carSteerGripMultiplier?: number;
   };
   physics: {
     tankMass: number;
@@ -101,6 +122,11 @@ export interface TankControllerConfig {
     rayStartHeight: number;
     rayLength: number;
     restLength: number;
+    /**
+     * Distance verticale du node `SUS_*` au point de contact sol (m).
+     * Défaut : `rig.wheelRadius` quand les probes sont au centre de roue ; 0 si probes au contact.
+     */
+    contactOffsetY?: number;
     springStrength: number;
     damperStrength: number;
     maxForce: number;
@@ -285,6 +311,11 @@ export function getPrimaryWeaponConfig(config: TankControllerConfig): Projectile
     throw new Error(`Missing weapons.${kind} in vehicle config`);
   }
   return weapon;
+}
+
+/** Distance SUS → contact sol : compenser un probe placé au centre de roue (hub). */
+export function getSuspensionContactOffset(config: TankControllerConfig): number {
+  return config.suspension.contactOffsetY ?? config.rig.wheelRadius ?? 0;
 }
 
 export const tankConfig = tankControllerConfig as TankControllerConfig;

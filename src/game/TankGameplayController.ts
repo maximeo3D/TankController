@@ -26,7 +26,7 @@ import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import type { Scene } from "@babylonjs/core/scene";
 import { ParticleSystem } from "@babylonjs/core/Particles/particleSystem";
 import type { TankControllerConfig, ProjectileWeaponConfig, PrimaryWeaponKind } from "../config/tankController";
-import { getPrimaryWeaponKind, getPrimaryWeaponConfig } from "../config/tankController";
+import { getPrimaryWeaponKind, getPrimaryWeaponConfig, getSuspensionContactOffset } from "../config/tankController";
 import { TankInput, type WeaponType } from "./TankInput";
 import {
   AdvancedDynamicTexture,
@@ -257,7 +257,9 @@ export class TankGameplayController {
   private minigunSpinRad = 0;
   private readonly wheelControls: BoneControl[] = [];
   private readonly wheelBaseLocalRotations: Quaternion[] = [];
+  private readonly frontWheelIndices = new Set<number>();
   private wheelSpinRad = 0;
+  private wheelSteerRad = 0;
   private readonly caisseBaseLocalRotation: Quaternion;
   private readonly trackLeftBaseLocalPosition: Vector3;
   private readonly trackRightBaseLocalPosition: Vector3;
@@ -600,13 +602,21 @@ export class TankGameplayController {
     this.minigunSpinRad = 0;
     this.wheelControls.length = 0;
     this.wheelBaseLocalRotations.length = 0;
-    for (const wheelBoneName of options.config.rig.wheelBones ?? []) {
+    const wheelBoneNames = options.config.rig.wheelBones ?? [];
+    const frontWheelNames = new Set(options.config.rig.frontWheelBones ?? []);
+    for (let wheelIndex = 0; wheelIndex < wheelBoneNames.length; wheelIndex++) {
+      const wheelBoneName = wheelBoneNames[wheelIndex];
       const wheelControl = resolveBoneControl(options.tankContainer, wheelBoneName);
       this.wheelControls.push(wheelControl);
       this.wheelBaseLocalRotations.push(getControlLocalRotation(wheelControl, this.tankAnchor));
+      if (frontWheelNames.has(wheelBoneName)) {
+        this.frontWheelIndices.add(wheelIndex);
+      }
     }
     this.wheelSpinRad = 0;
+    this.wheelSteerRad = 0;
     this.initWheelAnchorLocalPositions();
+    this.warnWheelSuspensionHeightMismatch();
     if (this.tracksConfig.suspensionVisual?.enabled) {
       if (!this.trackLeftControl.bone && !this.trackLeftControl.transformNode) {
         console.warn("[TankController] track_L bone missing; track suspension visual disabled.");
@@ -3382,8 +3392,10 @@ export class TankGameplayController {
       proj.shape.dispose();
       proj.mesh.dispose();
     });
-    this.pendingCannonRecoilKickY += this.config.cannon.recoilKickY;
-    this.applyHullRecoilImpulseFromWorldForward(forward);
+    if (this.primaryWeaponKind === "shell") {
+      this.pendingCannonRecoilKickY += this.config.cannon.recoilKickY;
+      this.applyHullRecoilImpulseFromWorldForward(forward);
+    }
     this.triggerShellShotCameraShake();
   }
 
@@ -3825,26 +3837,32 @@ export class TankGameplayController {
     );
   }
 
-  private applyWheelVisualSpin(forwardWorld: Vector3, dt: number): void {
+  private applyWheelVisualSpin(forwardWorld: Vector3, turnAxis: number, dt: number): void {
     if (this.wheelControls.length === 0) {
       return;
     }
 
     const v = this.tankBody.getLinearVelocity();
     const forwardSpeed = Vector3.Dot(v, forwardWorld);
-    const wheelRadius = 0.35;
+    const wheelRadius = this.config.rig.wheelRadius ?? 0.35;
     const spinSign = this.config.rig.wheelSpinSign ?? 1;
     this.wheelSpinRad += (forwardSpeed / Math.max(wheelRadius, 0.05)) * dt * spinSign;
 
-    const wheelAxis = axisFromConfig(this.config.rig.wheelSpinAxis ?? "x", 1);
+    const steerSign = this.config.rig.wheelSteerSign ?? 1;
+    const steerMaxDeg = this.config.rig.wheelSteerMaxDeg ?? 0;
+    const targetSteerRad = toRadians(turnAxis * steerMaxDeg * steerSign);
+    const steerSharpness = this.config.rig.wheelSteerSharpness ?? 12;
+    this.wheelSteerRad = moveTowards(this.wheelSteerRad, targetSteerRad, steerSharpness * dt);
+
+    const spinAxis = axisFromConfig(this.config.rig.wheelSpinAxis ?? "x", 1);
+    const steerAxis = axisFromConfig(this.config.rig.wheelSteerAxis ?? "y", 1);
     for (let i = 0; i < this.wheelControls.length; i++) {
-      setControlAxisAngle(
-        this.wheelControls[i],
-        this.wheelBaseLocalRotations[i],
-        wheelAxis,
-        this.wheelSpinRad,
-        this.tankAnchor
-      );
+      let rotation = this.wheelBaseLocalRotations[i].clone();
+      if (this.frontWheelIndices.has(i) && steerMaxDeg > 0) {
+        rotation = rotation.multiply(Quaternion.RotationAxis(steerAxis, this.wheelSteerRad));
+      }
+      rotation = rotation.multiply(Quaternion.RotationAxis(spinAxis, this.wheelSpinRad));
+      setControlLocalRotation(this.wheelControls[i], rotation, this.tankAnchor);
     }
   }
 
@@ -4175,17 +4193,6 @@ export class TankGameplayController {
 
     this.boostActive = false;
 
-    // Steering: drive the rigidbody (not the node transform).
-    if (canMove) {
-      const angVel = this.tankBody.getAngularVelocity();
-      angVel.y = toRadians(turnAxis * this.config.movement.hullTurnSpeedDeg);
-      this.tankBody.setAngularVelocity(angVel);
-    }
-
-    // Suspension forces (raycast down from SUS_* points).
-    this.applySuspension();
-
-    // Traction + lateral friction at COM.
     const forwardWorld = this.tankAnchor.getDirection(this.movementForwardAxis);
     forwardWorld.y = 0;
     if (forwardWorld.lengthSquared() > 1e-6) {
@@ -4194,6 +4201,46 @@ export class TankGameplayController {
       forwardWorld.copyFrom(Axis.Z);
     }
     const rightWorld = Vector3.Cross(Axis.Y, forwardWorld).normalize();
+
+    // Steering: drive the rigidbody (not the node transform).
+    if (canMove) {
+      const angVel = this.tankBody.getAngularVelocity();
+      const steeringMode = this.config.movement.steeringMode ?? "tank";
+      if (steeringMode === "car") {
+        const linearVelocity = this.tankBody.getLinearVelocity();
+        const driveForward = forwardWorld.scale(
+          this.movementInputSign * this.config.rig.movementForwardSign
+        );
+        const forwardSpeed = Vector3.Dot(linearVelocity, driveForward);
+        const minSteerSpeed = this.config.movement.carMinSteerSpeed ?? 0.35;
+        if (Math.abs(forwardSpeed) >= minSteerSpeed) {
+          const refSpeed =
+            this.config.movement.carSteerReferenceSpeed ??
+            this.config.movement.moveSpeed * 8;
+          const minSpeedFactor = this.config.movement.carSteerMinSpeedFactor ?? 0.7;
+          const speedFactor = clamp(
+            Math.abs(forwardSpeed) / Math.max(refSpeed, 0.1),
+            minSpeedFactor,
+            1
+          );
+          const reverseSign = forwardSpeed >= 0 ? 1 : -1;
+          angVel.y = toRadians(
+            this.smoothedTurnAxis *
+              this.config.movement.hullTurnSpeedDeg *
+              speedFactor *
+              reverseSign
+          );
+        } else {
+          angVel.y = 0;
+        }
+      } else {
+        angVel.y = toRadians(turnAxis * this.config.movement.hullTurnSpeedDeg);
+      }
+      this.tankBody.setAngularVelocity(angVel);
+    }
+
+    // Suspension forces (raycast down from SUS_* points).
+    this.applySuspension();
 
     const overchargeMax = this.config.energy.overchargeMax;
     if (boostHeld) {
@@ -4226,7 +4273,16 @@ export class TankGameplayController {
     const center = this.tankBody.getObjectCenterWorld();
     const v = this.tankBody.getLinearVelocity();
     const lateralSpeed = Vector3.Dot(v, rightWorld);
-    const lateralForce = rightWorld.scale(-lateralSpeed * this.config.suspension.lateralFriction);
+    const steeringMode = this.config.movement.steeringMode ?? "tank";
+    let lateralGrip = this.config.suspension.lateralFriction;
+    if (steeringMode === "car") {
+      const steerGripMultiplier = this.config.movement.carSteerGripMultiplier ?? 1;
+      if (steerGripMultiplier > 1 && Math.abs(this.smoothedTurnAxis) > 0.05) {
+        const steerAmount = clamp(Math.abs(this.smoothedTurnAxis), 0, 1);
+        lateralGrip *= 1 + (steerGripMultiplier - 1) * steerAmount;
+      }
+    }
+    const lateralForce = rightWorld.scale(-lateralSpeed * lateralGrip);
     this.tankBody.applyForce(lateralForce, center);
 
     if (isMoving) {
@@ -4236,7 +4292,7 @@ export class TankGameplayController {
       this.tankBody.applyForce(tractionForce, center);
     }
 
-    this.applyWheelVisualSpin(forwardWorld, dt);
+    this.applyWheelVisualSpin(forwardWorld, this.smoothedTurnAxis, dt);
     this.updateTrackTreadDust(forwardWorld);
     this.updateTrackUvScroll(dt);
     this.syncTankMovementSounds();
@@ -4342,6 +4398,8 @@ export class TankGameplayController {
     const rayStartHeight = this.config.suspension.rayStartHeight;
     const rayLength = this.config.suspension.rayLength;
     const restLength = this.config.suspension.restLength;
+    const contactOffset = getSuspensionContactOffset(this.config);
+    const effectiveRestLength = restLength + contactOffset;
     const k = this.config.suspension.springStrength;
     const c = this.config.suspension.damperStrength;
     const maxForce = this.config.suspension.maxForce;
@@ -4373,7 +4431,7 @@ export class TankGameplayController {
           continue;
         }
       }
-      const compression = clamp(restLength - distance, 0, restLength);
+      const compression = clamp(effectiveRestLength - distance, 0, effectiveRestLength);
       if (compression <= 0) {
         continue;
       }
@@ -4609,6 +4667,46 @@ export class TankGameplayController {
     this.tankCamera.setTarget(pivotWorld);
   }
 
+  private warnWheelSuspensionHeightMismatch(): void {
+    const wheelBoneNames = this.config.rig.wheelBones ?? [];
+    const probeNames = this.config.rig.suspensionProbeNames ?? [];
+    if (wheelBoneNames.length === 0 || probeNames.length === 0) {
+      return;
+    }
+
+    for (let i = 0; i < wheelBoneNames.length; i++) {
+      const wheelName = wheelBoneNames[i]!;
+      const suffixMatch = /_(FL|FR|RL|RR)$/i.exec(wheelName);
+      if (!suffixMatch) {
+        continue;
+      }
+      const suffix = suffixMatch[1]!.toUpperCase();
+      const susName = probeNames.find((name) => name.toUpperCase().endsWith(`_${suffix}`));
+      if (!susName) {
+        continue;
+      }
+      const susIndex = probeNames.indexOf(susName);
+      if (susIndex < 0 || susIndex >= this.suspensionPointsLocal.length) {
+        continue;
+      }
+
+      const wheelControl = this.wheelControls[i];
+      if (!wheelControl?.bone && !wheelControl?.transformNode) {
+        continue;
+      }
+
+      const wheelAnchorLocal = getControlAnchorLocalPosition(wheelControl, this.tankAnchor);
+      const susY = this.suspensionPointsLocal[susIndex]!.y;
+      const deltaY = wheelAnchorLocal.y - susY;
+      if (Math.abs(deltaY) > 0.02) {
+        console.warn(
+          `[TankController] ${wheelName} vs ${susName}: wheel bone Y differs from SUS by ${deltaY.toFixed(3)} m (anchor space). ` +
+            "Place the wheel bone origin at the tire contact, matching the SUS empty."
+        );
+      }
+    }
+  }
+
   private initWheelAnchorLocalPositions(): void {
     const entries: Array<[TrackNodeKey, TransformNode | AbstractMesh | null]> = [
       ["fl", this.suspensionNodes.fl],
@@ -4633,6 +4731,8 @@ export class TankGameplayController {
     }
 
     const restLength = this.config.suspension.restLength;
+    const contactOffset = getSuspensionContactOffset(this.config);
+    const effectiveRestLength = restLength + contactOffset;
     if (restLength <= 1e-6) {
       return 0;
     }
@@ -4668,8 +4768,8 @@ export class TankGameplayController {
       distance = Vector3.Distance(from, hit.hitPointWorld);
     }
 
-    const compression = clamp(restLength - distance, 0, restLength);
-    return compression / restLength;
+    const compression = clamp(effectiveRestLength - distance, 0, effectiveRestLength);
+    return compression / effectiveRestLength;
   }
 
   private averageCompression(keys: TrackNodeKey[]): number {
@@ -5081,6 +5181,21 @@ function getControlLocalPosition(control: BoneControl): Vector3 {
 
   if (control.bone) {
     return control.bone.position.clone();
+  }
+
+  return Vector3.Zero();
+}
+
+function getControlAnchorLocalPosition(control: BoneControl, tankAnchor: TransformNode): Vector3 {
+  if (control.transformNode) {
+    return toAnchorLocalPosition(control.transformNode, tankAnchor);
+  }
+
+  if (control.bone) {
+    tankAnchor.computeWorldMatrix(true);
+    control.bone.computeAbsoluteTransforms?.();
+    const inv = tankAnchor.getWorldMatrix().clone().invert();
+    return Vector3.TransformCoordinates(control.bone.getAbsolutePosition(), inv);
   }
 
   return Vector3.Zero();
