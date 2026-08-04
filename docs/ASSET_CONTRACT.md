@@ -176,9 +176,26 @@ Meshes in `power-ups.glb` are disabled at load; clones appear only at `PU_*` pos
 
 - `armes`: pitch pivot for the weapon mount (equivalent of the tank's `canon`).
 - `minigun`: child of `armes`, rotated on its **Y** axis in code while the machine-gun weapon fires (`rig.minigunSpinDegPerSec`). Author the geometry so a Y spin looks like rotating barrels.
-- `wheel_*`: spun visually while rolling (`rig.wheelSpinAxis` / `rig.wheelSpinSign`). Bone origins belong at the **axle / hub** so the spin looks right; the matching `SUS_*` empties sit lower, at the **tire contact**. Set `rig.wheelRadius` to that hub-to-contact distance so the spin rate matches the ground speed.
+- `wheel_*`: bone origins at the **axle / hub** (not at tire contact). Code applies:
+  - **roll** on `rig.wheelSpinAxis` at a rate of `groundSpeed / rig.wheelRadius`
+  - **steer** on front wheels (`rig.frontWheelBones`) on `rig.wheelSteerAxis` up to `rig.wheelSteerMaxDeg`
+  - **vertical travel** when `rig.wheelTravelEnabled: true` — bone offset by matching probe compression so tires stay on ground while body moves
+- `SUS_*`: empties at **tire contact** height (bottom of wheel). Downward ray origins for suspension and ground-contact detection. Must align horizontally with their wheel but sit lower on Y (hub-to-contact distance ≈ `rig.wheelRadius`, ~9 cm on current asset).
 - Missiles are **gravity-immune** and fire as salvos (magazine of 4); see `docs/TECHNICAL_SPEC.md` → **Missiles**.
-- Suspension uses four probes instead of the tank's six.
+- No track system — omit `tracks` from armored car JSON.
+- `ammo_shell` power-up disabled in armored car config (vehicle uses missiles, not shells).
+
+### Wheel / suspension authoring checklist (armored car)
+
+| Check | Expected |
+|-------|----------|
+| `SUS_FL` … `SUS_RR` at tire contact | Y at ground patch, not at hub |
+| `wheel_*` bones at hub | ~`wheelRadius` above matching `SUS_*` |
+| `COL_armoredcar` bottom clearance | Must exceed static spring sag + margin (see TECHNICAL_SPEC tuning rule) |
+| Front wheels in `frontWheelBones` | Match `wheel_FL`, `wheel_FR` |
+| `wheelTravelSign` | If tires sink when body compresses, flip to `-1` |
+
+Enable `debug.showSuspensionSpheres: true` in config to visualize probe positions at runtime.
 
 ## Cannon and Turret Constraints (authoring)
 
@@ -216,6 +233,14 @@ Before an asset is considered valid:
 - six `SUS_*` empties exist and align with intended ground probes
 - `tourelle` rotates correctly without unintended pitch or roll
 - `canon` rotates correctly without unintended yaw or roll
+
+### Armored car validation (additional)
+
+- four `SUS_*` empties at tire contact height (not hub height)
+- four `wheel_*` bones at hub, ~`wheelRadius` above matching `SUS_*`
+- `COL_armoredcar` covers hull without extending far below tire contact
+- `armoredcar_damage_smoke_1..4` present if damage VFX desired (optional; warnings if missing)
+- no `track_L` / `track_R` required (track system disabled)
 
 ## 2D UI assets (`assets/ui/`)
 

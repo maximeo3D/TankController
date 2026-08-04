@@ -105,10 +105,13 @@ The tank file contains:
 
 - pitch bone `armes` (instead of the tank's `canon`)
 - **minigun** bone `minigun` (child of `armes`) spun on its Y axis while firing
-- four wheel bones `wheel_FL/FR/RL/RR` spun visually while rolling
-- four suspension probes `SUS_FL/FR/RL/RR`
+- four wheel bones `wheel_FL/FR/RL/RR` with visual spin + front-wheel steering + vertical travel
+- four suspension probes `SUS_FL/FR/RL/RR` at tire contact height
 - muzzles `MUZZLE_rocket_armoredcar` (missiles) + `MUZZLE_mg_armoredcar` (minigun)
 - projectile templates `AMMO_missile` / `COL_missile`
+- no track system (`tracks` section absent from config)
+
+Driving behavior diverges from the tank via JSON (`movement.steeringMode: "car"`, spring suspension, ground-contact gating). See **Armored car — driving and suspension** below.
 
 ## Multi-Vehicle Architecture
 
@@ -160,13 +163,115 @@ Because multiple vehicles coexist in one scene, the following are created **once
 
 ### Ground Contact and Landing (per-vehicle)
 
-- Each suspension update measures every probe's height above ground (`hitDistance - rayStartHeight`); a probe within `restLength + suspension.groundContactTolerance` counts as a contact. That count is the vehicle's **ground contact** state.
-- `suspension.springForcesEnabled` decides whether spring/damper forces are actually applied. While false (default, tank), the hull rests on its `COL_*` collider and the probes only feed ground-contact detection and the landing bounce. The armored car enables it, so its hull is genuinely spring-supported.
-- **Visual wheel travel** (`rig.wheelTravelEnabled`, armored car): each wheel bone is raised in chassis space by its own probe's compression, so the tire keeps touching the ground while the body sinks and rolls. Tune the direction with `rig.wheelTravelAxis` / `rig.wheelTravelSign` (bone parent space) and the smoothing with `rig.wheelTravelSharpness`.
-- Tuning rule of thumb: static sag \(= m g / (n k)\) must stay well under the gap between the probes and the bottom of `COL_*`, otherwise the collider grounds out before the spring reaches full travel.
-- `movement.requireGroundContactForControl: true` (armored car) disables steering torque, traction and lateral grip while **no** probe touches the ground, so an airborne vehicle cannot be steered mid-flight. The tank keeps the legacy always-on control (flag absent).
-- **Landing bounce**: on the first contact after `suspension.landingBounceMinAirSeconds` of air time, an upward impulse proportional to the impact speed is applied (`landingBounceRestitution`, clamped between `landingBounceMinSpeed` and `landingBounceMaxSpeed`).
-- Damping is split per direction: `reboundDampingScale` (extension) and `compressionDampingScale` (compression). Lower compression damping stores more energy in the spring, which makes drops feel springier.
+Implemented in `TankGameplayController.applySuspension()` and `applyMovement()`.
+
+#### Contact detection
+
+Each frame, for every probe in `rig.suspensionProbeNames`:
+
+1. A Havok raycast is cast downward from `SUS_* + rayStartHeight`.
+2. The probe's height above ground is computed as `hitDistance - rayStartHeight` (not raw `hitDistance`, which includes the ray offset).
+3. A probe counts as **in contact** when `probeHeightAboveGround ≤ restLength + groundContactTolerance`.
+
+`suspensionContactCount` is the number of probes in contact. `grounded = (contactCount > 0)`.
+
+#### Two suspension modes (`springForcesEnabled`)
+
+| Mode | Config | Behavior |
+|------|--------|----------|
+| **Collider-only** (tank default) | `springForcesEnabled: false` or absent | Hull rests on `COL_*` convex hull. Probes feed contact detection and landing bounce only. No spring forces applied. |
+| **Spring-supported** (armored car) | `springForcesEnabled: true` | Spring-damper forces are applied at raycast hit points. Hull height, sag, and rebound are physically simulated. Requires tuning so static sag stays below the gap between probes and the bottom of `COL_*`. |
+
+Static sag approximation: \( \text{sag} = m g / (n \cdot k) \) where \(n\) = probe count, \(k\) = `springStrength`. Remaining travel = `restLength - sag`.
+
+#### Airborne control gating
+
+When `movement.requireGroundContactForControl: true` (armored car) and `grounded === false`:
+
+- steering angular velocity is **not** applied (no mid-air pivot)
+- traction force is **not** applied
+- lateral grip force is **not** applied
+
+The vehicle follows a ballistic trajectory until at least one probe touches ground again. The tank keeps legacy always-on control (flag absent).
+
+#### Airborne damping
+
+Each frame, `syncPhysicsDamping(grounded)` switches Havok body damping:
+
+| State | Linear | Angular |
+|-------|--------|---------|
+| Grounded | `physics.tankLinearDamping` | `physics.tankAngularDamping` |
+| Airborne | `physics.airborneLinearDamping` (fallback: ground value) | `physics.airborneAngularDamping` (fallback: ground value) |
+
+Ground damping caps top speed on the ground; low airborne damping preserves launch momentum after ramps and jumps.
+
+#### Landing bounce
+
+On the first grounded frame after at least `landingBounceMinAirSeconds` of air time, if fall speed ≥ `landingBounceMinSpeed`, an upward impulse is applied:
+
+```
+impulse = mass × min(fallSpeed, landingBounceMaxSpeed) × landingBounceRestitution
+```
+
+Works independently of `springForcesEnabled`. With springs enabled, keep `landingBounceRestitution` moderate — the spring already stores impact energy.
+
+#### Compression / rebound damping
+
+Per-probe damper force uses direction-dependent scale:
+
+- **Compression** (probe moving down): `damperStrength × compressionDampingScale`
+- **Extension** (probe moving up): `damperStrength × reboundDampingScale`
+
+Lower `compressionDampingScale` → springier landings. Lower `reboundDampingScale` → faster rebound after compression.
+
+#### Visual wheel travel (armored car)
+
+When `rig.wheelTravelEnabled: true`, each wheel bone is offset vertically in its parent bone space by the compression of its matching `SUS_*` probe (matched by suffix `_FL`, `_FR`, `_RL`, `_RR`). This keeps tire meshes on the ground while the body sags and rolls.
+
+Tune with `rig.wheelTravelAxis`, `rig.wheelTravelSign` (flip if wheels move the wrong way), and `rig.wheelTravelSharpness`.
+
+## Armored Car — Driving and Suspension
+
+Config: `config/vehicles/armoredCar.json`. Code: `TankGameplayController.applyMovement()`.
+
+### Car steering (`movement.steeringMode: "car"`)
+
+Unlike the tank (`"tank"`, default), the armored car cannot pivot on the spot:
+
+- Hull yaw rate is proportional to **forward speed** and **steering input** (`smoothedTurnAxis`).
+- Below `carMinSteerSpeed`, yaw rate is zero — no rotation without movement.
+- In reverse, steering direction inverts (`reverseSign`).
+- Forward speed is measured along the **drive direction** (`forwardWorld × movementInputSign × movementForwardSign`), not raw mesh forward, so steering matches player input when `movementInputSign: -1`.
+
+Key tuning keys:
+
+| Key | Role |
+|-----|------|
+| `hullTurnSpeedDeg` | Max yaw rate (deg/s) at full speed and full steer |
+| `carMinSteerSpeed` | Min linear speed (m/s) before steering kicks in |
+| `carSteerReferenceSpeed` | Speed at which steering reaches 100% (`speedFactor`) |
+| `carSteerMinSpeedFactor` | Floor on `speedFactor` at low speed (0–1) |
+| `carSteerGripMultiplier` | Scales `lateralFriction` while steering to reduce understeer / drift |
+
+### Front-wheel visual steering
+
+Front wheels (`rig.frontWheelBones`, typically `wheel_FL` + `wheel_FR`) rotate visually on `rig.wheelSteerAxis` toward `± wheelSteerMaxDeg` according to `smoothedTurnAxis`. Convergence speed: `wheelSteerSharpness`. All wheels spin on `wheelSpinAxis` at a rate derived from ground speed / `wheelRadius`.
+
+### Missile firing — no bone recoil
+
+For `primaryWeaponKind === "missile"`, `spawnProjectile()` skips `recoilKickY` and hull recoil impulse. Only `triggerShellShotCameraShake()` runs (using `camera.shellShotShakeDurationSeconds` / `shellShotShakeAmplitude`). Set `cannon.recoilKickY` and `cannon.hullRecoilKickDeg` to `0` in armored car config.
+
+### Current armored car tuning snapshot
+
+Reference values in `config/vehicles/armoredCar.json` (subject to feel tuning):
+
+| Area | Notable values |
+|------|----------------|
+| Mass / damping | 12 kg; ground linear 2.4 / angular 1.35; airborne linear **0.06** / angular **0.2** |
+| Suspension | `springForcesEnabled: true`; k=2000; damper=54; restLength=0.042 m |
+| Traction | 350 N (paired with ground linear damping for ~12 m/s top speed) |
+| Grip | lateralFriction 10.5; carSteerGripMultiplier 2.8 |
+| Wheels | radius 0.093 m; travel enabled; front steer max 32° |
 
 ### Power-Ups
 
@@ -291,6 +396,7 @@ The primary projectile weapon is defined per vehicle under `weapons`. A vehicle 
 - **gravity-immune** (`gravityMultiplier: 0`) — flies straight
 - each missile of a salvo plays its own sound `missile_1` → `missile_4` (`assets/sounds/missile_*.wav`)
 - HUD icon: `missile.png` (selected automatically when the primary weapon kind is `missile`)
+- **No bone recoil** on fire — only camera shake (`camera.shellShotShake*`). Cannon recoil keys in JSON should be `0`.
 
 ### Bullets / minigun (`weapons.bullet`)
 
@@ -439,14 +545,17 @@ All vehicle gameplay tuning must be externalized in the per-vehicle JSON config 
 
 Each config is the source of truth for:
 
-- `rig` node/bone names and axes (per-vehicle: `pitchBone`, `minigunBone`, `wheelBones`, `suspensionProbeNames`, `nodes.*`)
-- movement, suspension, grounding
-- `vehicle` health
-- turn rates, pitch limits
+- `rig` node/bone names and axes (per-vehicle: `pitchBone`, `minigunBone`, `wheelBones`, `frontWheelBones`, `wheelRadius`, `wheelTravel*`, `suspensionProbeNames`, `nodes.*`)
+- `movement` (including `steeringMode`, car steering keys, `requireGroundContactForControl`)
+- `suspension` (spring forces, contact tolerance, landing bounce, compression/rebound damping)
+- `physics` (including `airborneLinearDamping` / `airborneAngularDamping`)
+- `grounding`, `vehicle` health
+- turn rates, pitch limits, recoil (shell only; missiles use camera shake)
 - camera FOV and **orbit** parameters
 - fuel (`energy` battery) and boost (`energy` overcharge) drain/recharge
 - weapon values (`weapons.shell` **or** `weapons.missile`, plus `weapons.bullet`)
 - `powerUps` global + per-type settings (`types.*`)
+- `tracks` (tank only; armored car omits this section)
 
 The game code should avoid hardcoding gameplay numbers except for small glue constants (e.g. reticle `baseScale` in `TankGameplayController.ts` until moved to JSON).
 

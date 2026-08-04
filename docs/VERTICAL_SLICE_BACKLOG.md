@@ -145,6 +145,25 @@ Notes:
 
 **Status:** implemented (tank + armored car); ongoing tuning.
 
+## Phase 13 - Armored Car Driving Physics
+
+Car-specific locomotion and suspension on top of the shared `TankGameplayController` pipeline.
+
+- **`movement.steeringMode: "car"`** — speed-linked steering, no pivot turn; drive direction accounts for `movementInputSign`
+- **Front-wheel visual steering** — `frontWheelBones`, `wheelSteerMaxDeg`, `wheelSteerSharpness`
+- **Wheel roll rate** — `rig.wheelRadius` matches hub-to-contact distance (~0.093 m on current GLB)
+- **Spring suspension** — `suspension.springForcesEnabled: true`; static sag tuned under collider clearance
+- **Visual wheel travel** — `wheelTravelEnabled`; bones follow probe compression so tires stay on ground
+- **Ground-contact gating** — `requireGroundContactForControl: true`; no steer/traction/grip in air
+- **Airborne damping** — `airborneLinearDamping` / `airborneAngularDamping` preserve launch momentum
+- **Landing bounce** — impulse on first contact after air time; compression/rebound damping split
+- **Missile recoil** — camera shake only; `cannon.recoilKickY` / `hullRecoilKickDeg` at 0
+- Config cleanup — no `tracks` section; `ammo_shell` pickup disabled
+
+**Status:** implemented; feel tuning ongoing (spring rates, grip, bounce, airborne damping).
+
+Key config: `config/vehicles/armoredCar.json`. See `docs/TECHNICAL_SPEC.md` → **Armored Car — Driving and Suspension**.
+
 ## Deferred After Vertical Slice
 
 - `boost` and `weapon_boost` power-up pickups (logic / art direction TBD)
@@ -174,3 +193,5 @@ The vertical slice is successful when:
 - health bar and shield feedback behave as documented
 - `SM_*`, `DM_*`, and `COL_*` behave correctly
 - tuning can be changed through `config/TankController.json` (including orbit, suspension, vehicle, energy, powerUps)
+- armored car: car steering, spring suspension, ground-contact gating, and ramp/jump inertia behave as documented in `config/vehicles/armoredCar.json`
+- vehicle switch (`V`) rebinding HUD, power-ups, and enemy turret targeting works with two vehicles in one scene
