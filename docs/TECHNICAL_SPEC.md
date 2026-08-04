@@ -186,13 +186,13 @@ Static sag approximation: \( \text{sag} = m g / (n \cdot k) \) where \(n\) = pro
 
 #### Airborne control gating
 
-When `movement.requireGroundContactForControl: true` (armored car) and `grounded === false`:
+When `movement.requireGroundContactForControl: true` and `grounded === false`:
 
 - steering angular velocity is **not** applied (no mid-air pivot)
 - traction force is **not** applied
 - lateral grip force is **not** applied
 
-The vehicle follows a ballistic trajectory until at least one probe touches ground again. The tank keeps legacy always-on control (flag absent).
+The vehicle follows a ballistic trajectory until at least one probe touches ground again. Both tank and armored car enable this flag in their configs.
 
 #### Airborne damping
 

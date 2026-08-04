@@ -18,6 +18,7 @@
     "moveSpeed": 0.45,
     "boostMultiplier": 1.5,
     "hullTurnSpeedDeg": 45.0,
+    "requireGroundContactForControl": true,
     "acceleration": 5.0,
     "brakeDeceleration": 4,
     "inputRiseRate": 1.5,
@@ -28,6 +29,8 @@
     "tankMass": 25.0,
     "tankLinearDamping": 2.0,
     "tankAngularDamping": 2.2,
+    "airborneLinearDamping": 0.06,
+    "airborneAngularDamping": 0.2,
     "tankCenterOfMassYOffset": 0,
     "tankFriction": 0.95,
     "tankRestitution": 0.015
