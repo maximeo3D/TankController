@@ -257,9 +257,15 @@ export class TankGameplayController {
   private minigunSpinRad = 0;
   private readonly wheelControls: BoneControl[] = [];
   private readonly wheelBaseLocalRotations: Quaternion[] = [];
+  private readonly wheelBaseLocalPositions: Vector3[] = [];
+  /** Index du probe `SUS_*` associé à chaque roue (-1 si aucune correspondance). */
+  private readonly wheelProbeIndices: number[] = [];
+  private readonly wheelTravelSmoothed: number[] = [];
   private readonly frontWheelIndices = new Set<number>();
   private wheelSpinRad = 0;
   private wheelSteerRad = 0;
+  /** Compression courante de chaque probe `SUS_*` (m), alignée sur `suspensionPointsLocal`. */
+  private readonly suspensionCompressions: number[] = [];
   private readonly caisseBaseLocalRotation: Quaternion;
   private readonly trackLeftBaseLocalPosition: Vector3;
   private readonly trackRightBaseLocalPosition: Vector3;
@@ -276,6 +282,9 @@ export class TankGameplayController {
   private hullDrivePitchTarget = 0;
   private hullDrivePitchSmoothed = 0;
   private prevSmoothedMoveAxis = 0;
+  /** Nombre de probes `SUS_*` en contact au dernier calcul de suspension. */
+  private suspensionContactCount = 0;
+  private airborneSeconds = 0;
   private readonly turretBaseLocalRotation: Quaternion;
   private readonly cannonBaseLocalRotation: Quaternion;
   private readonly cannonBaseLocalPosition: Vector3;
@@ -604,19 +613,28 @@ export class TankGameplayController {
     this.wheelBaseLocalRotations.length = 0;
     const wheelBoneNames = options.config.rig.wheelBones ?? [];
     const frontWheelNames = new Set(options.config.rig.frontWheelBones ?? []);
+    const probeNames = options.config.rig.suspensionProbeNames ?? [];
+    // Wheel travel needs probe indices to line up with `suspensionPointsLocal`, which drops missing nodes.
+    const probesAlignedWithConfig = probeNames.length === this.suspensionPointsLocal.length;
     for (let wheelIndex = 0; wheelIndex < wheelBoneNames.length; wheelIndex++) {
       const wheelBoneName = wheelBoneNames[wheelIndex];
       const wheelControl = resolveBoneControl(options.tankContainer, wheelBoneName);
       this.wheelControls.push(wheelControl);
       this.wheelBaseLocalRotations.push(getControlLocalRotation(wheelControl, this.tankAnchor));
+      this.wheelBaseLocalPositions.push(getControlLocalPosition(wheelControl));
+      this.wheelTravelSmoothed.push(0);
+      this.wheelProbeIndices.push(
+        probesAlignedWithConfig ? findMatchingProbeIndex(wheelBoneName, probeNames) : -1
+      );
       if (frontWheelNames.has(wheelBoneName)) {
         this.frontWheelIndices.add(wheelIndex);
       }
     }
     this.wheelSpinRad = 0;
     this.wheelSteerRad = 0;
+    this.suspensionCompressions.length = this.suspensionPointsLocal.length;
+    this.suspensionCompressions.fill(0);
     this.initWheelAnchorLocalPositions();
-    this.warnWheelSuspensionHeightMismatch();
     if (this.tracksConfig.suspensionVisual?.enabled) {
       if (!this.trackLeftControl.bone && !this.trackLeftControl.transformNode) {
         console.warn("[TankController] track_L bone missing; track suspension visual disabled.");
@@ -3864,6 +3882,34 @@ export class TankGameplayController {
       rotation = rotation.multiply(Quaternion.RotationAxis(spinAxis, this.wheelSpinRad));
       setControlLocalRotation(this.wheelControls[i], rotation, this.tankAnchor);
     }
+
+    this.applyWheelVisualTravel(dt);
+  }
+
+  /**
+   * Remonte chaque roue dans le repère du châssis d’autant que sa suspension est comprimée,
+   * pour que le pneu reste posé au sol malgré l’enfoncement de la caisse.
+   */
+  private applyWheelVisualTravel(dt: number): void {
+    if (this.config.rig.wheelTravelEnabled !== true) {
+      return;
+    }
+
+    const travelAxis = axisFromConfig(this.config.rig.wheelTravelAxis ?? "y", 1);
+    const travelSign = this.config.rig.wheelTravelSign ?? 1;
+    const sharpness = this.config.rig.wheelTravelSharpness ?? 25;
+    const smoothing = 1 - Math.exp(-Math.max(sharpness, 0.01) * dt);
+
+    for (let i = 0; i < this.wheelControls.length; i++) {
+      const probeIndex = this.wheelProbeIndices[i];
+      const target = probeIndex >= 0 ? this.suspensionCompressions[probeIndex] ?? 0 : 0;
+      this.wheelTravelSmoothed[i] += (target - this.wheelTravelSmoothed[i]) * smoothing;
+
+      const position = this.wheelBaseLocalPositions[i].add(
+        travelAxis.scale(this.wheelTravelSmoothed[i] * travelSign)
+      );
+      setControlLocalPosition(this.wheelControls[i], position);
+    }
   }
 
   private initAimDebugMeshes(): void {
@@ -4202,8 +4248,21 @@ export class TankGameplayController {
     }
     const rightWorld = Vector3.Cross(Axis.Y, forwardWorld).normalize();
 
+    // Suspension forces (raycast down from SUS_* points) — also refreshes ground contact state.
+    const fallSpeedBeforeSuspension = -this.tankBody.getLinearVelocity().y;
+    this.applySuspension();
+    const grounded = this.suspensionContactCount > 0;
+    if (grounded) {
+      this.applyLandingBounce(fallSpeedBeforeSuspension);
+      this.airborneSeconds = 0;
+    } else {
+      this.airborneSeconds += dt;
+    }
+    // Wheels off the ground: no steering torque, no traction, no lateral grip.
+    const hasGroundControl = grounded || this.config.movement.requireGroundContactForControl !== true;
+
     // Steering: drive the rigidbody (not the node transform).
-    if (canMove) {
+    if (canMove && hasGroundControl) {
       const angVel = this.tankBody.getAngularVelocity();
       const steeringMode = this.config.movement.steeringMode ?? "tank";
       if (steeringMode === "car") {
@@ -4238,9 +4297,6 @@ export class TankGameplayController {
       }
       this.tankBody.setAngularVelocity(angVel);
     }
-
-    // Suspension forces (raycast down from SUS_* points).
-    this.applySuspension();
 
     const overchargeMax = this.config.energy.overchargeMax;
     if (boostHeld) {
@@ -4282,10 +4338,12 @@ export class TankGameplayController {
         lateralGrip *= 1 + (steerGripMultiplier - 1) * steerAmount;
       }
     }
-    const lateralForce = rightWorld.scale(-lateralSpeed * lateralGrip);
-    this.tankBody.applyForce(lateralForce, center);
+    if (hasGroundControl) {
+      const lateralForce = rightWorld.scale(-lateralSpeed * lateralGrip);
+      this.tankBody.applyForce(lateralForce, center);
+    }
 
-    if (isMoving) {
+    if (isMoving && hasGroundControl) {
       const tractionForce = forwardWorld.scale(
         this.smoothedMoveAxis * this.config.suspension.tractionForce * tractionMultiplier
       );
@@ -4403,8 +4461,13 @@ export class TankGameplayController {
     const k = this.config.suspension.springStrength;
     const c = this.config.suspension.damperStrength;
     const maxForce = this.config.suspension.maxForce;
+    const groundContactTolerance = this.config.suspension.groundContactTolerance ?? 0.12;
+    const springForcesEnabled = this.config.suspension.springForcesEnabled === true;
 
-    for (const localPoint of this.suspensionPointsLocal) {
+    let contactCount = 0;
+    this.suspensionCompressions.fill(0);
+    for (let probeIndex = 0; probeIndex < this.suspensionPointsLocal.length; probeIndex++) {
+      const localPoint = this.suspensionPointsLocal[probeIndex];
       const q = this.tankAnchor.absoluteRotationQuaternion ?? this.tankAnchor.rotationQuaternion ?? Quaternion.Identity();
       const worldPoint = this.tankAnchor.getAbsolutePosition().add(localPoint.clone().applyRotationQuaternion(q));
 
@@ -4431,8 +4494,16 @@ export class TankGameplayController {
           continue;
         }
       }
-      const compression = clamp(effectiveRestLength - distance, 0, effectiveRestLength);
-      if (compression <= 0) {
+      // `distance` starts `rayStartHeight` above the probe, so remove it to get the probe's height.
+      const probeHeightAboveGround = distance - rayStartHeight;
+      if (probeHeightAboveGround <= effectiveRestLength + groundContactTolerance) {
+        contactCount++;
+      }
+
+      const compression = clamp(effectiveRestLength - probeHeightAboveGround, 0, effectiveRestLength);
+      this.suspensionCompressions[probeIndex] = compression;
+
+      if (!springForcesEnabled || compression <= 0) {
         continue;
       }
 
@@ -4441,7 +4512,8 @@ export class TankGameplayController {
       const velAlongUp = Vector3.Dot(pointVel, Axis.Y);
 
       const reboundScale = clamp(this.config.suspension.reboundDampingScale ?? 1, 0.35, 1);
-      const damper = velAlongUp > 0 ? c * reboundScale : c;
+      const compressionScale = clamp(this.config.suspension.compressionDampingScale ?? 1, 0.2, 1);
+      const damper = velAlongUp > 0 ? c * reboundScale : c * compressionScale;
       let forceMag = k * compression - damper * velAlongUp;
       forceMag = clamp(forceMag, 0, maxForce);
 
@@ -4451,6 +4523,31 @@ export class TankGameplayController {
 
       this.tankBody.applyForce(Axis.Y.scale(forceMag), hit.hitPointWorld);
     }
+
+    this.suspensionContactCount = contactCount;
+  }
+
+  /** Rebond vertical à la réception d’un saut : impulsion vers le haut selon la vitesse de chute. */
+  private applyLandingBounce(fallSpeed: number): void {
+    const restitution = this.config.suspension.landingBounceRestitution ?? 0;
+    if (restitution <= 0) {
+      return;
+    }
+
+    const minAirSeconds = this.config.suspension.landingBounceMinAirSeconds ?? 0.12;
+    if (this.airborneSeconds < minAirSeconds) {
+      return;
+    }
+
+    const minSpeed = this.config.suspension.landingBounceMinSpeed ?? 1.2;
+    if (fallSpeed < minSpeed) {
+      return;
+    }
+
+    const maxSpeed = this.config.suspension.landingBounceMaxSpeed ?? 9;
+    const impactSpeed = Math.min(fallSpeed, maxSpeed);
+    const impulse = this.config.physics.tankMass * impactSpeed * restitution;
+    this.tankBody.applyImpulse(Axis.Y.scale(impulse), this.tankBody.getObjectCenterWorld());
   }
 
   private applyCamera(zoomHeld: boolean, dt: number): void {
@@ -4665,46 +4762,6 @@ export class TankGameplayController {
 
     this.tankCamera.position.copyFrom(finalPos);
     this.tankCamera.setTarget(pivotWorld);
-  }
-
-  private warnWheelSuspensionHeightMismatch(): void {
-    const wheelBoneNames = this.config.rig.wheelBones ?? [];
-    const probeNames = this.config.rig.suspensionProbeNames ?? [];
-    if (wheelBoneNames.length === 0 || probeNames.length === 0) {
-      return;
-    }
-
-    for (let i = 0; i < wheelBoneNames.length; i++) {
-      const wheelName = wheelBoneNames[i]!;
-      const suffixMatch = /_(FL|FR|RL|RR)$/i.exec(wheelName);
-      if (!suffixMatch) {
-        continue;
-      }
-      const suffix = suffixMatch[1]!.toUpperCase();
-      const susName = probeNames.find((name) => name.toUpperCase().endsWith(`_${suffix}`));
-      if (!susName) {
-        continue;
-      }
-      const susIndex = probeNames.indexOf(susName);
-      if (susIndex < 0 || susIndex >= this.suspensionPointsLocal.length) {
-        continue;
-      }
-
-      const wheelControl = this.wheelControls[i];
-      if (!wheelControl?.bone && !wheelControl?.transformNode) {
-        continue;
-      }
-
-      const wheelAnchorLocal = getControlAnchorLocalPosition(wheelControl, this.tankAnchor);
-      const susY = this.suspensionPointsLocal[susIndex]!.y;
-      const deltaY = wheelAnchorLocal.y - susY;
-      if (Math.abs(deltaY) > 0.02) {
-        console.warn(
-          `[TankController] ${wheelName} vs ${susName}: wheel bone Y differs from SUS by ${deltaY.toFixed(3)} m (anchor space). ` +
-            "Place the wheel bone origin at the tire contact, matching the SUS empty."
-        );
-      }
-    }
   }
 
   private initWheelAnchorLocalPositions(): void {
@@ -5150,6 +5207,16 @@ class TrackSegmentSystem {
   }
 }
 
+/** Associe `wheel_FL` à `SUS_FL` par suffixe de position (FL / FR / ML / MR / RL / RR). */
+function findMatchingProbeIndex(wheelBoneName: string, probeNames: readonly string[]): number {
+  const suffix = /_(FL|FR|ML|MR|RL|RR)$/i.exec(wheelBoneName)?.[1]?.toUpperCase();
+  if (!suffix) {
+    return -1;
+  }
+
+  return probeNames.findIndex((name) => name.toUpperCase().endsWith(`_${suffix}`));
+}
+
 function resolveBoneControl(container: AssetContainer, boneName: string): BoneControl {
   const bone =
     container.skeletons.flatMap((skeleton) => skeleton.bones).find((candidate) => candidate.name === boneName) ??
@@ -5181,21 +5248,6 @@ function getControlLocalPosition(control: BoneControl): Vector3 {
 
   if (control.bone) {
     return control.bone.position.clone();
-  }
-
-  return Vector3.Zero();
-}
-
-function getControlAnchorLocalPosition(control: BoneControl, tankAnchor: TransformNode): Vector3 {
-  if (control.transformNode) {
-    return toAnchorLocalPosition(control.transformNode, tankAnchor);
-  }
-
-  if (control.bone) {
-    tankAnchor.computeWorldMatrix(true);
-    control.bone.computeAbsoluteTransforms?.();
-    const inv = tankAnchor.getWorldMatrix().clone().invert();
-    return Vector3.TransformCoordinates(control.bone.getAbsolutePosition(), inv);
   }
 
   return Vector3.Zero();

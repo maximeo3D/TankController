@@ -54,8 +54,16 @@ export interface TankControllerConfig {
     wheelSteerMaxDeg?: number;
     /** Vitesse de convergence du braquage visuel (rad/s). */
     wheelSteerSharpness?: number;
-    /** Rayon roue (m) — requis si les `SUS_*` sont au centre de la roue et non au contact sol. */
+    /** Rayon roue (m) — cadence de rotation visuelle au roulement (défaut 0.35). */
     wheelRadius?: number;
+    /** Déplace verticalement les bones de roues selon la compression de suspension. */
+    wheelTravelEnabled?: boolean;
+    /** Axe (espace parent du bone) du débattement vertical des roues ; défaut `y`. */
+    wheelTravelAxis?: "x" | "y" | "z";
+    /** Inverse le débattement si les roues s’enfoncent au lieu de remonter. */
+    wheelTravelSign?: 1 | -1;
+    /** Lissage du débattement visuel des roues (rad/s ; défaut 25). */
+    wheelTravelSharpness?: number;
     /** Probes suspension ; défaut 6 points tank, voiture : 4 roues. */
     suspensionProbeNames?: string[];
     /** Noms de nodes GLB (suffixe véhicule). */
@@ -93,6 +101,8 @@ export interface TankControllerConfig {
     carSteerMinSpeedFactor?: number;
     /** Multiplicateur de friction latérale en mode `car` à braquage plein (réduit le dérapage). */
     carSteerGripMultiplier?: number;
+    /** Coupe braquage / traction / grip quand aucune roue (`SUS_*`) ne touche le sol. */
+    requireGroundContactForControl?: boolean;
   };
   physics: {
     tankMass: number;
@@ -124,16 +134,34 @@ export interface TankControllerConfig {
     restLength: number;
     /**
      * Distance verticale du node `SUS_*` au point de contact sol (m).
-     * Défaut : `rig.wheelRadius` quand les probes sont au centre de roue ; 0 si probes au contact.
+     * 0 (défaut) quand les probes sont déjà placés au contact du pneu.
      */
     contactOffsetY?: number;
     springStrength: number;
     damperStrength: number;
     maxForce: number;
+    /**
+     * Applique réellement les forces ressort/amortisseur aux points de contact.
+     * `false` (défaut historique) : le châssis repose sur son collider, les probes ne servent
+     * qu’à détecter le contact au sol.
+     */
+    springForcesEnabled?: boolean;
+    /** Marge (m) au-delà de `restLength` pour considérer une roue en contact avec le sol. */
+    groundContactTolerance?: number;
     /** Amortissement réduit à la détente (rebond). 0–1, typ. 0.45–0.65. */
     reboundDampingScale?: number;
+    /** Amortissement réduit à la compression : plus bas = atterrissage plus rebondissant. 0–1. */
+    compressionDampingScale?: number;
     /** Rigidité ressort en extension (fraction de `springStrength`). */
     extensionSpringScale?: number;
+    /** Restitution verticale à l’atterrissage (0 = aucun rebond, 0.5 = rebond marqué). */
+    landingBounceRestitution?: number;
+    /** Vitesse de chute min. (m/s) pour déclencher le rebond d’atterrissage. */
+    landingBounceMinSpeed?: number;
+    /** Vitesse de chute max. prise en compte pour le rebond (m/s). */
+    landingBounceMaxSpeed?: number;
+    /** Temps min. sans contact (s) avant qu’un contact compte comme atterrissage. */
+    landingBounceMinAirSeconds?: number;
     tractionForce: number;
     lateralFriction: number;
   };
@@ -313,9 +341,9 @@ export function getPrimaryWeaponConfig(config: TankControllerConfig): Projectile
   return weapon;
 }
 
-/** Distance SUS → contact sol : compenser un probe placé au centre de roue (hub). */
+/** Distance SUS → contact sol : compenser un probe placé au centre de roue (hub) au lieu du sol. */
 export function getSuspensionContactOffset(config: TankControllerConfig): number {
-  return config.suspension.contactOffsetY ?? config.rig.wheelRadius ?? 0;
+  return config.suspension.contactOffsetY ?? 0;
 }
 
 export const tankConfig = tankControllerConfig as TankControllerConfig;

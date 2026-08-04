@@ -158,6 +158,16 @@ Because multiple vehicles coexist in one scene, the following are created **once
 - **Spawn snap**: once per scene load, the tank anchor may be lowered so probe rays match a nominal contact distance (`snapTankAnchorYToTerrain`), reducing float at spawn.
 - **Grounding metadata** (`grounding` in JSON): used for legacy / helper data; primary behavior is the dynamic suspension + collider.
 
+### Ground Contact and Landing (per-vehicle)
+
+- Each suspension update measures every probe's height above ground (`hitDistance - rayStartHeight`); a probe within `restLength + suspension.groundContactTolerance` counts as a contact. That count is the vehicle's **ground contact** state.
+- `suspension.springForcesEnabled` decides whether spring/damper forces are actually applied. While false (default, tank), the hull rests on its `COL_*` collider and the probes only feed ground-contact detection and the landing bounce. The armored car enables it, so its hull is genuinely spring-supported.
+- **Visual wheel travel** (`rig.wheelTravelEnabled`, armored car): each wheel bone is raised in chassis space by its own probe's compression, so the tire keeps touching the ground while the body sinks and rolls. Tune the direction with `rig.wheelTravelAxis` / `rig.wheelTravelSign` (bone parent space) and the smoothing with `rig.wheelTravelSharpness`.
+- Tuning rule of thumb: static sag \(= m g / (n k)\) must stay well under the gap between the probes and the bottom of `COL_*`, otherwise the collider grounds out before the spring reaches full travel.
+- `movement.requireGroundContactForControl: true` (armored car) disables steering torque, traction and lateral grip while **no** probe touches the ground, so an airborne vehicle cannot be steered mid-flight. The tank keeps the legacy always-on control (flag absent).
+- **Landing bounce**: on the first contact after `suspension.landingBounceMinAirSeconds` of air time, an upward impulse proportional to the impact speed is applied (`landingBounceRestitution`, clamped between `landingBounceMinSpeed` and `landingBounceMaxSpeed`).
+- Damping is split per direction: `reboundDampingScale` (extension) and `compressionDampingScale` (compression). Lower compression damping stores more energy in the spring, which makes drops feel springier.
+
 ### Power-Ups
 
 Implemented in `src/game/PowerUpSystem.ts` (wired from `TankGameplayController`).
