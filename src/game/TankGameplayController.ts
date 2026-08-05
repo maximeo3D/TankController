@@ -285,6 +285,9 @@ export class TankGameplayController {
   private hullDrivePitchTarget = 0;
   private hullDrivePitchSmoothed = 0;
   private prevSmoothedMoveAxis = 0;
+  /** Vitesse longitudinale de la frame précédente, pour dériver l'accélération. */
+  private prevForwardSpeed = 0;
+  private forwardAccelSmoothed = 0;
   /** Nombre de probes `SUS_*` en contact au dernier calcul de suspension. */
   private suspensionContactCount = 0;
   private airborneSeconds = 0;
@@ -2953,6 +2956,8 @@ export class TankGameplayController {
     this.smoothedMoveAxis = 0;
     this.smoothedTurnAxis = 0;
     this.prevSmoothedMoveAxis = 0;
+    this.prevForwardSpeed = 0;
+    this.forwardAccelSmoothed = 0;
     this.boostActive = false;
     this.airborneSeconds = 0;
     this.suspensionContactCount = 0;
@@ -3071,6 +3076,8 @@ export class TankGameplayController {
     this.smoothedMoveAxis = 0;
     this.smoothedTurnAxis = 0;
     this.prevSmoothedMoveAxis = 0;
+    this.prevForwardSpeed = 0;
+    this.forwardAccelSmoothed = 0;
     this.boostActive = false;
     this.articulationIsRotating = false;
 
@@ -4424,17 +4431,7 @@ export class TankGameplayController {
     this.smoothedTurnAxis = moveTowards(this.smoothedTurnAxis, desiredTurnAxis, turnInputRate * dt);
     const isMoving = canMove && Math.abs(this.smoothedMoveAxis) > 0.001;
 
-    const g = this.config.grounding;
-    const moveRate = (this.smoothedMoveAxis - this.prevSmoothedMoveAxis) / Math.max(dt, 1e-6);
-    this.prevSmoothedMoveAxis = this.smoothedMoveAxis;
-    if (canMove) {
-      const scale = g.drivePitchInputRateScale ?? 0.4;
-      const maxRad = toRadians(g.drivePitchMaxDeg ?? 3.5);
-      // Accélération (input qui monte) → tangage arrière ; freinage → tangage avant.
-      this.hullDrivePitchTarget = clamp(-moveRate * scale, -1, 1) * maxRad;
-    } else {
-      this.hullDrivePitchTarget = 0;
-      this.prevSmoothedMoveAxis = 0;
+    if (!canMove) {
       this.smoothedTurnAxis = 0;
     }
 
@@ -4462,6 +4459,8 @@ export class TankGameplayController {
     this.syncPhysicsDamping(grounded);
     // Wheels off the ground: no steering torque, no traction, no lateral grip.
     const hasGroundControl = grounded || this.config.movement.requireGroundContactForControl !== true;
+
+    this.updateDrivePitchTarget(dt, canMove, grounded, forwardWorld);
 
     // Steering: drive the rigidbody (not the node transform).
     if (canMove && hasGroundControl) {
@@ -4549,7 +4548,7 @@ export class TankGameplayController {
       const tractionForce = forwardWorld.scale(
         this.smoothedMoveAxis * this.config.suspension.tractionForce * tractionMultiplier
       );
-      this.tankBody.applyForce(tractionForce, center);
+      this.tankBody.applyForce(tractionForce, this.resolveTractionApplyPoint(center, steeringMode));
     }
 
     this.applyWheelVisualSpin(forwardWorld, this.smoothedTurnAxis, dt);
@@ -4643,6 +4642,80 @@ export class TankGameplayController {
 
     camera.position.addInPlace(offset);
     camera.setTarget(target);
+  }
+
+  /**
+   * Tangage visuel de caisse : cabrage en accélération, assiette plate à vitesse
+   * stabilisée, plongée au ralentissement. En mode voiture on se base sur
+   * l'accélération longitudinale mesurée (et non sur la vitesse de variation de
+   * l'input) pour que l'assiette redevienne plate dès que la vitesse se stabilise,
+   * même manette à fond.
+   */
+  private updateDrivePitchTarget(
+    dt: number,
+    canMove: boolean,
+    grounded: boolean,
+    forwardWorld: Vector3
+  ): void {
+    const g = this.config.grounding;
+    const maxRad = toRadians(g.drivePitchMaxDeg ?? 3.5);
+    const driveForward = forwardWorld.scale(
+      this.movementInputSign * this.config.rig.movementForwardSign
+    );
+    const forwardSpeed = Vector3.Dot(this.tankBody.getLinearVelocity(), driveForward);
+    const rawAccel = (forwardSpeed - this.prevForwardSpeed) / Math.max(dt, 1e-6);
+    this.prevForwardSpeed = forwardSpeed;
+
+    const moveRate = (this.smoothedMoveAxis - this.prevSmoothedMoveAxis) / Math.max(dt, 1e-6);
+    this.prevSmoothedMoveAxis = this.smoothedMoveAxis;
+
+    if (!canMove) {
+      this.forwardAccelSmoothed = 0;
+      this.hullDrivePitchTarget = 0;
+      return;
+    }
+
+    if ((this.config.movement.steeringMode ?? "tank") === "car") {
+      if (!grounded) {
+        // En vol l'assiette est pilotée par l'inclinaison de suspension seule.
+        this.forwardAccelSmoothed = 0;
+        this.hullDrivePitchTarget = 0;
+        return;
+      }
+      const accelSmooth = 1 - Math.exp(-(g.drivePitchAccelSharpness ?? 9) * dt);
+      this.forwardAccelSmoothed += (rawAccel - this.forwardAccelSmoothed) * accelSmooth;
+      // `movementInputSign` ramène l'accélération dans l'espace de l'axe d'input,
+      // référentiel dans lequel le signe du tangage du rig est calibré.
+      const axisAccel = -this.movementInputSign * this.forwardAccelSmoothed;
+      const accelScale = g.drivePitchAccelScale ?? 0.08;
+      this.hullDrivePitchTarget = clamp(axisAccel * accelScale, -1, 1) * maxRad;
+      return;
+    }
+
+    this.forwardAccelSmoothed = 0;
+    const scale = g.drivePitchInputRateScale ?? 0.4;
+    this.hullDrivePitchTarget = clamp(-moveRate * scale, -1, 1) * maxRad;
+  }
+
+  /**
+   * L'origine du châssis est située au-dessus du centre de masse : y appliquer la
+   * traction génère un couple qui fait plonger l'avant durant toute la phase
+   * d'accélération. En mode voiture on repasse donc par le centre de masse.
+   */
+  private resolveTractionApplyPoint(
+    objectCenterWorld: Vector3,
+    steeringMode: "tank" | "car"
+  ): Vector3 {
+    if (steeringMode !== "car") {
+      return objectCenterWorld;
+    }
+    const offsetY =
+      this.config.physics.tankCenterOfMassYOffset +
+      (this.config.movement.carTractionApplyOffsetY ?? 0);
+    if (Math.abs(offsetY) < 1e-6) {
+      return objectCenterWorld;
+    }
+    return objectCenterWorld.add(this.tankAnchor.up.scale(offsetY));
   }
 
   private applySuspension(): void {

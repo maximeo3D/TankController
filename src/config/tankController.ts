@@ -101,6 +101,11 @@ export interface TankControllerConfig {
     carSteerMinSpeedFactor?: number;
     /** Multiplicateur de friction latérale en mode `car` à braquage plein (réduit le dérapage). */
     carSteerGripMultiplier?: number;
+    /**
+     * Décalage vertical (m) du point d’application de la traction en mode `car`,
+     * relatif au centre de masse. Négatif = couple de cabrage à l’accélération.
+     */
+    carTractionApplyOffsetY?: number;
     /** Coupe braquage / traction / grip quand aucune roue (`SUS_*`) ne touche le sol. */
     requireGroundContactForControl?: boolean;
   };
@@ -127,8 +132,12 @@ export interface TankControllerConfig {
     positionSharpness: number;
     /** Tangage visuel au changement d’input (accélération / freinage), degrés max. */
     drivePitchMaxDeg?: number;
-    /** Sensibilité au taux de variation de `smoothedMoveAxis` (input lissé). */
+    /** Sensibilité au taux de variation de `smoothedMoveAxis` (input lissé). Mode `tank`. */
     drivePitchInputRateScale?: number;
+    /** Mode `car` : sensibilité à l’accélération longitudinale mesurée (rad par m/s²). */
+    drivePitchAccelScale?: number;
+    /** Mode `car` : lissage de l’accélération mesurée avant application du tangage. */
+    drivePitchAccelSharpness?: number;
     /** Lissage du tangage conduite ; défaut = `visualTiltSharpness`. */
     drivePitchSharpness?: number;
   };

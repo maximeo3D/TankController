@@ -84,6 +84,8 @@
     "positionSharpness": 14.0,
     "drivePitchMaxDeg": 2.0,
     "drivePitchInputRateScale": 0.35,
+    "drivePitchAccelScale": 0.08,
+    "drivePitchAccelSharpness": 9.0,
     "drivePitchSharpness": 6.0
   },
   "suspension": {
