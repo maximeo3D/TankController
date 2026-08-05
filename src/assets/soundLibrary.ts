@@ -3,6 +3,9 @@ import {
   armoredCarIdleSoundAssetUrl,
   armoredCarMoveSoundAssetUrl,
   armoredCarTurboSoundAssetUrl,
+  jetIdleSoundAssetUrl,
+  jetMoveSoundAssetUrl,
+  jetTurboSoundAssetUrl,
   suspensionImpactSoundAssetUrl,
   tankHornSoundAssetUrl,
   tankIdleSoundAssetUrl,
@@ -24,6 +27,9 @@ export const vehicleSoundUrls: Record<string, string> = {
   armoredcar_move: armoredCarMoveSoundAssetUrl,
   armoredcar_turbo: armoredCarTurboSoundAssetUrl,
   armoredcar_horn: armoredCarHornSoundAssetUrl,
+  jet_idle: jetIdleSoundAssetUrl,
+  jet_move: jetMoveSoundAssetUrl,
+  jet_turbo: jetTurboSoundAssetUrl,
   suspension: suspensionImpactSoundAssetUrl
 };
 

@@ -85,6 +85,12 @@ export interface FlightConfig {
   /** Sensibilité du manche souris (unités de manche par pixel). */
   stickPitchPerPixel: number;
   stickRollPerPixel: number;
+  /**
+   * Préférence joueur, distincte de la calibration `pitchSign` / `rollSign` du rig :
+   * inverse le sens de l'axe souris avant qu'il n'atteigne le manche.
+   */
+  invertPitchAxis?: boolean;
+  invertRollAxis?: boolean;
   /** Recentrage automatique du manche (unités/s ; 0 = manche libre). */
   stickReturnPerSecond: number;
   /** Couple de remise à plat quand le manche de roulis est au neutre (N·m par rad). */

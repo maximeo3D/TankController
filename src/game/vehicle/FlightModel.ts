@@ -181,9 +181,11 @@ export class FlightModel {
       );
     }
 
-    // Souris vers le haut = `movementY` négatif = manche poussé = nez à piquer.
-    this.stickPitch = clamp(this.stickPitch + input.lookDeltaY * cfg.stickPitchPerPixel, -1, 1);
-    this.stickRoll = clamp(this.stickRoll + input.lookDeltaX * cfg.stickRollPerPixel, -1, 1);
+    // Convention manche : souris vers le bas = manche tiré = nez à cabrer.
+    const pitchDelta = input.lookDeltaY * (cfg.invertPitchAxis ? -1 : 1);
+    const rollDelta = input.lookDeltaX * (cfg.invertRollAxis ? -1 : 1);
+    this.stickPitch = clamp(this.stickPitch + pitchDelta * cfg.stickPitchPerPixel, -1, 1);
+    this.stickRoll = clamp(this.stickRoll + rollDelta * cfg.stickRollPerPixel, -1, 1);
 
     const centering = cfg.stickReturnPerSecond * dt;
     if (centering > 0) {
