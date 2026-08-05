@@ -64,6 +64,12 @@ export interface EnemyTurretRadarTarget {
   position: Vector3;
 }
 
+/** Cible verrouillable par le système de missiles du jet. */
+export interface EnemyLockTarget {
+  id: string;
+  aimPoint: Vector3;
+}
+
 interface EnemyTurretInstance {
   spawnId: string;
   anchor: TransformNode;
@@ -595,6 +601,28 @@ export class EnemyTurretSystem {
         id: instance.spawnId,
         position: instance.anchor.getAbsolutePosition().clone()
       }));
+  }
+
+  /** Points de visée des tourelles vivantes pour le lock-on missiles. */
+  public getLockTargets(): EnemyLockTarget[] {
+    return this.instances
+      .filter((instance) => instance.alive)
+      .map((instance) => ({
+        id: instance.spawnId,
+        aimPoint: (
+          instance.colliderMesh?.getAbsolutePosition() ?? instance.anchor.getAbsolutePosition()
+        ).clone()
+      }));
+  }
+
+  public getLockTargetAimPoint(spawnId: string): Vector3 | null {
+    const instance = this.instances.find((candidate) => candidate.alive && candidate.spawnId === spawnId);
+    if (!instance) {
+      return null;
+    }
+    return (
+      instance.colliderMesh?.getAbsolutePosition() ?? instance.anchor.getAbsolutePosition()
+    ).clone();
   }
 
   public update(dt: number, aimTarget: TransformNode | AbstractMesh): void {

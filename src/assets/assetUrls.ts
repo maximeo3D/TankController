@@ -25,6 +25,14 @@ export const mapPlayerIconUrl = new URL("../../assets/ui/map_icon.png", import.m
 export const reticleCameraAssetUrl = new URL("../../assets/ui/reticle_camera.png", import.meta.url).href;
 export const reticleBarrelAssetUrl = new URL("../../assets/ui/reticle_barrel.png", import.meta.url).href;
 export const reticleGunAssetUrl = new URL("../../assets/ui/reticle_gun.png", import.meta.url).href;
+export const reticleMissileJetAssetUrl = new URL(
+  "../../assets/ui/reticle_missile_jet.png",
+  import.meta.url
+).href;
+export const reticleMissileJetLockedAssetUrl = new URL(
+  "../../assets/ui/reticle_missile_jet_locked.png",
+  import.meta.url
+).href;
 export const sparkImpactAssetUrl = new URL("../../assets/effects/spark.png", import.meta.url).href;
 export const explosionFlashJsonUrl = new URL("../../assets/effects/explosion_flash.json", import.meta.url).href;
 export const explosionShockwaveJsonUrl = new URL("../../assets/effects/explosion_shockwave.json", import.meta.url).href;
@@ -35,6 +43,10 @@ export const missile1SoundAssetUrl = new URL("../../assets/sounds/missile_1.wav"
 export const missile2SoundAssetUrl = new URL("../../assets/sounds/missile_2.wav", import.meta.url).href;
 export const missile3SoundAssetUrl = new URL("../../assets/sounds/missile_3.wav", import.meta.url).href;
 export const missile4SoundAssetUrl = new URL("../../assets/sounds/missile_4.wav", import.meta.url).href;
+export const missileLockSoundAssetUrl = new URL(
+  "../../assets/sounds/missile_lock.wav",
+  import.meta.url
+).href;
 export const shellInsertSoundAssetUrl = new URL("../../assets/sounds/shell_insert.wav", import.meta.url).href;
 export const tankIdleSoundAssetUrl = new URL("../../assets/sounds/tank_idle.wav", import.meta.url).href;
 export const tankMoveSoundAssetUrl = new URL("../../assets/sounds/tank_move.wav", import.meta.url).href;

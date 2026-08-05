@@ -53,6 +53,8 @@ import {
   reticleCameraAssetUrl,
   reticleBarrelAssetUrl,
   reticleGunAssetUrl,
+  reticleMissileJetAssetUrl,
+  reticleMissileJetLockedAssetUrl,
   sparkImpactAssetUrl,
   explosionFlashJsonUrl,
   explosionShockwaveJsonUrl,
@@ -74,6 +76,7 @@ import {
 } from "../assets/assetUrls";
 import { resolveVehicleSoundUrl } from "../assets/soundLibrary";
 import { FlightModel, type FlightState } from "./vehicle/FlightModel";
+import { JetMissileLockController } from "./vehicle/JetMissileLockController";
 import { applyUiFontToTexture, TIMER_FONT_FAMILY } from "../ui/applyUiFont";
 import { TARGET_FRAME_SEC } from "./frameTiming";
 import { Sound } from "@babylonjs/core/Audio/sound";
@@ -346,6 +349,7 @@ export class TankGameplayController {
   private readonly missileHardpoints: readonly MissileHardpoint[];
   /** État chargé de chaque emport ; réinitialisé à la recharge. */
   private missileHardpointLoaded: boolean[] = [];
+  private jetMissileLock: JetMissileLockController | null = null;
   private readonly movementForwardAxis: Vector3;
   private readonly movementInputSign: 1 | -1;
   private readonly turretYawAxis: Vector3;
@@ -391,6 +395,12 @@ export class TankGameplayController {
     lastPos: Vector3;
     impactHandled: boolean;
     debugMesh?: AbstractMesh | null;
+    guided?: {
+      targetId: string;
+      speed: number;
+      turnRateDeg: number;
+      launchBlendSeconds: number;
+    };
   }[] = [];
   private physicsViewer?: PhysicsViewer;
   private readonly trackTreadParticles: TrackTreadParticleBundle | null;
@@ -1648,6 +1658,8 @@ export class TankGameplayController {
     this.barrelGunReticle2D = this.hudTexture.getControlByName(
       "reticle_barrel_gun_img"
     ) as Rectangle | null;
+    this.syncPrimaryWeaponReticleAsset();
+    this.ensureJetMissileLockController();
   }
 
   private showSharedHud(): void {
@@ -1853,6 +1865,9 @@ export class TankGameplayController {
     barrelGun.zIndex = z;
     this.hudTexture.addControl(barrelGun);
     this.barrelGunReticle2D = barrelGun as unknown as Rectangle;
+
+    this.syncPrimaryWeaponReticleAsset();
+    this.ensureJetMissileLockController();
 
     if (sharedUi) {
       sharedUi.hudReticlesAttached = true;
@@ -2876,6 +2891,8 @@ export class TankGameplayController {
     for (const hardpoint of this.missileHardpoints) {
       hardpoint.visualMesh?.dispose();
     }
+    this.jetMissileLock?.dispose();
+    this.jetMissileLock = null;
 
     if (this.ownsSceneHud) {
       this.hudTexture?.dispose();
@@ -3374,6 +3391,7 @@ export class TankGameplayController {
     }
     this.syncShieldHighlight();
     this.applyTurretAndCannon(frame.pointerX, frame.pointerY, dt);
+    this.updateJetMissileLock(dt);
     this.applyMinigunSpin(dt);
     this.updateWeapons(dt);
     this.applyMovement(frame.moveAxis, frame.turnAxis, frame.boostHeld, dt);
@@ -3522,7 +3540,8 @@ export class TankGameplayController {
       this.ammoShellColliderMesh,
       this.primaryWeaponConfig,
       0.4,
-      fireMuzzle
+      fireMuzzle,
+      this.jetMissileLock?.getLockedTargetId() ?? null
     );
     this.syncMissileHardpointVisuals();
   }
@@ -3563,6 +3582,82 @@ export class TankGameplayController {
         visual.isVisible = this.missileHardpointLoaded[index] === true;
       }
     }
+  }
+
+  private usesJetMissileReticle(): boolean {
+    return (
+      (this.config.movement.steeringMode ?? "tank") === "plane" &&
+      this.primaryWeaponKind === "missile" &&
+      Boolean(this.primaryWeaponConfig.missileLock)
+    );
+  }
+
+  private ensureJetMissileLockController(): void {
+    if (this.jetMissileLock || !this.usesJetMissileReticle() || !this.hudTexture) {
+      return;
+    }
+
+    const lockConfig = this.primaryWeaponConfig.missileLock;
+    if (!lockConfig) {
+      return;
+    }
+
+    this.jetMissileLock = new JetMissileLockController({
+      scene: this.scene,
+      hudTexture: this.hudTexture,
+      config: lockConfig,
+      getLockOrigin: () => this.resolveJetMissileLockOrigin(),
+      getTargets: () => this.enemyTurretSystem?.getLockTargets() ?? [],
+      isAudioUnlocked: () => this.audioUnlocked
+    });
+    this.jetMissileLock.setLockedReticleSource(reticleMissileJetLockedAssetUrl);
+  }
+
+  private resolveJetMissileLockOrigin(): { position: Vector3; forward: Vector3 } | null {
+    if (!this.muzzleGunNode) {
+      return null;
+    }
+
+    this.syncMuzzleNodeWorldMatrix(this.muzzleGunNode);
+    const forward = this.muzzleGunNode
+      .getDirection(this.movementForwardAxis)
+      .scale(-this.config.rig.movementForwardSign);
+    if (forward.lengthSquared() < 1e-8) {
+      return null;
+    }
+    forward.normalize();
+    return {
+      position: this.muzzleGunNode.getAbsolutePosition().clone(),
+      forward
+    };
+  }
+
+  private syncPrimaryWeaponReticleAsset(): void {
+    if (!this.barrelShellReticle2D) {
+      return;
+    }
+
+    const image = this.barrelShellReticle2D as unknown as Image;
+    image.source = this.usesJetMissileReticle()
+      ? reticleMissileJetAssetUrl
+      : reticleBarrelAssetUrl;
+  }
+
+  private resolvePrimaryReticleMuzzle(): TransformNode | AbstractMesh | null {
+    if (this.usesJetMissileReticle()) {
+      return this.muzzleGunNode;
+    }
+    return this.muzzleCannonNode;
+  }
+
+  private updateJetMissileLock(dt: number): void {
+    if (!this.usesJetMissileReticle()) {
+      return;
+    }
+
+    this.ensureJetMissileLockController();
+    const camera = this.scene.activeCamera as Camera | null;
+    this.jetMissileLock?.update(dt, this.isPrimaryWeapon(this.activeWeapon), camera);
   }
 
   private isPrimaryWeapon(weapon: WeaponType): boolean {
@@ -3772,9 +3867,10 @@ export class TankGameplayController {
   private spawnProjectile(
     baseMesh: Mesh | null,
     colliderTemplate: Mesh | null,
-    weaponConfig: { muzzleVelocity: number; gravityMultiplier: number },
+    weaponConfig: { muzzleVelocity: number; gravityMultiplier: number; missileLock?: import("../config/tankController").MissileLockConfig },
     radius: number,
-    muzzleNode: TransformNode | AbstractMesh | null = this.muzzleCannonNode
+    muzzleNode: TransformNode | AbstractMesh | null = this.muzzleCannonNode,
+    guidedTargetId: string | null = null
   ): void {
     if (!baseMesh || !muzzleNode) {
       return;
@@ -3837,7 +3933,16 @@ export class TankGameplayController {
       age: 0,
       lastPos: mesh.getAbsolutePosition().clone(),
       impactHandled: false,
-      debugMesh
+      debugMesh,
+      guided:
+        guidedTargetId && weaponConfig.missileLock
+          ? {
+              targetId: guidedTargetId,
+              speed: weaponConfig.muzzleVelocity,
+              turnRateDeg: weaponConfig.missileLock.guidanceTurnRateDeg,
+              launchBlendSeconds: weaponConfig.missileLock.launchBlendSeconds
+            }
+          : undefined
     };
     this.activeProjectiles.push(proj);
 
@@ -3879,6 +3984,10 @@ export class TankGameplayController {
     for (let i = this.activeProjectiles.length - 1; i >= 0; i--) {
       const proj = this.activeProjectiles[i];
       proj.age += dt;
+
+      if (proj.guided && !proj.impactHandled) {
+        this.updateGuidedProjectile(proj, dt);
+      }
 
       if (proj.impactHandled) {
         this.activeProjectiles.splice(i, 1);
@@ -3924,6 +4033,58 @@ export class TankGameplayController {
         proj.mesh.dispose();
         this.activeProjectiles.splice(i, 1);
       }
+    }
+  }
+
+  /**
+   * Missile guidé : phase de lancement le long de l'axe de l'emport, puis braquage
+   * progressif vers la cible verrouillée (trajectoire courbe, pas un tir rectiligne).
+   */
+  private updateGuidedProjectile(
+    proj: (typeof this.activeProjectiles)[number],
+    dt: number
+  ): void {
+    const guided = proj.guided;
+    if (!guided || !this.enemyTurretSystem) {
+      return;
+    }
+
+    const targetPos = this.enemyTurretSystem.getLockTargetAimPoint(guided.targetId);
+    if (!targetPos) {
+      return;
+    }
+
+    const missilePos = proj.mesh.getAbsolutePosition();
+    const toTarget = targetPos.subtract(missilePos);
+    if (toTarget.lengthSquared() < 1e-6) {
+      return;
+    }
+
+    const desiredDir = toTarget.normalize();
+    const velocity = proj.body.getLinearVelocity();
+    let speed = velocity.length();
+    if (speed < 1e-3) {
+      speed = guided.speed;
+    }
+
+    let currentDir = velocity.lengthSquared() > 1e-6 ? velocity.normalize() : desiredDir.clone();
+    const launchBlend = clamp(proj.age / Math.max(guided.launchBlendSeconds, 1e-3), 0, 1);
+    const turnRateRad = toRadians(guided.turnRateDeg) * launchBlend * dt;
+    const dot = clamp(Vector3.Dot(currentDir, desiredDir), -1, 1);
+    const angle = Math.acos(dot);
+    if (angle > 1e-5) {
+      const turnAmount = Math.min(turnRateRad, angle);
+      const turnT = turnAmount / angle;
+      currentDir = Vector3.Lerp(currentDir, desiredDir, turnT);
+      if (currentDir.lengthSquared() > 1e-8) {
+        currentDir.normalize();
+      }
+    }
+
+    const nextVelocity = currentDir.scale(speed);
+    proj.body.setLinearVelocity(nextVelocity);
+    if (nextVelocity.lengthSquared() > 1e-8) {
+      proj.mesh.rotationQuaternion = Quaternion.FromLookDirectionRH(nextVelocity.normalize(), Axis.Y);
     }
   }
 
@@ -4557,34 +4718,41 @@ export class TankGameplayController {
 
     // Shell / cannon reticle (only visible when shell is active)
     {
-      const from = this.muzzleCannonNode.getAbsolutePosition();
-      const forward = this.muzzleCannonNode
-        .getDirection(this.movementForwardAxis)
-        .scale(-this.config.rig.movementForwardSign);
-      if (forward.lengthSquared() > 1e-6) {
-        forward.normalize();
-        const maxDist = this.config.aim.barrelRayMaxDistance;
-        const to = from.add(forward.scale(maxDist));
-
-        let hitPoint: Vector3 | null = null;
-        if (physics) {
-          const hit = physics.raycast(from, to, {
-            ignoreBody: this.tankBody,
-            shouldHitTriggers: false,
-            collideWith: 0xffffffff
-          });
-          if (hit.hasHit) {
-            hitPoint = hit.hitPointWorld.clone();
-          }
-        }
-        if (!hitPoint) {
-          hitPoint = to;
-        }
-
-        if (this.isPrimaryWeapon(this.activeWeapon)) {
-          updateUiFromHit(hitPoint, this.barrelShellReticle2D);
-        } else if (this.barrelShellReticle2D) {
+      const primaryMuzzle = this.resolvePrimaryReticleMuzzle();
+      if (!primaryMuzzle) {
+        if (this.barrelShellReticle2D) {
           this.barrelShellReticle2D.isVisible = false;
+        }
+      } else {
+        const from = primaryMuzzle.getAbsolutePosition();
+        const forward = primaryMuzzle
+          .getDirection(this.movementForwardAxis)
+          .scale(-this.config.rig.movementForwardSign);
+        if (forward.lengthSquared() > 1e-6) {
+          forward.normalize();
+          const maxDist = this.config.aim.barrelRayMaxDistance;
+          const to = from.add(forward.scale(maxDist));
+
+          let hitPoint: Vector3 | null = null;
+          if (physics) {
+            const hit = physics.raycast(from, to, {
+              ignoreBody: this.tankBody,
+              shouldHitTriggers: false,
+              collideWith: 0xffffffff
+            });
+            if (hit.hasHit) {
+              hitPoint = hit.hitPointWorld.clone();
+            }
+          }
+          if (!hitPoint) {
+            hitPoint = to;
+          }
+
+          if (this.isPrimaryWeapon(this.activeWeapon)) {
+            updateUiFromHit(hitPoint, this.barrelShellReticle2D);
+          } else if (this.barrelShellReticle2D) {
+            this.barrelShellReticle2D.isVisible = false;
+          }
         }
       }
     }

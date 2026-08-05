@@ -470,6 +470,20 @@ export interface TankControllerConfig {
   };
 }
 
+/** Réglages du verrouillage / guidage des missiles (jet). */
+export interface MissileLockConfig {
+  /** Demi-angle du cône de lock devant l'origine (deg). */
+  coneHalfAngleDeg: number;
+  /** Durée d'apparition du réticule de lock (s). */
+  acquireSeconds: number;
+  /** Durée de disparition quand la cible sort du cône (s). */
+  loseSeconds: number;
+  /** Vitesse de braquage en vol du missile guidé (deg/s). */
+  guidanceTurnRateDeg: number;
+  /** Phase initiale où le missile garde surtout l'axe de lancement (s). */
+  launchBlendSeconds: number;
+}
+
 /** Arme principale à projectile unique (obus ou missile). */
 export interface ProjectileWeaponConfig {
   startingReserveAmmo: number;
@@ -480,6 +494,7 @@ export interface ProjectileWeaponConfig {
   damage: number;
   muzzleVelocity: number;
   gravityMultiplier: number;
+  missileLock?: MissileLockConfig;
 }
 
 export type PrimaryWeaponKind = "shell" | "missile";

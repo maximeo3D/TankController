@@ -291,13 +291,20 @@
       "startsChambered": true,
       "magazineSize": 2,
       "reloadSeconds": 6.0,
-      "damage": 70.0,
+      "damage": 100.0,
       "muzzleVelocity": 60.0,
-      "gravityMultiplier": 0
+      "gravityMultiplier": 0,
+      "missileLock": {
+        "coneHalfAngleDeg": 15.0,
+        "acquireSeconds": 1.0,
+        "loseSeconds": 0.2,
+        "guidanceTurnRateDeg": 140.0,
+        "launchBlendSeconds": 0.45
+      }
     },
     "bullet": {
-      "shotsPerSecond": 18.0,
-      "damage": 3.5,
+      "shotsPerSecond": 20.0,
+      "damage": 10,
       "muzzleVelocity": 140.0,
       "gravityMultiplier": 0.5
     }
