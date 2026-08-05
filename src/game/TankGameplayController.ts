@@ -810,7 +810,9 @@ export class TankGameplayController {
         } catch {
           // ignore
         }
-        this.syncTankMovementSounds();
+        if (this.playerActive) {
+          this.syncTankMovementSounds();
+        }
       },
       { passive: true }
     );
@@ -1165,6 +1167,10 @@ export class TankGameplayController {
 
   private updateTankMovementSounds(isMoving: boolean): void {
     if (!this.audioUnlocked) {
+      return;
+    }
+    if (!this.playerActive) {
+      this.stopEngineSounds();
       return;
     }
 
@@ -3168,6 +3174,9 @@ export class TankGameplayController {
       this.refreshWeaponHudContent();
       this.refreshStatusHudContent();
       this.syncShieldHighlight();
+      if (this.audioUnlocked) {
+        this.syncTankMovementSounds();
+      }
       return;
     }
 
