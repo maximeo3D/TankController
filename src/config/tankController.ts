@@ -183,6 +183,8 @@ export interface TankControllerConfig {
       ammoShellColliderMesh?: string;
       ammoMissileMesh?: string;
       ammoMissileColliderMesh?: string;
+      /** Emplacements d'emport visuels (ex. `MUZZLE_missile_jet_L`, `_R`). Ordre = ordre de tir. */
+      missileHardpoints?: string[];
       playerTarget?: string;
       damageSmoke?: string[];
     };

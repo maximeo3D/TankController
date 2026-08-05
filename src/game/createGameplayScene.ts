@@ -437,6 +437,7 @@ function resolveVehicleNodeNames(config: TankControllerConfig) {
     ammoShellMesh: nodes.ammoMissileMesh ?? nodes.ammoShellMesh ?? "AMMO_obus",
     ammoShellColliderMesh:
       nodes.ammoMissileColliderMesh ?? nodes.ammoShellColliderMesh ?? "COL_obus",
+    missileHardpoints: nodes.missileHardpoints ?? [],
     playerTarget: nodes.playerTarget ?? "TARGET_player_tank",
     pitchBone: config.rig.pitchBone ?? "canon",
     damageSmokes: nodes.damageSmoke ?? [
@@ -620,6 +621,11 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
   const muzzleShellNode = findTransformNode(vehicleContainer, nodeNames.muzzleShell);
   const muzzleGunNode = findTransformNode(vehicleContainer, nodeNames.muzzleGun);
   parentMuzzleNodesToPitchBone(vehicleContainer, nodeNames.pitchBone, muzzleShellNode, muzzleGunNode);
+  const missileHardpoints = createMissileHardpointVisuals(
+    vehicleContainer,
+    nodeNames.missileHardpoints,
+    ammoShellMesh
+  );
   refreshTankRigWorldMatrices(vehicleAnchor, vehicleContainer);
 
   const suspensionNodes = {
@@ -704,6 +710,7 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
     ammoShellMesh,
     ammoShellColliderMesh,
     ammoBulletMesh,
+    missileHardpoints,
     trackTreadParticles,
     trackTreadParticlesReverse,
     tankDamageParticles,
@@ -794,6 +801,39 @@ function findPitchBoneTransform(container: AssetContainer, pitchBoneName: string
       }) ?? null;
 
   return bone?.getTransformNode() ?? null;
+}
+
+function createMissileHardpointVisuals(
+  container: AssetContainer,
+  hardpointNames: readonly string[],
+  ammoTemplate: Mesh | null
+): Array<{ muzzleNode: TransformNode | AbstractMesh; visualMesh: Mesh | null }> {
+  if (!ammoTemplate || hardpointNames.length === 0) {
+    return [];
+  }
+
+  const hardpoints: Array<{ muzzleNode: TransformNode | AbstractMesh; visualMesh: Mesh | null }> = [];
+  for (const hardpointName of hardpointNames) {
+    const muzzleNode = findTransformNode(container, hardpointName);
+    if (!muzzleNode) {
+      console.warn(`[TankController] missile hardpoint "${hardpointName}" not found.`);
+      continue;
+    }
+
+    const visualMesh = ammoTemplate.clone(`${hardpointName}_store`, null);
+    if (visualMesh) {
+      visualMesh.isVisible = true;
+      visualMesh.isPickable = false;
+      visualMesh.setParent(muzzleNode);
+      visualMesh.position.setAll(0);
+      visualMesh.rotationQuaternion ??= Quaternion.Identity();
+      visualMesh.rotationQuaternion.copyFrom(Quaternion.Identity());
+    }
+
+    hardpoints.push({ muzzleNode, visualMesh });
+  }
+
+  return hardpoints;
 }
 
 /** Les MUZZLE_* doivent suivre le pitch du bone armes/canon. */

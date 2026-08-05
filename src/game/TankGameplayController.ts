@@ -178,6 +178,12 @@ interface ScrollableTexture {
   clone?: () => unknown;
 }
 
+/** Emport missile visible sur un point de tir dédié (ex. aile gauche / droite). */
+interface MissileHardpoint {
+  muzzleNode: TransformNode | AbstractMesh;
+  visualMesh: Mesh | null;
+}
+
 const TRACK_UV_TEXTURE_PROPERTIES = [
   "albedoTexture",
   "diffuseTexture",
@@ -237,6 +243,8 @@ export interface TankGameplayControllerOptions {
   /** Optional collider template mesh from GLB (ex: `COL_obus`) */
   ammoShellColliderMesh?: Mesh | null;
   ammoBulletMesh: Mesh | null;
+  /** Emports missiles visuels ; l'ordre du tableau fixe l'ordre de tir. */
+  missileHardpoints?: MissileHardpoint[];
   physicsViewer?: PhysicsViewer;
   /** Chenilles : fumée + gravillons sur SUS_BL / SUS_BR (si chargés). */
   trackTreadParticles?: TrackTreadParticleBundle | null;
@@ -335,6 +343,9 @@ export class TankGameplayController {
   private readonly ammoShellMesh: Mesh | null;
   private readonly ammoShellColliderMesh: Mesh | null;
   private readonly ammoBulletMesh: Mesh | null;
+  private readonly missileHardpoints: readonly MissileHardpoint[];
+  /** État chargé de chaque emport ; réinitialisé à la recharge. */
+  private missileHardpointLoaded: boolean[] = [];
   private readonly movementForwardAxis: Vector3;
   private readonly movementInputSign: 1 | -1;
   private readonly turretYawAxis: Vector3;
@@ -633,6 +644,7 @@ export class TankGameplayController {
     this.ammoShellMesh = options.ammoShellMesh;
     this.ammoShellColliderMesh = options.ammoShellColliderMesh ?? null;
     this.ammoBulletMesh = options.ammoBulletMesh;
+    this.missileHardpoints = options.missileHardpoints ?? [];
     this.physicsViewer = options.physicsViewer;
     this.trackTreadParticles = options.trackTreadParticles ?? null;
     this.trackTreadParticlesReverse = options.trackTreadParticlesReverse ?? null;
@@ -743,6 +755,7 @@ export class TankGameplayController {
     this.shellMagazineSize = Math.max(1, Math.floor(this.primaryWeaponConfig.magazineSize ?? 1));
     this.shellLoadedAmmo = this.primaryWeaponConfig.startsChambered ? this.shellMagazineSize : 0;
     this.shellChambered = this.shellLoadedAmmo > 0;
+    this.resetMissileHardpointLoadedState();
 
     if (!this.tankAnchor.rotationQuaternion) {
       this.tankAnchor.rotationQuaternion = Quaternion.Identity();
@@ -2860,6 +2873,9 @@ export class TankGameplayController {
     this.muzzleDebugVisuals?.cannonLinkLine.dispose();
     this.muzzleDebugVisuals?.gunLinkLine.dispose();
     this.muzzleDebugVisuals = null;
+    for (const hardpoint of this.missileHardpoints) {
+      hardpoint.visualMesh?.dispose();
+    }
 
     if (this.ownsSceneHud) {
       this.hudTexture?.dispose();
@@ -3439,6 +3455,7 @@ export class TankGameplayController {
         this.shellLoadedAmmo = reloadAmount;
         this.shellReserveAmmo -= reloadAmount;
         this.shellChambered = this.shellLoadedAmmo > 0;
+        this.resetMissileHardpointLoadedState();
       }
     }
 
@@ -3476,6 +3493,11 @@ export class TankGameplayController {
 
   private firePrimaryProjectile(): void {
     const loadedBeforeShot = this.shellLoadedAmmo;
+    const fireMuzzle = this.resolvePrimaryProjectileMuzzle();
+    if (!fireMuzzle) {
+      return;
+    }
+
     this.shellLoadedAmmo = Math.max(0, this.shellLoadedAmmo - 1);
     this.shellChambered = this.shellLoadedAmmo > 0;
     if (this.shellLoadedAmmo <= 0 && this.shellReserveAmmo > 0) {
@@ -3488,21 +3510,59 @@ export class TankGameplayController {
     if (this.zoomActive) {
       this.zoomCamFreezeSeconds = Math.max(this.zoomCamFreezeSeconds, 0.12);
     }
-    if (this.muzzleCannonNode) {
-      this.syncMuzzleNodeWorldMatrix(this.muzzleCannonNode);
-      this.spawnMuzzleFlash(
-        this.cannonMuzzleFlashPool,
-        this.muzzleCannonNode.getAbsolutePosition(),
-        TankGameplayController.CANNON_MUZZLE_FLASH_PEAK_INTENSITY,
-        TankGameplayController.CANNON_MUZZLE_FLASH_LIFE_S
-      );
-    }
+    this.syncMuzzleNodeWorldMatrix(fireMuzzle);
+    this.spawnMuzzleFlash(
+      this.cannonMuzzleFlashPool,
+      fireMuzzle.getAbsolutePosition(),
+      TankGameplayController.CANNON_MUZZLE_FLASH_PEAK_INTENSITY,
+      TankGameplayController.CANNON_MUZZLE_FLASH_LIFE_S
+    );
     this.spawnProjectile(
       this.ammoShellMesh,
       this.ammoShellColliderMesh,
       this.primaryWeaponConfig,
-      0.4
+      0.4,
+      fireMuzzle
     );
+    this.syncMissileHardpointVisuals();
+  }
+
+  /** Premier emport encore chargé, ou le canon unique des autres véhicules. */
+  private resolvePrimaryProjectileMuzzle(): TransformNode | AbstractMesh | null {
+    if (this.missileHardpoints.length === 0) {
+      return this.muzzleCannonNode;
+    }
+
+    for (let index = 0; index < this.missileHardpoints.length; index++) {
+      if (!this.missileHardpointLoaded[index]) {
+        continue;
+      }
+      this.missileHardpointLoaded[index] = false;
+      return this.missileHardpoints[index]?.muzzleNode ?? null;
+    }
+
+    return null;
+  }
+
+  /** Réaligne les modèles d'emport sur l'état du chargeur interne. */
+  private resetMissileHardpointLoadedState(): void {
+    if (this.missileHardpoints.length === 0) {
+      return;
+    }
+
+    this.missileHardpointLoaded = this.missileHardpoints.map(
+      (_, index) => index < this.shellLoadedAmmo
+    );
+    this.syncMissileHardpointVisuals();
+  }
+
+  private syncMissileHardpointVisuals(): void {
+    for (let index = 0; index < this.missileHardpoints.length; index++) {
+      const visual = this.missileHardpoints[index]?.visualMesh;
+      if (visual) {
+        visual.isVisible = this.missileHardpointLoaded[index] === true;
+      }
+    }
   }
 
   private isPrimaryWeapon(weapon: WeaponType): boolean {
@@ -3713,9 +3773,10 @@ export class TankGameplayController {
     baseMesh: Mesh | null,
     colliderTemplate: Mesh | null,
     weaponConfig: { muzzleVelocity: number; gravityMultiplier: number },
-    radius: number
+    radius: number,
+    muzzleNode: TransformNode | AbstractMesh | null = this.muzzleCannonNode
   ): void {
-    if (!baseMesh || !this.muzzleCannonNode) {
+    if (!baseMesh || !muzzleNode) {
       return;
     }
 
@@ -3724,8 +3785,8 @@ export class TankGameplayController {
     if (!mesh) return;
     mesh.isPickable = false;
     mesh.isVisible = !colliderTemplate;
-    this.syncMuzzleNodeWorldMatrix(this.muzzleCannonNode);
-    mesh.position.copyFrom(this.muzzleCannonNode.getAbsolutePosition());
+    this.syncMuzzleNodeWorldMatrix(muzzleNode);
+    mesh.position.copyFrom(muzzleNode.getAbsolutePosition());
 
     if (colliderTemplate) {
       const visual = baseMesh.clone("projectile_visual", null);
@@ -3740,8 +3801,8 @@ export class TankGameplayController {
       visual.rotationQuaternion ??= Quaternion.Identity();
     }
 
-    const forward = this.getMuzzleNodeWorldForward(this.muzzleCannonNode);
-    mesh.rotationQuaternion = this.getMuzzleNodeWorldRotation(this.muzzleCannonNode);
+    const forward = this.getMuzzleNodeWorldForward(muzzleNode);
+    mesh.rotationQuaternion = this.getMuzzleNodeWorldRotation(muzzleNode);
 
     const velocity = forward.scale(weaponConfig.muzzleVelocity);
 

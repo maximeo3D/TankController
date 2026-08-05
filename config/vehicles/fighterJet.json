@@ -42,6 +42,7 @@
       "muzzleGun": "MUZZLE_mg_jet",
       "ammoMissileMesh": "AMMO_missile_jet",
       "ammoMissileColliderMesh": "COL_missile_jet",
+      "missileHardpoints": ["MUZZLE_missile_jet_L", "MUZZLE_missile_jet_R"],
       "playerTarget": "TARGET_player_jet",
       "damageSmoke": [
         "jet_damage_smoke_1",
