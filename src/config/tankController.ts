@@ -20,6 +20,103 @@ export type PowerUpTypeId =
   | "shield"
   | "weapon_boost";
 
+export type RigAxis = "x" | "y" | "z";
+export type RigSign = 1 | -1;
+
+/** Bones animés propres à un aéronef : gouvernes et trains d'atterrissage. */
+export interface FlightRigConfig {
+  aileronLeftBone?: string;
+  aileronRightBone?: string;
+  /** Axe local de charnière des ailerons (typ. l'axe d'envergure). */
+  aileronAxis?: RigAxis;
+  aileronSign?: RigSign;
+  elevatorLeftBone?: string;
+  elevatorRightBone?: string;
+  elevatorAxis?: RigAxis;
+  elevatorSign?: RigSign;
+  rudderBone?: string;
+  rudderAxis?: RigAxis;
+  rudderSign?: RigSign;
+  /** Train avant : se replie dans l'axe longitudinal, donc autour de l'axe latéral. */
+  gearFrontBone?: string;
+  gearFrontAxis?: RigAxis;
+  gearFrontSign?: RigSign;
+  /** Trains principaux : se replient vers l'intérieur, donc autour de l'axe longitudinal. */
+  gearLeftBone?: string;
+  gearRightBone?: string;
+  gearMainAxis?: RigAxis;
+  /** Signe du train gauche ; le droit prend le signe opposé (repli symétrique). */
+  gearMainSign?: RigSign;
+}
+
+/** Modèle de vol arcade utilisé quand `movement.steeringMode` vaut `plane`. */
+export interface FlightConfig {
+  /** Variation de la manette des gaz par seconde (0–1 par s) sous Z / S. */
+  throttleRatePerSecond: number;
+  /** Manette des gaz au spawn (0–1). */
+  idleThrottle: number;
+  /** Poussée (N) à pleine manette. */
+  maxThrustForce: number;
+  /** Multiplicateur de poussée sous post-combustion (Maj). */
+  afterburnerMultiplier: number;
+  /** Portance (N) par (m/s)² de vitesse air, avant saturation. */
+  liftPerSpeedSquared: number;
+  maxLiftForce: number;
+  /** Incidence (deg) au-delà de laquelle la portance s'effondre. */
+  stallAngleDeg: number;
+  /** Traînée dans l'axe (N par (m/s)²). */
+  dragPerSpeedSquared: number;
+  /** Traînée latérale (N par m/s) — limite le dérapage. */
+  lateralDragPerSpeed: number;
+  /** Traînée verticale (N par m/s). */
+  verticalDragPerSpeed: number;
+  pitchTorque: number;
+  rollTorque: number;
+  yawTorque: number;
+  pitchSign: RigSign;
+  rollSign: RigSign;
+  yawSign: RigSign;
+  /** Amortissement des vitesses angulaires en vol (1/s). */
+  angularDamping: number;
+  /** Vitesse air (m/s) donnant 100 % d'autorité aux gouvernes. */
+  controlAuthorityRefSpeed: number;
+  /** Autorité résiduelle (0–1) à vitesse nulle. */
+  controlAuthorityMin: number;
+  /** Sensibilité du manche souris (unités de manche par pixel). */
+  stickPitchPerPixel: number;
+  stickRollPerPixel: number;
+  /** Recentrage automatique du manche (unités/s ; 0 = manche libre). */
+  stickReturnPerSecond: number;
+  /** Couple de remise à plat quand le manche de roulis est au neutre (N·m par rad). */
+  levelAssistTorque: number;
+  /** Braquage max des gouvernes (deg). */
+  aileronMaxDeg: number;
+  elevatorMaxDeg: number;
+  rudderMaxDeg: number;
+  /** Lissage du braquage visuel des gouvernes (1/s). */
+  surfaceSharpness: number;
+  /** Braquage des roues du train avant au roulage (deg). */
+  taxiSteerMaxDeg: number;
+  /** Résistance au roulement au sol (N par m/s). */
+  taxiDragPerSpeed: number;
+  /** Freinage (N) obtenu en poussant S manette déjà au ralenti. */
+  taxiBrakeForce: number;
+  gear: {
+    /** Vitesse sol max (m/s) autorisant la sortie du train. */
+    deploySpeed: number;
+    /** Vitesse air (m/s) au-delà de laquelle le train rentre. */
+    retractSpeed: number;
+    /** Hauteur sol max (m) autorisant la sortie du train. */
+    deployHeight: number;
+    /** Durée d'une manœuvre complète (s). */
+    travelSeconds: number;
+    /** Angle du train en position rentrée (deg). */
+    retractedDeg: number;
+    /** Sortie forcée au spawn. */
+    deployedAtSpawn: boolean;
+  };
+}
+
 export interface TankControllerConfig {
   debug?: {
     showSuspensionSpheres?: boolean;
@@ -64,8 +161,10 @@ export interface TankControllerConfig {
     wheelTravelSign?: 1 | -1;
     /** Lissage du débattement visuel des roues (rad/s ; défaut 25). */
     wheelTravelSharpness?: number;
-    /** Probes suspension ; défaut 6 points tank, voiture : 4 roues. */
+    /** Probes suspension ; défaut 6 points tank, voiture : 4 roues, jet : 3 trains. */
     suspensionProbeNames?: string[];
+    /** Bones de gouvernes et de trains (mode `plane`). */
+    flight?: FlightRigConfig;
     /** Noms de nodes GLB (suffixe véhicule). */
     nodes?: {
       colliderMesh?: string;
@@ -91,8 +190,11 @@ export interface TankControllerConfig {
     inputRiseRate: number;
     inputFallRate: number;
     lateralGrip: number;
-    /** `tank` = rotation sur place ; `car` = braquage lié à la vitesse avant/arrière. */
-    steeringMode?: "tank" | "car";
+    /**
+     * `tank` = rotation sur place ; `car` = braquage lié à la vitesse avant/arrière ;
+     * `plane` = modèle de vol (voir `flight`), le sol ne sert qu'au roulage.
+     */
+    steeringMode?: "tank" | "car" | "plane";
     /** Vitesse linéaire min. (m/s) pour entamer un virage en mode `car`. */
     carMinSteerSpeed?: number;
     /** Vitesse de référence pour le facteur de braquage en mode `car` (défaut ≈ moveSpeed × 8). */
@@ -222,6 +324,8 @@ export interface TankControllerConfig {
     cameraMaxTargetDistance: number;
     barrelRayMaxDistance: number;
   };
+  /** Requis quand `movement.steeringMode` vaut `plane`. */
+  flight?: FlightConfig;
   // Optional for backward compatibility with older configs.
   tracks?: {
     enabled: boolean;

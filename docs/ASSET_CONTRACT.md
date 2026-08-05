@@ -39,12 +39,14 @@ The goal is to make asset integration deterministic in code.
 
 - Tank: `SUS_FL`, `SUS_FR`, `SUS_ML`, `SUS_MR`, `SUS_RL`, `SUS_RR` (six wheels / contact points).
 - Armored car: `SUS_FL`, `SUS_FR`, `SUS_RL`, `SUS_RR` (four wheels).
-- The probe set is declared per vehicle via `rig.suspensionProbeNames`.  
+- Fighter jet: `SUS_F`, `SUS_RL`, `SUS_RR` (tricycle landing gear).
+- The probe set is declared per vehicle via `rig.suspensionProbeNames`. Any count is accepted
+  as long as **every** declared name resolves.  
   Code also accepts Blender-style duplicates such as `SUS_FL.001` (prefix match).
 
 ### Legacy / Optional
 
-- `GROUND_FL`, `GROUND_FR`, `GROUND_RL`, `GROUND_RR`: optional four-corner grounding helpers; if present and `SUS_*` are incomplete, code may derive six suspension samples from corners + midpoints.
+- `GROUND_FL`, `GROUND_FR`, `GROUND_RL`, `GROUND_RR`: optional four-corner grounding helpers. Used as a fallback when the declared `SUS_*` list is only partially resolved and fewer than four probes are found. Also used to derive `baseClearance` when all four are present.
 
 ### UI / Weapons
 
@@ -196,6 +198,164 @@ Meshes in `power-ups.glb` are disabled at load; clones appear only at `PU_*` pos
 | `wheelTravelSign` | If tires sink when body compresses, flip to `-1` |
 
 Enable `debug.showSuspensionSpheres: true` in config to visualize probe positions at runtime.
+
+## Fighter Jet Contract
+
+`assets/jet.glb`, driven by `config/vehicles/fighterJet.json`. Reuses the generic vehicle
+pipeline for loading, collider, camera, muzzles and projectile templates. The flight model,
+missile lock-on, landing-gear logic and visible wing stores are new code.
+
+### Orientation and scale (measured on `tank.glb` / `armoredcar.glb`)
+
+In Blender: **nose along +Y, up +Z, starboard +X**. Model origin on the ground plane,
+laterally centred, longitudinally near the centre of gravity (wing root).
+
+Exported GLB sizes for reference — width × height × length in metres:
+
+| Asset | Size |
+|-------|------|
+| `tank` | 0.90 × 0.69 × 2.07 |
+| `armoredcar` | 0.46 × 0.51 × 1.00 |
+| `AMMO_missile` (armored car) | 0.043 × 0.043 × 0.234 |
+
+Author the jet in the same range (roughly 1.1–1.4 m long, 1.0–1.2 m wingspan) so it reads
+as part of the same toy-scale fleet.
+
+### Bone axis rule
+
+Exported bones keep Blender's convention: **local Y is the head→tail direction**. With zero
+bone roll:
+
+| Bone points towards | local X | local Y | local Z |
+|---------------------|---------|---------|---------|
+| +Z (up) | +X starboard | +Z up | −Y aft |
+| +Y (nose) | +X starboard | +Y nose | +Z up |
+
+Authoring consequence: give every animated bone a head→tail direction **along its hinge
+axis**. The rotation axis is then always the bone's local Y, and bone roll becomes
+irrelevant. A bone's shape does not have to follow the geometry it drives — only its head
+position (the pivot) and its direction (the axis) matter.
+
+Verify after export with `node tools/inspectVehicleGlb.mjs assets/jet.glb`.
+
+### Required nodes
+
+| Role | Node / bone | Config key |
+|------|-------------|------------|
+| Armature | `jet_armature` | — |
+| Airframe bone | `main > fuselage` | — |
+| Collider mesh | `COL_jet` | `rig.nodes.colliderMesh` |
+| Orbit pivot | `CAM_pivot` | `rig.nodes.cameraPivot` |
+| Gameplay camera | `CAM_jet` | `rig.nodes.cameraStart` |
+| Gun muzzle | `MUZZLE_mg_jet` | `rig.nodes.muzzleGun` |
+| Missile hardpoints | `MUZZLE_missile_jet_L`, `MUZZLE_missile_jet_R` | `rig.nodes.muzzleMissile` + hardpoint list |
+| Missile template (visual) | `AMMO_missile_jet` | `rig.nodes.ammoMissileMesh` |
+| Missile template (collider) | `COL_missile_jet` | `rig.nodes.ammoMissileColliderMesh` |
+| Tracer template | `AMMO_balle` | hardcoded |
+| Enemy aim target | `TARGET_player_jet` | `rig.nodes.playerTarget` |
+| Ground probes | `SUS_F`, `SUS_RL`, `SUS_RR` | `rig.suspensionProbeNames` |
+| Damage smoke | `jet_damage_smoke_1..4` | `rig.nodes.damageSmoke` |
+
+Terrain must also gain a `SPAWN_jet` empty for the mission that includes the jet.
+
+### Bone hierarchy
+
+```
+jet_armature
+├── main                            root bone, at the model origin
+│   └── fuselage                    airframe; parent of every moving part
+│       ├── aileron_L, aileron_R    roll
+│       ├── elevator_L, elevator_R  pitch
+│       ├── rudder                  yaw
+│       ├── flap_L, flap_R          optional, deployed with the gear
+│       ├── airbrake                optional
+│       ├── gear_F, gear_L, gear_R  retractable struts, no separate doors
+│       └── wheel_F, wheel_L, wheel_R   optional, children of their strut
+└── jet                             single skinned mesh
+```
+
+### Reserved bone names — must not be used
+
+`caisse`, `tourelle`, `canon`, `track_L` and `track_R` are resolved by **hardcoded** lookups
+in `TankGameplayController` and are driven by hull tilt, turret yaw, cannon pitch and track
+droop code that does not apply to an aircraft. Using them would make the airframe fight the
+flight model. Hence `fuselage` for the airframe bone.
+
+For the same reason `rig.pitchBone` stays unset in the jet config: the muzzle empties must
+**not** be reparented to a pitch bone, they stay under the vehicle visual root and follow the
+airframe. This logs one harmless warning at load.
+
+### Control surfaces
+
+Intended mapping, which fixes what each surface bone must drive:
+
+| Input | Axis | Surfaces |
+|-------|------|----------|
+| Mouse horizontal | roll (bank) | `aileron_L` / `aileron_R` |
+| Mouse vertical | pitch, inverted (mouse up = nose down) | `elevator_L` / `elevator_R` |
+| `Q` / `D` | yaw | `rudder` |
+| `Z` / `S` | throttle up / down | — |
+
+- Rest pose = neutral surface. Deflection is applied on top of the rest rotation.
+- Bone head exactly on the hinge line, head→tail along it. For a swept wing the hinge is not
+  parallel to `X`; follow the actual hinge, not the axis.
+- `aileron_L` and `aileron_R` point outboard in opposite directions, so the same signed angle
+  deflects them oppositely — which is what an aileron pair does.
+
+### Landing gear
+
+- Bone head exactly at the retraction hinge, head→tail along the hinge axis (lateral for a
+  nose gear that swings fore/aft, longitudinal for main gear folding inboard).
+- **Rest pose = gear fully extended.** The retracted angle is a config value per strut, so
+  any geometry works; model the wells to match the intended retracted pose.
+- No separate door bones: the struts and their fairings are one moving part.
+- Optional `wheel_*` children spin on their own local Y during rollout.
+
+### Ground probes
+
+Tricycle gear, so **three** probes: `SUS_F` on the centreline at the nose wheel, `SUS_RL` and
+`SUS_RR` at the main wheels. Place them at **tire contact height with the gear extended**, as
+on the armored car (probe at the contact patch, not at the hub).
+
+`createTankSuspensionInfo` previously required at least four resolved probes before honouring
+`rig.suspensionProbeNames`, and fell back to the legacy `GROUND_*` corners otherwise. It now
+accepts a fully resolved declared list of any size, so a three-point stance works; the
+four-probe rule only remains as a safety net for a *partially* resolved list. Roll stability
+comes from the two main-gear probes, which is how a real tricycle gear behaves.
+
+### Hardpoints and visible stores
+
+- `AMMO_missile_jet` is modelled once, nose along **+Y**, origin at its geometric centre.
+  `COL_missile_jet` is a low-poly convex version with the same origin and orientation.
+- `MUZZLE_missile_jet_L` / `_R` are empties with **zero rotation**, placed where each missile
+  centre should sit under the wing (`L` at −X, `R` at +X). Each serves both as the launch
+  transform and as the anchor for the visible missile: the engine clones `AMMO_missile_jet`
+  under each hardpoint with an identity local transform and hides the clone once that missile
+  is fired.
+- Muzzle forward is the empty's local −Z in glTF, i.e. **+Y in Blender**, so an unrotated
+  empty fires straight ahead.
+
+### Optional nodes
+
+- `FX_shockwave`: 2 m sphere used as the impact shockwave template (searched case-insensitively
+  in the vehicle container). Present in `tank.glb`, absent from `armoredcar.glb` — copy it over
+  if the jet should show shockwaves.
+- `jet_damage_smoke_1..4`: slot 1 triggers at ≤ 75 % health, slots 2 and 3 at ≤ 50 %, slot 4 at
+  ≤ 25 %. Engine nozzle and wing roots are the natural spots.
+- No `CAM_jet_zoom` is needed; the zoom camera is created in code.
+- No `TEX_tracks` and no `tracks` block in the config.
+- No `wheelBones` in the config: the car wheel spin/steer/travel path does not apply.
+
+### Validation checklist
+
+- `node tools/inspectVehicleGlb.mjs assets/jet.glb` lists every node in the table above
+- no bone named `caisse`, `tourelle`, `canon`, `track_L`, `track_R`
+- every animated bone reports `local Y -> …` along its intended hinge axis
+- `COL_jet` bottom sits at the tire contact plane, gear extended
+- `SUS_F`, `SUS_RL`, `SUS_RR` at tire contact height, `SUS_F` on the centreline
+- muzzle and hardpoint empties have zero rotation
+- `AMMO_missile_jet`, `COL_missile_jet` and `AMMO_balle` present at the scene root
+- overall length in the 1.1–1.4 m range
 
 ## Cannon and Turret Constraints (authoring)
 

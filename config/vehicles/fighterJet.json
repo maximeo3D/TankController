@@ -1,0 +1,298 @@
+{
+  "debug": {
+    "showSuspensionSpheres": false,
+    "showPowerUpBounds": false,
+    "showMuzzleEmpties": false
+  },
+  "rig": {
+    "spawnYawOffsetDeg": 0.0,
+    "movementForwardAxis": "z",
+    "movementForwardSign": 1,
+    "movementInputSign": -1,
+    "turretYawAxis": "z",
+    "turretYawSign": -1,
+    "cannonPitchAxis": "x",
+    "cannonPitchSign": 1,
+    "suspensionProbeNames": ["SUS_F", "SUS_RL", "SUS_RR"],
+    "flight": {
+      "aileronLeftBone": "aileron_L",
+      "aileronRightBone": "aileron_R",
+      "aileronAxis": "x",
+      "aileronSign": 1,
+      "elevatorLeftBone": "elevator_L",
+      "elevatorRightBone": "elevator_R",
+      "elevatorAxis": "x",
+      "elevatorSign": 1,
+      "rudderBone": "rudder",
+      "rudderAxis": "z",
+      "rudderSign": 1,
+      "gearFrontBone": "gear_F",
+      "gearFrontAxis": "x",
+      "gearFrontSign": -1,
+      "gearLeftBone": "gear_L",
+      "gearRightBone": "gear_R",
+      "gearMainAxis": "z",
+      "gearMainSign": -1
+    },
+    "nodes": {
+      "colliderMesh": "COL_jet",
+      "cameraPivot": "CAM_pivot",
+      "cameraStart": "CAM_jet",
+      "muzzleMissile": "MUZZLE_missile_jet_L",
+      "muzzleGun": "MUZZLE_mg_jet",
+      "ammoMissileMesh": "AMMO_missile_jet",
+      "ammoMissileColliderMesh": "COL_missile_jet",
+      "playerTarget": "TARGET_player_jet",
+      "damageSmoke": [
+        "jet_damage_smoke_1",
+        "jet_damage_smoke_2",
+        "jet_damage_smoke_3",
+        "jet_damage_smoke_4"
+      ]
+    }
+  },
+  "movement": {
+    "steeringMode": "plane",
+    "moveSpeed": 0.4,
+    "boostMultiplier": 1.0,
+    "hullTurnSpeedDeg": 40.0,
+    "requireGroundContactForControl": false,
+    "acceleration": 6.0,
+    "brakeDeceleration": 5.0,
+    "inputRiseRate": 2.0,
+    "inputFallRate": 2.5,
+    "lateralGrip": 1.0
+  },
+  "flight": {
+    "throttleRatePerSecond": 0.45,
+    "idleThrottle": 0.0,
+    "maxThrustForce": 300.0,
+    "afterburnerMultiplier": 1.6,
+    "liftPerSpeedSquared": 0.1,
+    "maxLiftForce": 420.0,
+    "stallAngleDeg": 18.0,
+    "dragPerSpeedSquared": 0.25,
+    "lateralDragPerSpeed": 9.0,
+    "verticalDragPerSpeed": 5.0,
+    "pitchTorque": 18.0,
+    "rollTorque": 12.0,
+    "yawTorque": 14.0,
+    "pitchSign": 1,
+    "rollSign": 1,
+    "yawSign": 1,
+    "controlAuthorityRefSpeed": 18.0,
+    "controlAuthorityMin": 0.12,
+    "stickPitchPerPixel": 0.0035,
+    "stickRollPerPixel": 0.004,
+    "stickReturnPerSecond": 0.6,
+    "levelAssistTorque": 6.0,
+    "aileronMaxDeg": 22.0,
+    "elevatorMaxDeg": 20.0,
+    "rudderMaxDeg": 25.0,
+    "surfaceSharpness": 12.0,
+    "taxiSteerMaxDeg": 30.0,
+    "taxiDragPerSpeed": 6.0,
+    "taxiBrakeForce": 90.0,
+    "gear": {
+      "deploySpeed": 12.0,
+      "retractSpeed": 16.0,
+      "deployHeight": 6.0,
+      "travelSeconds": 1.6,
+      "retractedDeg": 90.0,
+      "deployedAtSpawn": true
+    }
+  },
+  "physics": {
+    "tankMass": 8.0,
+    "tankLinearDamping": 0.08,
+    "tankAngularDamping": 1.6,
+    "airborneLinearDamping": 0.02,
+    "airborneAngularDamping": 2.0,
+    "tankCenterOfMassYOffset": 0.0,
+    "tankFriction": 0.55,
+    "tankRestitution": 0.02
+  },
+  "grounding": {
+    "probeStartHeight": 0.013,
+    "maxHitAboveProbeBaseY": 0.1,
+    "probeLength": 3.0,
+    "groundClearance": 0.0,
+    "groundSnapSpeed": 18.0,
+    "maxGroundSlopeDeg": 55.0,
+    "visualTiltSharpness": 10.0,
+    "positionSharpness": 14.0,
+    "drivePitchMaxDeg": 0.0,
+    "drivePitchSharpness": 6.0
+  },
+  "suspension": {
+    "rayStartHeight": 0.8,
+    "rayLength": 3.0,
+    "restLength": 0.02,
+    "springForcesEnabled": true,
+    "groundContactTolerance": 0.12,
+    "springStrength": 1500.0,
+    "damperStrength": 42.0,
+    "reboundDampingScale": 0.5,
+    "compressionDampingScale": 0.7,
+    "extensionSpringScale": 0.0,
+    "landingBounceRestitution": 0.12,
+    "landingBounceMinSpeed": 1.5,
+    "landingBounceMaxSpeed": 9.0,
+    "landingBounceMinAirSeconds": 0.2,
+    "maxForce": 4000.0,
+    "tractionForce": 120.0,
+    "lateralFriction": 8.0
+  },
+  "turret": {
+    "yawSpeedDeg": 0.0,
+    "mouseSensitivityDegPerPixel": 0.0
+  },
+  "cannon": {
+    "pitchSpeedDeg": 0.0,
+    "mouseSensitivityDegPerPixel": 0.0,
+    "minPitchDeg": 0.0,
+    "maxPitchDeg": 0.0,
+    "recoilKickY": 0.0,
+    "recoilReturnSpeed": 0.35,
+    "hullRecoilReturnSpeed": 0.12,
+    "hullRecoilKickDeg": 0.0,
+    "hullRecoilSign": 1
+  },
+  "camera": {
+    "defaultFovDeg": 70.0,
+    "zoomFovMultiplier": 0.6,
+    "zoomViewFovDeg": 50.0,
+    "boostFovMultiplier": 1.12,
+    "orbitCollisionEnabled": false,
+    "orbitCollisionPadding": 0.25,
+    "orbitYawDegPerPixel": 0.0,
+    "orbitPitchDegPerPixel": 0.0,
+    "orbitYawSign": -1,
+    "orbitPitchSign": 1,
+    "orbitClampRadius": true,
+    "orbitMinPitchDeg": -18.0,
+    "orbitMaxPitchDeg": 22.0,
+    "orbitMinRadius": 0.1,
+    "orbitMaxRadius": 16.0,
+    "orbitDefaultRadius": 8.0,
+    "shellShotShakeDurationSeconds": 0.12,
+    "shellShotShakeAmplitude": 0.03
+  },
+  "aim": {
+    "cameraMaxTargetDistance": 300.0,
+    "barrelRayMaxDistance": 300.0
+  },
+  "vehicle": {
+    "healthMax": 180,
+    "startingHealth": 180
+  },
+  "audio": {
+    "engineIdle": null,
+    "engineMove": null,
+    "engineTurbo": null,
+    "horn": null,
+    "suspensionImpact": "suspension",
+    "suspensionImpactVolumeMin": 0.5,
+    "suspensionImpactVolumeMax": 1,
+    "suspensionImpactMinSpeed": 1.5,
+    "suspensionImpactMaxSpeed": 9.0
+  },
+  "energy": {
+    "batteryMax": 100.0,
+    "overchargeMax": 100.0,
+    "startingBattery": 100.0,
+    "startingOvercharge": 100.0,
+    "batteryDrainMovingPerSecond": 0.8,
+    "overchargeDrainBoostPerSecond": 12.0,
+    "overchargeRechargePerSecond": 5.0
+  },
+  "powerUps": {
+    "enabled": true,
+    "pickupRadius": 0.35,
+    "highlight": {
+      "blurHorizontalSize": 0.15,
+      "blurVerticalSize": 0.15
+    },
+    "animation": {
+      "bobAmplitude": 0.12,
+      "bobPeriodSeconds": 2.5,
+      "rotationPeriodSeconds": 10.0
+    },
+    "types": {
+      "ammo_shell": {
+        "enabled": false,
+        "respawnSeconds": 30.0,
+        "pickedAlpha": 0.25,
+        "singleUse": false,
+        "highlightAvailable": [0.15, 1.0, 0.35],
+        "highlightCooldown": [1.0, 0.2, 0.15],
+        "shellAmmoAmount": 8
+      },
+      "fuel": {
+        "enabled": true,
+        "respawnSeconds": 30.0,
+        "pickedAlpha": 0.25,
+        "singleUse": false,
+        "highlightAvailable": [1, 0.85, 0],
+        "highlightCooldown": [1.0, 0.2, 0.15],
+        "batteryAmount": 100
+      },
+      "boost": {
+        "enabled": false,
+        "respawnSeconds": 20.0,
+        "pickedAlpha": 0.25,
+        "singleUse": false,
+        "highlightAvailable": [1.0, 0.85, 0.2],
+        "highlightCooldown": [1.0, 0.2, 0.15],
+        "boostDurationSeconds": 5.0
+      },
+      "repair": {
+        "enabled": true,
+        "respawnSeconds": 5.0,
+        "pickedAlpha": 0.25,
+        "singleUse": false,
+        "highlightAvailable": [1, 1, 1],
+        "highlightCooldown": [1.0, 0.2, 0.15],
+        "repairAmount": 80
+      },
+      "shield": {
+        "enabled": true,
+        "respawnSeconds": 40.0,
+        "pickedAlpha": 0.25,
+        "singleUse": true,
+        "highlightAvailable": [0.2, 0.65, 1.0],
+        "highlightCooldown": [1.0, 0.2, 0.15],
+        "shieldDurationSeconds": 8.0,
+        "damageReduction": 1.0
+      },
+      "weapon_boost": {
+        "enabled": false,
+        "respawnSeconds": 25.0,
+        "pickedAlpha": 0.25,
+        "singleUse": false,
+        "highlightAvailable": [1.0, 0.45, 0.2],
+        "highlightCooldown": [1.0, 0.2, 0.15],
+        "damageMultiplier": 1.5
+      }
+    }
+  },
+  "weapons": {
+    "powerUpBonusPerStack": 0.25,
+    "maxStacks": 2,
+    "missile": {
+      "startingReserveAmmo": 8,
+      "startsChambered": true,
+      "magazineSize": 2,
+      "reloadSeconds": 6.0,
+      "damage": 70.0,
+      "muzzleVelocity": 60.0,
+      "gravityMultiplier": 0
+    },
+    "bullet": {
+      "shotsPerSecond": 18.0,
+      "damage": 3.5,
+      "muzzleVelocity": 140.0,
+      "gravityMultiplier": 0.5
+    }
+  }
+}

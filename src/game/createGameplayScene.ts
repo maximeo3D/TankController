@@ -31,7 +31,7 @@ import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import type { TankControllerConfig } from "../config/tankController";
 import { getSuspensionContactOffset } from "../config/tankController";
 import { getVehicleConfig } from "../config/vehicleRegistry";
-import { tankAssetUrl, armoredCarAssetUrl, skyboxAssetUrl, powerUpsAssetUrl, enemiesAssetUrl, vehicleTankIconUrl, vehicleArmoredCarIconUrl } from "../assets/assetUrls";
+import { tankAssetUrl, armoredCarAssetUrl, fighterJetAssetUrl, skyboxAssetUrl, powerUpsAssetUrl, enemiesAssetUrl, vehicleTankIconUrl, vehicleArmoredCarIconUrl, vehicleFighterJetIconUrl } from "../assets/assetUrls";
 import { enemiesConfig } from "../config/enemiesController";
 import { EnemyTurretSystem } from "./EnemyTurretSystem";
 import type { LevelDefinition } from "../app/levels";
@@ -81,7 +81,13 @@ interface SpawnedPlayerVehicle {
 }
 
 function vehicleAssetUrl(type: VehicleTypeId): string {
-  return type === "armoredCar" ? armoredCarAssetUrl : tankAssetUrl;
+  if (type === "armoredCar") {
+    return armoredCarAssetUrl;
+  }
+  if (type === "fighterJet") {
+    return fighterJetAssetUrl;
+  }
+  return tankAssetUrl;
 }
 
 function resolveVehicleSelectorIconUrl(type: VehicleTypeId): string | null {
@@ -90,6 +96,9 @@ function resolveVehicleSelectorIconUrl(type: VehicleTypeId): string | null {
   }
   if (type === "armoredCar") {
     return vehicleArmoredCarIconUrl;
+  }
+  if (type === "fighterJet") {
+    return vehicleFighterJetIconUrl;
   }
   return null;
 }
@@ -1077,6 +1086,14 @@ function createTankSuspensionInfo(
     .map((name) => findTransformNode(container, name))
     .filter((n): n is TransformNode | AbstractMesh => n !== null);
 
+  // Liste déclarée entièrement résolue : on la respecte quel que soit le nombre de
+  // sondes. Un train tricycle n'en a légitimement que trois.
+  if (nodes.length > 0 && nodes.length === names.length) {
+    return { points: nodes.map((n) => toAnchorLocalPosition(n, tankAnchor)) };
+  }
+
+  // Liste incomplète : on ne garde les sondes trouvées que si elles suffisent à
+  // définir une assiette, sinon on tente les anciens repères `GROUND_*`.
   if (nodes.length >= 4) {
     return { points: nodes.map((n) => toAnchorLocalPosition(n, tankAnchor)) };
   }

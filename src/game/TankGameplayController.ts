@@ -25,7 +25,12 @@ import type { Bone } from "@babylonjs/core/Bones/bone";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import type { Scene } from "@babylonjs/core/scene";
 import { ParticleSystem } from "@babylonjs/core/Particles/particleSystem";
-import type { TankControllerConfig, ProjectileWeaponConfig, PrimaryWeaponKind } from "../config/tankController";
+import type {
+  TankControllerConfig,
+  ProjectileWeaponConfig,
+  PrimaryWeaponKind,
+  FlightRigConfig
+} from "../config/tankController";
 import { getPrimaryWeaponKind, getPrimaryWeaponConfig, getSuspensionContactOffset } from "../config/tankController";
 import { TankInput, type WeaponType } from "./TankInput";
 import {
@@ -68,6 +73,7 @@ import {
   turretStopSoundAssetUrl
 } from "../assets/assetUrls";
 import { resolveVehicleSoundUrl } from "../assets/soundLibrary";
+import { FlightModel, type FlightState } from "./vehicle/FlightModel";
 import { applyUiFontToTexture, TIMER_FONT_FAMILY } from "../ui/applyUiFont";
 import { TARGET_FRAME_SEC } from "./frameTiming";
 import { Sound } from "@babylonjs/core/Audio/sound";
@@ -126,6 +132,24 @@ type WeaponHudAnimPhase = "idle" | "exit" | "enter" | "blink";
 interface BoneControl {
   bone: Bone | null;
   transformNode: TransformNode | null;
+}
+
+/** Bone animé autour d'un axe unique : gouverne ou jambe de train. */
+interface HingeControl {
+  control: BoneControl;
+  baseRotation: Quaternion;
+  axis: Vector3;
+}
+
+interface FlightRigControls {
+  aileronLeft: HingeControl | null;
+  aileronRight: HingeControl | null;
+  elevatorLeft: HingeControl | null;
+  elevatorRight: HingeControl | null;
+  rudder: HingeControl | null;
+  gearFront: HingeControl | null;
+  gearLeft: HingeControl | null;
+  gearRight: HingeControl | null;
 }
 
 export interface TankGameplayDebugState {
@@ -290,6 +314,14 @@ export class TankGameplayController {
   /** Nombre de probes `SUS_*` en contact au dernier calcul de suspension. */
   private suspensionContactCount = 0;
   private airborneSeconds = 0;
+  /** Non nul uniquement en mode `plane` : remplace toute la conduite au sol. */
+  private readonly flightModel: FlightModel | null;
+  private readonly flightRig: FlightRigControls | null;
+  private flightAileronSmoothed = 0;
+  private flightElevatorSmoothed = 0;
+  private flightRudderSmoothed = 0;
+  private lastLookDeltaX = 0;
+  private lastLookDeltaY = 0;
   private readonly turretBaseLocalRotation: Quaternion;
   private readonly cannonBaseLocalRotation: Quaternion;
   private readonly cannonBaseLocalPosition: Vector3;
@@ -471,6 +503,8 @@ export class TankGameplayController {
   private static readonly GUN_SPREAD_MAX_DEG = 1.0;
   private static readonly GUN_RETICLE_SCALE_MIN = 1.0;
   private static readonly GUN_RETICLE_SCALE_MAX = 2;
+  /** Réactivité de la caméra de poursuite du mode avion (1/s). */
+  private static readonly CHASE_CAMERA_SHARPNESS = 9.0;
 
   // Per-shot reticle "kick" (recoil bounce) for the coax reticle.
   private gunReticleKickTime = 999;
@@ -669,6 +703,27 @@ export class TankGameplayController {
       options.config.rig.movementForwardSign
     );
     this.movementInputSign = options.config.rig.movementInputSign;
+    if ((options.config.movement.steeringMode ?? "tank") === "plane" && options.config.flight) {
+      // Même combinaison de signes que la traction au sol : c'est le référentiel
+      // dans lequel les rigs sont calibrés, donc le nez y est garanti correct.
+      const noseLocal = this.movementForwardAxis.scale(
+        this.movementInputSign * options.config.rig.movementForwardSign
+      );
+      this.flightModel = new FlightModel({
+        scene: options.scene,
+        body: this.tankBody,
+        anchor: this.tankAnchor,
+        config: options.config.flight,
+        noseLocal
+      });
+      this.flightRig = this.resolveFlightRig(options.tankContainer, options.config.rig.flight);
+    } else {
+      this.flightModel = null;
+      this.flightRig = null;
+      if ((options.config.movement.steeringMode ?? "tank") === "plane") {
+        console.warn("[TankController] steeringMode `plane` requires a `flight` config block.");
+      }
+    }
     this.turretYawAxis = axisFromConfig(
       options.config.rig.turretYawAxis,
       options.config.rig.turretYawSign
@@ -1060,11 +1115,16 @@ export class TankGameplayController {
 
   private initTankMovementSounds(): void {
     const audio = this.config.audio;
-    this.tankIdleSound = this.createConfigSound("engine_idle", audio?.engineIdle ?? "tank_idle", {
+    // Un bloc `audio` déclaré fait autorité : une clé absente ou nulle coupe le son,
+    // sans quoi un véhicule sans banque dédiée hériterait de celle du tank.
+    const idleKey = audio ? audio.engineIdle : "tank_idle";
+    const moveKey = audio ? audio.engineMove : "tank_move";
+    const impactKey = audio ? audio.suspensionImpact : "suspension";
+    this.tankIdleSound = this.createConfigSound("engine_idle", idleKey, {
       loop: true,
       volume: audio?.engineIdleVolume ?? 0.42
     });
-    this.tankMoveSound = this.createConfigSound("engine_move", audio?.engineMove ?? "tank_move", {
+    this.tankMoveSound = this.createConfigSound("engine_move", moveKey, {
       loop: true,
       volume: audio?.engineMoveVolumeMax ?? 0.7
     });
@@ -1076,11 +1136,10 @@ export class TankGameplayController {
       loop: false,
       volume: audio?.hornVolume ?? 0.8
     });
-    this.suspensionImpactSound = this.createConfigSound(
-      "suspension_impact",
-      audio?.suspensionImpact ?? "suspension",
-      { loop: false, volume: audio?.suspensionImpactVolumeMax ?? 0.7 }
-    );
+    this.suspensionImpactSound = this.createConfigSound("suspension_impact", impactKey, {
+      loop: false,
+      volume: audio?.suspensionImpactVolumeMax ?? 0.7
+    });
   }
 
   /**
@@ -1089,6 +1148,9 @@ export class TankGameplayController {
    * n'est qu'une orientation de roues et laisse le moteur au ralenti.
    */
   private getEngineLoadForAudio(): number {
+    if (this.flightModel) {
+      return this.flightModel.getState().throttle;
+    }
     const throttle = Math.abs(this.smoothedMoveAxis);
     if ((this.config.movement.steeringMode ?? "tank") === "car") {
       return throttle;
@@ -2688,17 +2750,10 @@ export class TankGameplayController {
   }
 
   private initSuspensionDebugSpheres(): void {
-    // Always-on for now (requested for debugging).
-    const nodes = this.suspensionNodes;
-    const ordered: Array<TransformNode | AbstractMesh | null> = [
-      nodes.fl,
-      nodes.fr,
-      nodes.ml,
-      nodes.mr,
-      nodes.rl,
-      nodes.rr
-    ];
-    if (ordered.every((n) => !n)) {
+    // Une sphère par sonde réellement utilisée par la physique, quel que soit le
+    // nombre et le nommage déclarés dans `rig.suspensionProbeNames`.
+    const probeCount = this.suspensionPointsLocal.length;
+    if (probeCount === 0) {
       return;
     }
 
@@ -2707,7 +2762,7 @@ export class TankGameplayController {
     mat.emissiveColor = new Color3(1, 0, 0);
 
     const radius = 0.04;
-    for (let i = 0; i < ordered.length; i++) {
+    for (let i = 0; i < probeCount; i++) {
       const s = MeshBuilder.CreateSphere(`sus_dbg_${i}`, { diameter: radius * 2 }, this.scene);
       s.material = mat;
       s.isPickable = false;
@@ -3281,7 +3336,14 @@ export class TankGameplayController {
       }
     }
 
-    this.applyOrbitCamera(lookX, lookY);
+    if (this.flightModel) {
+      // En avion la souris est le manche : la caméra suit l'appareil au lieu d'orbiter.
+      this.lastLookDeltaX = frame.lookDeltaX;
+      this.lastLookDeltaY = frame.lookDeltaY;
+      this.applyChaseCamera(dt);
+    } else {
+      this.applyOrbitCamera(lookX, lookY);
+    }
     if (this.shieldTimeRemaining > 0) {
       this.shieldTimeRemaining = Math.max(0, this.shieldTimeRemaining - dt);
     }
@@ -3320,25 +3382,24 @@ export class TankGameplayController {
 
   private updateSuspensionDebugSpheres(): void {
     if (this.susDebugSpheres.length === 0) return;
-    const nodes = this.suspensionNodes;
-    const ordered: Array<TransformNode | AbstractMesh | null> = [
-      nodes.fl,
-      nodes.fr,
-      nodes.ml,
-      nodes.mr,
-      nodes.rl,
-      nodes.rr
-    ];
+
+    const anchorPosition = this.tankAnchor.getAbsolutePosition();
+    const anchorRotation =
+      this.tankAnchor.absoluteRotationQuaternion ??
+      this.tankAnchor.rotationQuaternion ??
+      Quaternion.Identity();
+
     for (let i = 0; i < this.susDebugSpheres.length; i++) {
-      const n = ordered[i] ?? null;
-      const s = this.susDebugSpheres[i];
-      if (!n) {
-        s.setEnabled(false);
+      const localPoint = this.suspensionPointsLocal[i];
+      const sphere = this.susDebugSpheres[i];
+      if (!localPoint) {
+        sphere.setEnabled(false);
         continue;
       }
-      s.setEnabled(true);
-      n.computeWorldMatrix(true);
-      s.position.copyFrom(n.getAbsolutePosition());
+      sphere.setEnabled(true);
+      sphere.position.copyFrom(
+        anchorPosition.add(localPoint.clone().applyRotationQuaternion(anchorRotation))
+      );
     }
   }
 
@@ -4534,6 +4595,177 @@ export class TankGameplayController {
     }
   }
 
+  private resolveFlightRig(
+    container: AssetContainer,
+    rig: FlightRigConfig | undefined
+  ): FlightRigControls | null {
+    if (!rig) {
+      console.warn("[TankController] steeringMode `plane` without `rig.flight`: no animated surfaces.");
+      return null;
+    }
+
+    const hinge = (
+      boneName: string | undefined,
+      axisName: "x" | "y" | "z" | undefined,
+      sign: 1 | -1
+    ): HingeControl | null => {
+      if (!boneName) {
+        return null;
+      }
+      const control = resolveBoneControl(container, boneName);
+      if (!control.bone && !control.transformNode) {
+        console.warn(`[TankController] flight bone "${boneName}" not found.`);
+        return null;
+      }
+      return {
+        control,
+        baseRotation: getControlLocalRotation(control, this.tankAnchor),
+        axis: axisFromConfig(axisName ?? "x", sign)
+      };
+    };
+
+    const aileronSign = rig.aileronSign ?? 1;
+    const elevatorSign = rig.elevatorSign ?? 1;
+    const gearMainSign = rig.gearMainSign ?? 1;
+    return {
+      aileronLeft: hinge(rig.aileronLeftBone, rig.aileronAxis, aileronSign),
+      // Les deux ailerons partagent le même axe local : le braquage antisymétrique
+      // vient donc du signe, pas du rig.
+      aileronRight: hinge(rig.aileronRightBone, rig.aileronAxis, aileronSign === 1 ? -1 : 1),
+      elevatorLeft: hinge(rig.elevatorLeftBone, rig.elevatorAxis, elevatorSign),
+      elevatorRight: hinge(rig.elevatorRightBone, rig.elevatorAxis, elevatorSign),
+      rudder: hinge(rig.rudderBone, rig.rudderAxis, rig.rudderSign ?? 1),
+      gearFront: hinge(rig.gearFrontBone, rig.gearFrontAxis, rig.gearFrontSign ?? 1),
+      gearLeft: hinge(rig.gearLeftBone, rig.gearMainAxis, gearMainSign),
+      gearRight: hinge(rig.gearRightBone, rig.gearMainAxis, gearMainSign === 1 ? -1 : 1)
+    };
+  }
+
+  /**
+   * Mode avion : le modèle de vol pilote entièrement forces et couples. La
+   * suspension reste active pour le roulage, mais aucune logique de conduite au
+   * sol (braquage, traction, grip latéral) ne s'applique.
+   */
+  private updateFlight(
+    turnAxis: number,
+    boostHeld: boolean,
+    canMove: boolean,
+    grounded: boolean,
+    dt: number
+  ): void {
+    const flight = this.flightModel;
+    if (!flight) {
+      return;
+    }
+
+    const state = flight.update(
+      {
+        throttleAxis: canMove ? this.smoothedMoveAxis * this.movementInputSign : 0,
+        yawAxis: canMove ? turnAxis : 0,
+        lookDeltaX: this.lastLookDeltaX,
+        lookDeltaY: this.lastLookDeltaY,
+        boostHeld: boostHeld && this.overcharge > 0
+      },
+      grounded,
+      canMove,
+      dt
+    );
+
+    this.boostActive = state.afterburner;
+    const overchargeMax = this.config.energy.overchargeMax;
+    if (state.afterburner) {
+      this.overcharge = Math.max(
+        0,
+        this.overcharge - this.config.energy.overchargeDrainBoostPerSecond * dt
+      );
+    } else if (this.overcharge < overchargeMax) {
+      this.overcharge = Math.min(
+        overchargeMax,
+        this.overcharge + this.config.energy.overchargeRechargePerSecond * dt
+      );
+    }
+
+    if (state.throttle > 0.01) {
+      this.battery = clamp(
+        this.battery - this.config.energy.batteryDrainMovingPerSecond * state.throttle * dt,
+        0,
+        this.config.energy.batteryMax
+      );
+    }
+
+    this.applyFlightRigVisuals(state, dt);
+  }
+
+  /** Gouvernes braquées d'après le manche, trains déployés d'après l'état de vol. */
+  private applyFlightRigVisuals(state: FlightState, dt: number): void {
+    const rig = this.flightRig;
+    const cfg = this.config.flight;
+    if (!rig || !cfg) {
+      return;
+    }
+
+    const smooth = 1 - Math.exp(-Math.max(cfg.surfaceSharpness, 0.01) * dt);
+    this.flightAileronSmoothed += (state.stickRoll - this.flightAileronSmoothed) * smooth;
+    this.flightElevatorSmoothed += (state.stickPitch - this.flightElevatorSmoothed) * smooth;
+    this.flightRudderSmoothed += (state.yawInput - this.flightRudderSmoothed) * smooth;
+
+    const aileron = toRadians(this.flightAileronSmoothed * cfg.aileronMaxDeg);
+    const elevator = toRadians(this.flightElevatorSmoothed * cfg.elevatorMaxDeg);
+    const rudder = toRadians(this.flightRudderSmoothed * cfg.rudderMaxDeg);
+    this.setHingeAngle(rig.aileronLeft, aileron);
+    this.setHingeAngle(rig.aileronRight, aileron);
+    this.setHingeAngle(rig.elevatorLeft, elevator);
+    this.setHingeAngle(rig.elevatorRight, elevator);
+    this.setHingeAngle(rig.rudder, rudder);
+
+    const stowed = toRadians((1 - state.gearExtension) * cfg.gear.retractedDeg);
+    this.setHingeAngle(rig.gearFront, stowed);
+    this.setHingeAngle(rig.gearLeft, stowed);
+    this.setHingeAngle(rig.gearRight, stowed);
+  }
+
+  private setHingeAngle(hinge: HingeControl | null, angleRad: number): void {
+    if (!hinge) {
+      return;
+    }
+    setControlAxisAngle(hinge.control, hinge.baseRotation, hinge.axis, angleRad, this.tankAnchor);
+  }
+
+  /**
+   * Caméra de poursuite : elle suit le cap et l'assiette de l'appareil mais pas
+   * son roulis, sans quoi l'horizon tournerait avec l'avion à chaque tonneau.
+   */
+  private applyChaseCamera(dt: number): void {
+    if (!this.tankCamera || !this.cameraPivotNode) {
+      return;
+    }
+
+    const nose = this.tankAnchor
+      .getDirection(this.movementForwardAxis)
+      .scale(this.movementInputSign * this.config.rig.movementForwardSign);
+    if (nose.lengthSquared() < 1e-8) {
+      return;
+    }
+    nose.normalize();
+
+    let right = Vector3.Cross(Axis.Y, nose);
+    if (right.lengthSquared() < 1e-4) {
+      right = this.tankAnchor.getDirection(Axis.X);
+    }
+    right.normalize();
+    const vertical = Vector3.Cross(nose, right).normalize();
+
+    const pivot = this.cameraPivotNode.getAbsolutePosition();
+    const offset = nose
+      .scale(-Math.cos(this.orbitPitchRad) * this.orbitRadius)
+      .add(vertical.scale(Math.sin(this.orbitPitchRad) * this.orbitRadius));
+    const desired = pivot.add(offset);
+
+    const lerp = 1 - Math.exp(-TankGameplayController.CHASE_CAMERA_SHARPNESS * dt);
+    this.tankCamera.position.copyFrom(Vector3.Lerp(this.tankCamera.position, desired, lerp));
+    this.tankCamera.setTarget(pivot);
+  }
+
   private applyMovement(moveAxis: number, turnAxis: number, boostHeld: boolean, dt: number): void {
     const canMove = this.battery > 0;
     const desiredMoveAxis = canMove ? moveAxis * this.movementInputSign : 0;
@@ -4577,6 +4809,14 @@ export class TankGameplayController {
       this.airborneSeconds += dt;
     }
     this.syncPhysicsDamping(grounded);
+
+    if (this.flightModel) {
+      this.updateFlight(turnAxis, boostHeld, canMove, grounded, dt);
+      this.hullDrivePitchTarget = 0;
+      this.syncTankMovementSounds();
+      return;
+    }
+
     // Wheels off the ground: no steering torque, no traction, no lateral grip.
     const hasGroundControl = grounded || this.config.movement.requireGroundContactForControl !== true;
 
@@ -4824,7 +5064,7 @@ export class TankGameplayController {
    */
   private resolveTractionApplyPoint(
     objectCenterWorld: Vector3,
-    steeringMode: "tank" | "car"
+    steeringMode: "tank" | "car" | "plane"
   ): Vector3 {
     if (steeringMode !== "car") {
       return objectCenterWorld;

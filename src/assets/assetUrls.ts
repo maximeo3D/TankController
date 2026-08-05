@@ -1,6 +1,7 @@
 export const terrainAssetUrl = new URL("../../assets/terrain.glb", import.meta.url).href;
 export const tankAssetUrl = new URL("../../assets/tank.glb", import.meta.url).href;
 export const armoredCarAssetUrl = new URL("../../assets/armoredcar.glb", import.meta.url).href;
+export const fighterJetAssetUrl = new URL("../../assets/jet.glb", import.meta.url).href;
 export const powerUpsAssetUrl = new URL("../../assets/power-ups.glb", import.meta.url).href;
 export const enemiesAssetUrl = new URL("../../assets/enemies.glb", import.meta.url).href;
 export const skyboxAssetUrl = new URL("../../assets/textures/skybox.env", import.meta.url).href;
@@ -14,6 +15,10 @@ export const boostStatusIconUrl = new URL("../../assets/ui/boost.png", import.me
 export const vehicleTankIconUrl = new URL("../../assets/ui/vehicle_tank.png", import.meta.url).href;
 export const vehicleArmoredCarIconUrl = new URL(
   "../../assets/ui/vehicle_armoredcar.png",
+  import.meta.url
+).href;
+export const vehicleFighterJetIconUrl = new URL(
+  "../../assets/ui/vehicle_jet.png",
   import.meta.url
 ).href;
 export const mapPlayerIconUrl = new URL("../../assets/ui/map_icon.png", import.meta.url).href;
