@@ -266,6 +266,43 @@ export interface TankControllerConfig {
     healthMax: number;
     startingHealth: number;
   };
+  /**
+   * Sons propres au véhicule. Les champs de son attendent une clé du catalogue
+   * `src/assets/soundLibrary.ts` ; omettre ou passer `null` désactive le son.
+   */
+  audio?: {
+    /** Boucle moteur à l'arrêt. */
+    engineIdle?: string | null;
+    /** Boucle moteur en déplacement. */
+    engineMove?: string | null;
+    /** Boucle moteur pendant le boost ; remplace `engineMove`. */
+    engineTurbo?: string | null;
+    /** Klaxon (touche H). */
+    horn?: string | null;
+    /** Impact des suspensions à la réception d'un saut. */
+    suspensionImpact?: string | null;
+    engineIdleVolume?: number;
+    /** Volume de `engineMove` à l'input minimal. */
+    engineMoveVolumeMin?: number;
+    /** Volume de `engineMove` à l'input plein. */
+    engineMoveVolumeMax?: number;
+    engineTurboVolume?: number;
+    hornVolume?: number;
+    /** Délai min. entre deux coups de klaxon (s). */
+    hornCooldownSeconds?: number;
+    /** Volume de `suspensionImpact` à `suspensionImpactMinSpeed`. */
+    suspensionImpactVolumeMin?: number;
+    /** Volume de `suspensionImpact` à `suspensionImpactMaxSpeed`. */
+    suspensionImpactVolumeMax?: number;
+    /** Vitesse de chute min. (m/s) déclenchant le son de suspension. */
+    suspensionImpactMinSpeed?: number;
+    /** Vitesse de chute (m/s) donnant le volume max. */
+    suspensionImpactMaxSpeed?: number;
+    /** Temps min. sans contact `SUS_*` avant de réarmer le son (s). */
+    suspensionImpactMinAirSeconds?: number;
+    /** Délai min. entre deux impacts de suspension (s). */
+    suspensionImpactCooldownSeconds?: number;
+  };
   energy: {
     batteryMax: number;
     overchargeMax: number;

@@ -33,6 +33,28 @@ export const missile4SoundAssetUrl = new URL("../../assets/sounds/missile_4.wav"
 export const shellInsertSoundAssetUrl = new URL("../../assets/sounds/shell_insert.wav", import.meta.url).href;
 export const tankIdleSoundAssetUrl = new URL("../../assets/sounds/tank_idle.wav", import.meta.url).href;
 export const tankMoveSoundAssetUrl = new URL("../../assets/sounds/tank_move.wav", import.meta.url).href;
+export const tankTurboSoundAssetUrl = new URL("../../assets/sounds/tank_turbo.wav", import.meta.url).href;
+export const tankHornSoundAssetUrl = new URL("../../assets/sounds/tank_horn.wav", import.meta.url).href;
+export const armoredCarIdleSoundAssetUrl = new URL(
+  "../../assets/sounds/armoredcar_idle.wav",
+  import.meta.url
+).href;
+export const armoredCarMoveSoundAssetUrl = new URL(
+  "../../assets/sounds/armoredcar_move.wav",
+  import.meta.url
+).href;
+export const armoredCarTurboSoundAssetUrl = new URL(
+  "../../assets/sounds/armoredcar_turbo.wav",
+  import.meta.url
+).href;
+export const armoredCarHornSoundAssetUrl = new URL(
+  "../../assets/sounds/armoredcar_horn.wav",
+  import.meta.url
+).href;
+export const suspensionImpactSoundAssetUrl = new URL(
+  "../../assets/sounds/suspension.wav",
+  import.meta.url
+).href;
 export const turretStartSoundAssetUrl = new URL("../../assets/sounds/turret_start.wav", import.meta.url).href;
 export const turretLoopSoundAssetUrl = new URL("../../assets/sounds/turret_loop.wav", import.meta.url).href;
 export const turretStopSoundAssetUrl = new URL("../../assets/sounds/turret_stop.wav", import.meta.url).href;

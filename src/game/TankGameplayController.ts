@@ -63,12 +63,11 @@ import {
   powerUpFuelSoundAssetUrl,
   powerUpRepairSoundAssetUrl,
   powerUpShieldSoundAssetUrl,
-  tankIdleSoundAssetUrl,
-  tankMoveSoundAssetUrl,
   turretStartSoundAssetUrl,
   turretLoopSoundAssetUrl,
   turretStopSoundAssetUrl
 } from "../assets/assetUrls";
+import { resolveVehicleSoundUrl } from "../assets/soundLibrary";
 import { applyUiFontToTexture, TIMER_FONT_FAMILY } from "../ui/applyUiFont";
 import { TARGET_FRAME_SEC } from "./frameTiming";
 import { Sound } from "@babylonjs/core/Audio/sound";
@@ -517,7 +516,12 @@ export class TankGameplayController {
   private readonly powerUpSounds = new Map<PowerUpTypeId, Sound>();
   private tankIdleSound: Sound | null = null;
   private tankMoveSound: Sound | null = null;
-  private tankMovementSoundMode: "idle" | "move" | "stopped" = "stopped";
+  private tankTurboSound: Sound | null = null;
+  private tankMovementSoundMode: "idle" | "move" | "turbo" | "stopped" = "stopped";
+  private hornSound: Sound | null = null;
+  private hornCooldown = 0;
+  private suspensionImpactSound: Sound | null = null;
+  private suspensionImpactCooldown = 0;
   private turretStartSound: Sound | null = null;
   private turretLoopSound: Sound | null = null;
   private turretStopSound: Sound | null = null;
@@ -843,12 +847,10 @@ export class TankGameplayController {
     this.hudTexture?.dispose();
     this.hudTexture = null;
     this.tankDamageParticles?.syncHealthPercent(0);
-    this.tankIdleSound?.stop();
-    this.tankMoveSound?.stop();
+    this.stopEngineSounds();
     this.turretStartSound?.stop();
     this.turretLoopSound?.stop();
     this.turretStopSound?.stop();
-    this.tankMovementSoundMode = "stopped";
     this.turretSoundState = "stopped";
   }
 
@@ -1029,38 +1031,73 @@ export class TankGameplayController {
     }
   }
 
-  private initTankMovementSounds(): void {
-    try {
-      this.tankIdleSound = new Sound(
-        "tank_idle",
-        tankIdleSoundAssetUrl,
-        this.scene,
-        null,
-        { autoplay: false, loop: true, volume: 0.42 }
-      );
-      (this.tankIdleSound as any).onErrorObservable?.add((err: unknown) =>
-        console.warn("[TankController][audio] tank_idle load failed:", err)
-      );
+  /** Charge un son optionnel décrit par une clé de config (`audio.*`). */
+  private createConfigSound(
+    name: string,
+    key: string | null | undefined,
+    options: { loop: boolean; volume: number }
+  ): Sound | null {
+    const url = resolveVehicleSoundUrl(key);
+    if (!url) {
+      return null;
+    }
 
-      this.tankMoveSound = new Sound(
-        "tank_move",
-        tankMoveSoundAssetUrl,
-        this.scene,
-        null,
-        { autoplay: false, loop: true, volume: 0.55 }
+    try {
+      const sound = new Sound(name, url, this.scene, null, {
+        autoplay: false,
+        loop: options.loop,
+        volume: options.volume
+      });
+      (sound as any).onErrorObservable?.add((err: unknown) =>
+        console.warn(`[TankController][audio] "${key}" load failed:`, err)
       );
-      (this.tankMoveSound as any).onErrorObservable?.add((err: unknown) =>
-        console.warn("[TankController][audio] tank_move load failed:", err)
-      );
+      return sound;
     } catch {
       // Audio is optional.
+      return null;
     }
   }
 
+  private initTankMovementSounds(): void {
+    const audio = this.config.audio;
+    this.tankIdleSound = this.createConfigSound("engine_idle", audio?.engineIdle ?? "tank_idle", {
+      loop: true,
+      volume: audio?.engineIdleVolume ?? 0.42
+    });
+    this.tankMoveSound = this.createConfigSound("engine_move", audio?.engineMove ?? "tank_move", {
+      loop: true,
+      volume: audio?.engineMoveVolumeMax ?? 0.7
+    });
+    this.tankTurboSound = this.createConfigSound("engine_turbo", audio?.engineTurbo, {
+      loop: true,
+      volume: audio?.engineTurboVolume ?? 0.62
+    });
+    this.hornSound = this.createConfigSound("horn", audio?.horn, {
+      loop: false,
+      volume: audio?.hornVolume ?? 0.8
+    });
+    this.suspensionImpactSound = this.createConfigSound(
+      "suspension_impact",
+      audio?.suspensionImpact ?? "suspension",
+      { loop: false, volume: audio?.suspensionImpactVolumeMax ?? 0.7 }
+    );
+  }
+
+  /**
+   * Sollicitation moteur pour le mixage audio. En mode `tank` le braquage passe
+   * par les chenilles, donc il monte le moteur ; sur une voiture le braquage
+   * n'est qu'une orientation de roues et laisse le moteur au ralenti.
+   */
+  private getEngineLoadForAudio(): number {
+    const throttle = Math.abs(this.smoothedMoveAxis);
+    if ((this.config.movement.steeringMode ?? "tank") === "car") {
+      return throttle;
+    }
+    return Math.max(throttle, Math.abs(this.smoothedTurnAxis));
+  }
+
   private syncTankMovementSounds(): void {
-    const isMoving =
-      this.battery > 0 &&
-      (Math.abs(this.smoothedMoveAxis) > 0.001 || Math.abs(this.smoothedTurnAxis) > 0.001);
+    const isMoving = this.battery > 0 && this.getEngineLoadForAudio() > 0.001;
     this.updateTankMovementSounds(isMoving);
   }
 
@@ -1069,27 +1106,91 @@ export class TankGameplayController {
       return;
     }
 
-    const target: "idle" | "move" = isMoving ? "move" : "idle";
+    const audio = this.config.audio;
+    let target: "idle" | "move" | "turbo" = isMoving ? "move" : "idle";
+    if (target === "move" && this.boostActive && this.tankTurboSound) {
+      target = "turbo";
+    }
+
     if (this.tankMovementSoundMode !== target) {
       this.tankMovementSoundMode = target;
-      if (target === "move") {
-        this.tankIdleSound?.stop();
+      this.tankIdleSound?.stop();
+      this.tankMoveSound?.stop();
+      this.tankTurboSound?.stop();
+      if (target === "turbo") {
+        this.tankTurboSound?.play();
+      } else if (target === "move") {
         this.tankMoveSound?.play();
       } else {
-        this.tankMoveSound?.stop();
         this.tankIdleSound?.play();
       }
     }
 
-    if (target === "move" && this.tankMoveSound) {
-      const speed = clamp(
-        Math.max(Math.abs(this.smoothedMoveAxis), Math.abs(this.smoothedTurnAxis)),
-        0,
-        1
-      );
-      this.tankMoveSound.setVolume(0.28 + 0.42 * speed);
+    if (target === "turbo") {
+      this.tankTurboSound?.setVolume(audio?.engineTurboVolume ?? 0.62);
+    } else if (target === "move" && this.tankMoveSound) {
+      const speed = clamp(this.getEngineLoadForAudio(), 0, 1);
+      const minVolume = audio?.engineMoveVolumeMin ?? 0.28;
+      const maxVolume = audio?.engineMoveVolumeMax ?? 0.7;
+      this.tankMoveSound.setVolume(minVolume + (maxVolume - minVolume) * speed);
     } else if (this.tankIdleSound) {
-      this.tankIdleSound.setVolume(0.42);
+      this.tankIdleSound.setVolume(audio?.engineIdleVolume ?? 0.42);
+    }
+  }
+
+  private stopEngineSounds(): void {
+    this.tankIdleSound?.stop();
+    this.tankMoveSound?.stop();
+    this.tankTurboSound?.stop();
+    this.tankMovementSoundMode = "stopped";
+  }
+
+  private tryPlayHorn(): void {
+    if (!this.audioUnlocked || !this.hornSound || this.hornCooldown > 0) {
+      return;
+    }
+
+    this.hornCooldown = this.config.audio?.hornCooldownSeconds ?? 0.2;
+    try {
+      this.hornSound.stop();
+      this.hornSound.play();
+    } catch {
+      // Audio is optional.
+    }
+  }
+
+  /**
+   * Impact des suspensions à la réception : volume proportionnel à la vitesse de
+   * chute, avec garde anti-répétition pour les rebonds sur terrain accidenté.
+   */
+  private playSuspensionImpactSound(fallSpeed: number, airborneSeconds: number): void {
+    const sound = this.suspensionImpactSound;
+    if (!this.audioUnlocked || !sound || this.suspensionImpactCooldown > 0) {
+      return;
+    }
+
+    const audio = this.config.audio;
+    if (airborneSeconds < (audio?.suspensionImpactMinAirSeconds ?? 0.1)) {
+      return;
+    }
+
+    const minSpeed = audio?.suspensionImpactMinSpeed ?? 1.2;
+    if (fallSpeed < minSpeed) {
+      return;
+    }
+
+    const maxSpeed = Math.max(audio?.suspensionImpactMaxSpeed ?? 9, minSpeed + 1e-3);
+    const strength = clamp((fallSpeed - minSpeed) / (maxSpeed - minSpeed), 0, 1);
+    const minVolume = audio?.suspensionImpactVolumeMin ?? 0.3;
+    const maxVolume = audio?.suspensionImpactVolumeMax ?? 0.7;
+
+    this.suspensionImpactCooldown = audio?.suspensionImpactCooldownSeconds ?? 0.18;
+    try {
+      sound.setVolume(minVolume + (maxVolume - minVolume) * strength);
+      sound.stop();
+      sound.play();
+    } catch {
+      // Audio is optional.
     }
   }
 
@@ -2777,6 +2878,15 @@ export class TankGameplayController {
     this.tankMoveSound?.stop();
     this.tankMoveSound?.dispose();
     this.tankMoveSound = null;
+    this.tankTurboSound?.stop();
+    this.tankTurboSound?.dispose();
+    this.tankTurboSound = null;
+    this.hornSound?.stop();
+    this.hornSound?.dispose();
+    this.hornSound = null;
+    this.suspensionImpactSound?.stop();
+    this.suspensionImpactSound?.dispose();
+    this.suspensionImpactSound = null;
     this.turretStartSound?.stop();
     this.turretStartSound?.dispose();
     this.turretStartSound = null;
@@ -3084,9 +3194,8 @@ export class TankGameplayController {
     this.tankBody.setLinearVelocity(Vector3.Zero());
     this.tankBody.setAngularVelocity(Vector3.Zero());
 
-    this.tankIdleSound?.stop();
-    this.tankMoveSound?.stop();
-    this.tankMovementSoundMode = "stopped";
+    this.stopEngineSounds();
+    this.hornSound?.stop();
     this.turretStartSound?.stop();
     this.turretLoopSound?.stop();
     this.turretStopSound?.stop();
@@ -3140,6 +3249,16 @@ export class TankGameplayController {
     }
     if (frame.uprightResetRequested) {
       this.tryResetVehicleUpright();
+    }
+
+    if (this.hornCooldown > 0) {
+      this.hornCooldown = Math.max(0, this.hornCooldown - dt);
+    }
+    if (this.suspensionImpactCooldown > 0) {
+      this.suspensionImpactCooldown = Math.max(0, this.suspensionImpactCooldown - dt);
+    }
+    if (frame.hornRequested) {
+      this.tryPlayHorn();
     }
 
     // In zoom view, limit camera rotation so the turret/cannon can keep up.
@@ -4452,6 +4571,7 @@ export class TankGameplayController {
     const grounded = this.suspensionContactCount > 0;
     if (grounded) {
       this.applyLandingBounce(fallSpeedBeforeSuspension);
+      this.playSuspensionImpactSound(fallSpeedBeforeSuspension, this.airborneSeconds);
       this.airborneSeconds = 0;
     } else {
       this.airborneSeconds += dt;

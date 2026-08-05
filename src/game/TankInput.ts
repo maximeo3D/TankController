@@ -14,6 +14,8 @@ export interface TankInputFrame {
   selectedWeapon: WeaponType;
   /** Remise à plat / respawn sur place (touche Y, front montant). */
   uprightResetRequested: boolean;
+  /** Klaxon (touche H, front montant). */
+  hornRequested: boolean;
 }
 
 export class TankInput {
@@ -32,6 +34,7 @@ export class TankInput {
   private selectedWeapon: WeaponType;
   private pointerLocked = false;
   private uprightResetRequested = false;
+  private hornRequested = false;
 
   public constructor(
     canvas: HTMLCanvasElement,
@@ -69,12 +72,14 @@ export class TankInput {
       zoomHeld: this.zoomToggled,
       fireHeld: this.isPrimaryFireHeld,
       selectedWeapon: this.selectedWeapon,
-      uprightResetRequested: this.uprightResetRequested
+      uprightResetRequested: this.uprightResetRequested,
+      hornRequested: this.hornRequested
     };
 
     this.lookDeltaX = 0;
     this.lookDeltaY = 0;
     this.uprightResetRequested = false;
+    this.hornRequested = false;
 
     return frame;
   }
@@ -128,6 +133,12 @@ export class TankInput {
 
     if (key === "y") {
       this.uprightResetRequested = true;
+      event.preventDefault();
+    }
+
+    // `event.repeat` : un klaxon par appui, pas un par répétition clavier.
+    if (key === "h" && !event.repeat) {
+      this.hornRequested = true;
       event.preventDefault();
     }
 
@@ -249,5 +260,5 @@ function normalizeKey(key: string): string {
 }
 
 function isTrackedKey(key: string): boolean {
-  return ["z", "q", "s", "d", "1", "2", "y", "shift"].includes(key);
+  return ["z", "q", "s", "d", "1", "2", "y", "h", "shift"].includes(key);
 }

@@ -150,6 +150,22 @@
     "healthMax": 280,
     "startingHealth": 250
   },
+  "audio": {
+    "engineIdle": "armoredcar_idle",
+    "engineMove": "armoredcar_move",
+    "engineTurbo": "armoredcar_turbo",
+    "horn": "armoredcar_horn",
+    "suspensionImpact": "suspension",
+    "engineIdleVolume": 0.21,
+    "engineMoveVolumeMin": 0.14,
+    "engineMoveVolumeMax": 0.35,
+    "engineTurboVolume": 0.4,
+    "hornVolume": 0.8,
+    "suspensionImpactVolumeMin": 0.5,
+    "suspensionImpactVolumeMax": 1,
+    "suspensionImpactMinSpeed": 1.2,
+    "suspensionImpactMaxSpeed": 9.0
+  },
   "energy": {
     "batteryMax": 100.0,
     "overchargeMax": 100.0,
