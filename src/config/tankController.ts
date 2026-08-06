@@ -107,6 +107,30 @@ export interface FlightConfig {
   taxiDragPerSpeed: number;
   /** Freinage (N) obtenu en poussant S manette déjà au ralenti. */
   taxiBrakeForce: number;
+  /** Gravité relative en vol (1 = physique, ~0.2 = chute légère). */
+  gravityScale?: number;
+  /** Vitesse air max (m/s) ; 0 ou absent = pas de plafond explicite. */
+  maxAirspeed?: number;
+  /** Fraction de `maxAirspeed` maintenue en croisière haute (ex. 0.2 = 20 %). */
+  minAirspeedRatio?: number;
+  /** Vitesse avant min (m/s) ; remplace le ratio si défini. */
+  minAirspeed?: number;
+  /** Couple de rattrapage (N) quand la vitesse avant descend sous le plancher. */
+  minAirspeedHold?: number;
+  /** Résistance (N par m/s) au-delà de `maxAirspeed`. */
+  maxAirspeedDrag?: number;
+  /** Portance (N) à pleine manette en vol, même à basse vitesse. */
+  baselineLift?: number;
+  /** Amortissement vertical arcade (N·s/kg) — stabilise le plan de vol. */
+  arcadeVerticalDamping?: number;
+  /** Amortissement angulaire au manche neutre (N·m·s). */
+  arcadeAngularDamping?: number;
+  /** Alignement vitesse → nez (1/s) pour un ressenti « vieux jeu ». */
+  arcadeVelocityAlign?: number;
+  /** Portance arcade (N par m/s) quand le nez cabre ou le manche est tiré. */
+  arcadePitchLift?: number;
+  /** Amortissement de dérapage latéral (1/s) — la trajectoire suit le nez. */
+  arcadeSlipDrag?: number;
   gear: {
     /** Vitesse sol max (m/s) autorisant la sortie du train. */
     deploySpeed: number;
@@ -176,6 +200,8 @@ export interface TankControllerConfig {
       colliderMesh?: string;
       cameraPivot?: string;
       cameraStart?: string;
+      /** Empty de vue zoom (ex. `CAM_jet_zoom`). */
+      cameraZoom?: string;
       muzzleShell?: string;
       muzzleMissile?: string;
       muzzleGun?: string;

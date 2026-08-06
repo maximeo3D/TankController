@@ -432,6 +432,7 @@ function resolveVehicleNodeNames(config: TankControllerConfig) {
     colliderMesh: nodes.colliderMesh ?? "COL_tank",
     cameraPivot: nodes.cameraPivot ?? "CAM_pivot",
     cameraStart: nodes.cameraStart ?? "CAM_tank",
+    cameraZoom: nodes.cameraZoom ?? null,
     muzzleShell: nodes.muzzleMissile ?? nodes.muzzleShell ?? "MUZZLE_canon_tank",
     muzzleGun: nodes.muzzleGun ?? "MUZZLE_gun_tank",
     ammoShellMesh: nodes.ammoMissileMesh ?? nodes.ammoShellMesh ?? "AMMO_obus",
@@ -518,8 +519,24 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
     vehicleConfig
   );
 
-  const camPivotNode = findTransformNode(vehicleContainer, nodeNames.cameraPivot);
+  let camPivotNode = findTransformNode(vehicleContainer, nodeNames.cameraPivot);
   const camStartNode = findTransformNode(vehicleContainer, nodeNames.cameraStart);
+  const camZoomNode = nodeNames.cameraZoom
+    ? findTransformNode(vehicleContainer, nodeNames.cameraZoom)
+    : null;
+
+  if (!camPivotNode && camStartNode) {
+    camPivotNode = createCameraPivotFallback(
+      scene,
+      vehicleSpawn.id,
+      vehicleVisualRoot,
+      camStartNode,
+      vehicleConfig
+    );
+    console.warn(
+      `[TankController] ${nodeNames.cameraPivot} not found in "${vehicleSpawn.id}" GLB; using synthetic look-at pivot ahead of ${nodeNames.cameraStart}.`
+    );
+  }
 
   let vehicleCamera: UniversalCamera | null = null;
   let vehicleZoomCamera: UniversalCamera | null = null;
@@ -578,7 +595,7 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
       .filter((n) => n.toLowerCase().includes("cam_"))
       .slice(0, 30);
     console.warn(
-      `[TankController] ${nodeNames.cameraPivot} not found in "${vehicleSpawn.id}" GLB. CAM_* candidates:`,
+      `[TankController] No camera rig for "${vehicleSpawn.id}" (${nodeNames.cameraPivot} / ${nodeNames.cameraStart} missing). CAM_* candidates:`,
       allNames
     );
   }
@@ -701,6 +718,8 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
     tankCamera: vehicleCamera,
     tankZoomCamera: vehicleZoomCamera,
     cameraPivotNode: camPivotNode,
+    cameraStartNode: camStartNode,
+    cameraZoomNode: camZoomNode,
     initialOrbit,
     reticleCameraMesh,
     reticleBarrelMesh,
@@ -788,6 +807,35 @@ function findTransformNode(
       return n === wanted || n.startsWith(`${wanted}.`);
     }) ?? null
   );
+}
+
+/** Fallback when a GLB defines CAM_* start but no CAM_pivot (e.g. jet.glb). */
+function createCameraPivotFallback(
+  scene: Scene,
+  vehicleSpawnId: string,
+  vehicleVisualRoot: TransformNode,
+  camStartNode: TransformNode | AbstractMesh,
+  vehicleConfig: TankControllerConfig
+): TransformNode {
+  const pivot = new TransformNode(`${vehicleSpawnId}_cam_pivot_fallback`, scene);
+  pivot.parent = camStartNode.parent ?? vehicleVisualRoot;
+  pivot.position.copyFrom(camStartNode.position);
+
+  const forwardOffset = Math.max(vehicleConfig.camera.orbitDefaultRadius, 1);
+  const forwardSign = vehicleConfig.rig.movementForwardSign;
+  switch (vehicleConfig.rig.movementForwardAxis) {
+    case "x":
+      pivot.position.x += forwardSign * forwardOffset;
+      break;
+    case "y":
+      pivot.position.y += forwardSign * forwardOffset;
+      break;
+    default:
+      pivot.position.z += forwardSign * forwardOffset;
+      break;
+  }
+
+  return pivot;
 }
 
 function findPitchBoneTransform(container: AssetContainer, pitchBoneName: string): TransformNode | null {

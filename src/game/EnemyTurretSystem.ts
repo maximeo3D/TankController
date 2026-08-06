@@ -102,6 +102,8 @@ interface EnemyTurretInstance {
   debugPivotMarker: AbstractMesh | null;
   nextBarrelIndex: number;
   fireCooldown: number;
+  /** Empty `target_*` du modèle ennemi (ex. `target_turret`). */
+  lockTargetNode: TransformNode | AbstractMesh | null;
   colliderMesh: Mesh | null;
   physicsBody: PhysicsBody | null;
   physicsShape: PhysicsShape | null;
@@ -330,6 +332,31 @@ function findNodeOnRoot(root: TransformNode, name: string): TransformNode | Abst
       continue;
     }
     if (matchNodeName(node.name, name)) {
+      return node;
+    }
+    for (const child of node.getChildren()) {
+      if (child instanceof TransformNode || child instanceof AbstractMesh) {
+        stack.push(child);
+      }
+    }
+  }
+  return null;
+}
+
+/** Empty de lock-on missile (`target_turret`, ou premier nœud `target_*`). */
+function findLockTargetNode(root: TransformNode): TransformNode | AbstractMesh | null {
+  const explicit = findNodeOnRoot(root, "target_turret");
+  if (explicit) {
+    return explicit;
+  }
+
+  const stack: TransformNode[] = [root];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (!node) {
+      continue;
+    }
+    if (node.name.trim().toLowerCase().startsWith("target_")) {
       return node;
     }
     for (const child of node.getChildren()) {
@@ -609,9 +636,7 @@ export class EnemyTurretSystem {
       .filter((instance) => instance.alive)
       .map((instance) => ({
         id: instance.spawnId,
-        aimPoint: (
-          instance.colliderMesh?.getAbsolutePosition() ?? instance.anchor.getAbsolutePosition()
-        ).clone()
+        aimPoint: this.resolveLockAimPoint(instance)
       }));
   }
 
@@ -619,6 +644,14 @@ export class EnemyTurretSystem {
     const instance = this.instances.find((candidate) => candidate.alive && candidate.spawnId === spawnId);
     if (!instance) {
       return null;
+    }
+    return this.resolveLockAimPoint(instance);
+  }
+
+  private resolveLockAimPoint(instance: EnemyTurretInstance): Vector3 {
+    if (instance.lockTargetNode) {
+      instance.lockTargetNode.computeWorldMatrix(true);
+      return instance.lockTargetNode.getAbsolutePosition().clone();
     }
     return (
       instance.colliderMesh?.getAbsolutePosition() ?? instance.anchor.getAbsolutePosition()
@@ -774,6 +807,12 @@ export class EnemyTurretSystem {
       const muzzle1 = findNodeOnRoot(root, "turret_muzzle_1");
       const muzzle2 = findNodeOnRoot(root, "turret_muzzle_2");
       const damageSmoke = findNodeOnRoot(root, "turret_damage_smoke");
+      const lockTargetNode = findLockTargetNode(root);
+      if (!lockTargetNode) {
+        console.warn(
+          `[EnemyTurretSystem] Missing target_* lock node for spawn "${spawnNode.name}" (expected target_turret).`
+        );
+      }
 
       const skinnedMesh = root.getChildMeshes(true).find((mesh) => mesh.skeleton) ?? null;
       if (skinnedMesh) {
@@ -913,6 +952,7 @@ export class EnemyTurretSystem {
         tracking: false,
         nextBarrelIndex: 0,
         fireCooldown: 0,
+        lockTargetNode,
         colliderMesh,
         physicsBody,
         physicsShape,

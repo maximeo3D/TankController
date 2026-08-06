@@ -75,7 +75,7 @@ import {
   turretStopSoundAssetUrl
 } from "../assets/assetUrls";
 import { resolveVehicleSoundUrl } from "../assets/soundLibrary";
-import { FlightModel, type FlightState } from "./vehicle/FlightModel";
+import { FlightModel, resolveLowAltitudeFlightBlends, type FlightState } from "./vehicle/FlightModel";
 import { JetMissileLockController } from "./vehicle/JetMissileLockController";
 import { applyUiFontToTexture, TIMER_FONT_FAMILY } from "../ui/applyUiFont";
 import { TARGET_FRAME_SEC } from "./frameTiming";
@@ -236,6 +236,8 @@ export interface TankGameplayControllerOptions {
   tankCamera: TargetCamera | null;
   tankZoomCamera?: TargetCamera | null;
   cameraPivotNode?: TransformNode | AbstractMesh | null;
+  cameraStartNode?: TransformNode | AbstractMesh | null;
+  cameraZoomNode?: TransformNode | AbstractMesh | null;
   initialOrbit?: { yawRad: number; pitchRad: number; radius: number } | null;
   reticleCameraMesh: AbstractMesh | null;
   reticleBarrelMesh: AbstractMesh | null;
@@ -283,6 +285,8 @@ export class TankGameplayController {
   private readonly tankCamera: TargetCamera | null;
   private readonly tankZoomCamera: TargetCamera | null;
   private readonly cameraPivotNode: TransformNode | AbstractMesh | null;
+  private readonly cameraStartNode: TransformNode | AbstractMesh | null;
+  private readonly cameraZoomNode: TransformNode | AbstractMesh | null;
   private readonly input: TankInput;
   private readonly turretControl: BoneControl;
   private readonly cannonControl: BoneControl;
@@ -325,12 +329,22 @@ export class TankGameplayController {
   /** Nombre de probes `SUS_*` en contact au dernier calcul de suspension. */
   private suspensionContactCount = 0;
   private airborneSeconds = 0;
+  /** Évite le basculement sol/air frame-par-frame en mode avion. */
+  private flightGroundedLatch = true;
+  private flightGroundedReleaseTimer = 0;
+  private flightGravityFactor = 1;
   /** Non nul uniquement en mode `plane` : remplace toute la conduite au sol. */
   private readonly flightModel: FlightModel | null;
   private readonly flightRig: FlightRigControls | null;
   private flightAileronSmoothed = 0;
   private flightElevatorSmoothed = 0;
   private flightRudderSmoothed = 0;
+  private flightAltitudeAboveGround = 0;
+  private flightChaseCameraRadius = 8;
+  private chaseCameraPivotSmoothed = Vector3.Zero();
+  private chaseCameraNoseSmoothed = new Vector3(0, 0, 1);
+  private chaseCameraVerticalSmoothed = Vector3.Up();
+  private chaseCameraInitialized = false;
   private lastLookDeltaX = 0;
   private lastLookDeltaY = 0;
   private readonly turretBaseLocalRotation: Quaternion;
@@ -525,7 +539,7 @@ export class TankGameplayController {
   private static readonly GUN_RETICLE_SCALE_MIN = 1.0;
   private static readonly GUN_RETICLE_SCALE_MAX = 2;
   /** Réactivité de la caméra de poursuite du mode avion (1/s). */
-  private static readonly CHASE_CAMERA_SHARPNESS = 9.0;
+  private static readonly FLIGHT_CHASE_CAMERA_DIR_SHARPNESS = 5.5;
 
   // Per-shot reticle "kick" (recoil bounce) for the coax reticle.
   private gunReticleKickTime = 999;
@@ -639,6 +653,8 @@ export class TankGameplayController {
     this.tankCamera = options.tankCamera;
     this.tankZoomCamera = options.tankZoomCamera ?? null;
     this.cameraPivotNode = options.cameraPivotNode ?? null;
+    this.cameraStartNode = options.cameraStartNode ?? null;
+    this.cameraZoomNode = options.cameraZoomNode ?? null;
     this.muzzleCannonNode = options.muzzleCannonNode;
     this.muzzleGunNode = options.muzzleGunNode;
     this.trackMaterial = (options.tracksSourceMesh?.material as Material | null | undefined) ?? null;
@@ -736,8 +752,10 @@ export class TankGameplayController {
         body: this.tankBody,
         anchor: this.tankAnchor,
         config: options.config.flight,
+        mass: options.config.physics.tankMass,
         noseLocal
       });
+      this.flightChaseCameraRadius = options.config.camera.orbitDefaultRadius;
       this.flightRig = this.resolveFlightRig(options.tankContainer, options.config.rig.flight);
     } else {
       this.flightModel = null;
@@ -2891,8 +2909,7 @@ export class TankGameplayController {
     for (const hardpoint of this.missileHardpoints) {
       hardpoint.visualMesh?.dispose();
     }
-    this.jetMissileLock?.dispose();
-    this.jetMissileLock = null;
+    this.releaseJetMissileLockUi();
 
     if (this.ownsSceneHud) {
       this.hudTexture?.dispose();
@@ -3164,6 +3181,11 @@ export class TankGameplayController {
     this.forwardAccelSmoothed = 0;
     this.boostActive = false;
     this.airborneSeconds = 0;
+    this.flightGroundedLatch = true;
+    this.flightGroundedReleaseTimer = 0;
+    this.flightGravityFactor = 1;
+    this.flightAltitudeAboveGround = 0;
+    this.chaseCameraInitialized = false;
     this.suspensionContactCount = 0;
     this.suspensionCompressions.fill(0);
     this.wheelSteerRad = 0;
@@ -3204,15 +3226,18 @@ export class TankGameplayController {
 
     if (active) {
       this.showSharedHud();
+      this.syncVehicleHudReticles();
       this.refreshWeaponHudContent();
       this.refreshStatusHudContent();
       this.syncShieldHighlight();
+      this.focusCamera();
       if (this.audioUnlocked) {
         this.syncTankMovementSounds();
       }
       return;
     }
 
+    this.releaseJetMissileLockUi();
     this.hideSharedHud();
     this.syncShieldHighlight();
     this.applyPauseSideEffects();
@@ -3253,11 +3278,20 @@ export class TankGameplayController {
     };
   }
 
-  /** Active la caméra orbit du tank (switch véhicule). */
+  /** Active la caméra du véhicule (switch multi-véhicules). */
   public focusCamera(): void {
-    if (this.tankCamera) {
-      this.scene.activeCamera = this.tankCamera;
+    if (!this.tankCamera) {
+      return;
     }
+
+    this.chaseCameraInitialized = false;
+    this.zoomActive = false;
+
+    if (this.flightModel && this.cameraStartNode && this.cameraPivotNode) {
+      this.applyFlightChaseCameraNoRoll(this.tankCamera);
+    }
+
+    this.scene.activeCamera = this.tankCamera;
   }
 
   public getEnemyPlayerTarget(): EnemyTurretPlayerTarget {
@@ -3382,7 +3416,6 @@ export class TankGameplayController {
       // En avion la souris est le manche : la caméra suit l'appareil au lieu d'orbiter.
       this.lastLookDeltaX = frame.lookDeltaX;
       this.lastLookDeltaY = frame.lookDeltaY;
-      this.applyChaseCamera(dt);
     } else {
       this.applyOrbitCamera(lookX, lookY);
     }
@@ -3395,6 +3428,9 @@ export class TankGameplayController {
     this.applyMinigunSpin(dt);
     this.updateWeapons(dt);
     this.applyMovement(frame.moveAxis, frame.turnAxis, frame.boostHeld, dt);
+    if (this.flightModel) {
+      this.applyChaseCamera(dt);
+    }
     this.applyVisualSmoothing(dt);
     this.applyCamera(frame.zoomHeld, dt);
     this.trackSystem?.update(dt);
@@ -3582,6 +3618,21 @@ export class TankGameplayController {
         visual.isVisible = this.missileHardpointLoaded[index] === true;
       }
     }
+  }
+
+  private syncVehicleHudReticles(): void {
+    const sharedUi = getSceneGameplayUi(this.scene);
+    if (sharedUi?.hudReticlesAttached) {
+      this.rebindHudReticleRefs();
+      return;
+    }
+
+    this.syncPrimaryWeaponReticleAsset();
+  }
+
+  private releaseJetMissileLockUi(): void {
+    this.jetMissileLock?.dispose();
+    this.jetMissileLock = null;
   }
 
   private usesJetMissileReticle(): boolean {
@@ -4932,6 +4983,7 @@ export class TankGameplayController {
     }
 
     this.applyFlightRigVisuals(state, dt);
+    this.flightAltitudeAboveGround = state.altitudeAboveGround;
   }
 
   /** Gouvernes braquées d'après le manche, trains déployés d'après l'état de vol. */
@@ -4970,11 +5022,61 @@ export class TankGameplayController {
   }
 
   /**
-   * Caméra de poursuite : elle suit le cap et l'assiette de l'appareil mais pas
-   * son roulis, sans quoi l'horizon tournerait avec l'avion à chaque tonneau.
+   * Calage caméra sur un empty GLB : position + rotation complète du rig (vue zoom).
+   */
+  private applyFlightRigCamera(
+    camera: TargetCamera,
+    rigNode: TransformNode | AbstractMesh
+  ): void {
+    rigNode.computeWorldMatrix(true);
+    camera.position.copyFrom(rigNode.getAbsolutePosition());
+
+    const rotation =
+      rigNode.absoluteRotationQuaternion ??
+      rigNode.rotationQuaternion ??
+      null;
+    if (rotation) {
+      camera.rotationQuaternion = rotation.clone();
+      return;
+    }
+
+    const forward = rigNode
+      .getDirection(this.movementForwardAxis)
+      .scale(this.movementInputSign * this.config.rig.movementForwardSign);
+    if (forward.lengthSquared() > 1e-8) {
+      forward.normalize();
+      camera.rotationQuaternion = null;
+      camera.setTarget(camera.position.add(forward.scale(1000)));
+    }
+  }
+
+  /**
+   * Caméra cockpit : position `CAM_jet`, visée `CAM_pivot`, horizon verrouillé (pas de roulis).
+   */
+  private applyFlightChaseCameraNoRoll(camera: TargetCamera): void {
+    if (!this.cameraStartNode || !this.cameraPivotNode) {
+      return;
+    }
+
+    this.cameraStartNode.computeWorldMatrix(true);
+    this.cameraPivotNode.computeWorldMatrix(true);
+
+    camera.position.copyFrom(this.cameraStartNode.getAbsolutePosition());
+    camera.rotationQuaternion = null;
+    camera.upVector.copyFrom(Axis.Y);
+    camera.setTarget(this.cameraPivotNode.getAbsolutePosition());
+  }
+
+  /**
+   * Caméra de poursuite : en avion, suit les empties `CAM_jet` / `CAM_pivot` du GLB.
    */
   private applyChaseCamera(dt: number): void {
     if (!this.tankCamera || !this.cameraPivotNode) {
+      return;
+    }
+
+    if (this.flightModel && this.cameraStartNode) {
+      this.applyFlightChaseCameraNoRoll(this.tankCamera);
       return;
     }
 
@@ -4994,14 +5096,33 @@ export class TankGameplayController {
     const vertical = Vector3.Cross(nose, right).normalize();
 
     const pivot = this.cameraPivotNode.getAbsolutePosition();
-    const offset = nose
-      .scale(-Math.cos(this.orbitPitchRad) * this.orbitRadius)
-      .add(vertical.scale(Math.sin(this.orbitPitchRad) * this.orbitRadius));
-    const desired = pivot.add(offset);
 
-    const lerp = 1 - Math.exp(-TankGameplayController.CHASE_CAMERA_SHARPNESS * dt);
-    this.tankCamera.position.copyFrom(Vector3.Lerp(this.tankCamera.position, desired, lerp));
-    this.tankCamera.setTarget(pivot);
+    if (!this.chaseCameraInitialized) {
+      this.chaseCameraPivotSmoothed.copyFrom(pivot);
+      this.chaseCameraNoseSmoothed.copyFrom(nose);
+      this.chaseCameraVerticalSmoothed.copyFrom(vertical);
+      this.chaseCameraInitialized = true;
+    }
+
+    const posLerp = 1 - Math.exp(-TankGameplayController.FLIGHT_CHASE_CAMERA_DIR_SHARPNESS * dt);
+    const dirLerp = posLerp;
+    this.chaseCameraPivotSmoothed = Vector3.Lerp(this.chaseCameraPivotSmoothed, pivot, posLerp);
+    this.chaseCameraNoseSmoothed = Vector3.Lerp(this.chaseCameraNoseSmoothed, nose, dirLerp);
+    if (this.chaseCameraNoseSmoothed.lengthSquared() > 1e-8) {
+      this.chaseCameraNoseSmoothed.normalize();
+    }
+    this.chaseCameraVerticalSmoothed = Vector3.Lerp(this.chaseCameraVerticalSmoothed, vertical, dirLerp);
+    if (this.chaseCameraVerticalSmoothed.lengthSquared() > 1e-8) {
+      this.chaseCameraVerticalSmoothed.normalize();
+    }
+
+    const radius = this.flightChaseCameraRadius;
+    const offset = this.chaseCameraNoseSmoothed
+      .scale(-Math.cos(this.orbitPitchRad) * radius)
+      .add(this.chaseCameraVerticalSmoothed.scale(Math.sin(this.orbitPitchRad) * radius));
+
+    this.tankCamera.position.copyFrom(this.chaseCameraPivotSmoothed.add(offset));
+    this.tankCamera.setTarget(this.chaseCameraPivotSmoothed);
   }
 
   private applyMovement(moveAxis: number, turnAxis: number, boostHeld: boolean, dt: number): void {
@@ -5038,7 +5159,9 @@ export class TankGameplayController {
     // Suspension forces (raycast down from SUS_* points) — also refreshes ground contact state.
     const fallSpeedBeforeSuspension = -this.tankBody.getLinearVelocity().y;
     this.applySuspension();
-    const grounded = this.suspensionContactCount > 0;
+    const grounded = this.flightModel
+      ? this.resolveFlightGrounded(this.suspensionContactCount > 0, dt)
+      : this.suspensionContactCount > 0;
     if (grounded) {
       this.applyLandingBounce(fallSpeedBeforeSuspension);
       this.playSuspensionImpactSound(fallSpeedBeforeSuspension, this.airborneSeconds);
@@ -5046,7 +5169,7 @@ export class TankGameplayController {
     } else {
       this.airborneSeconds += dt;
     }
-    this.syncPhysicsDamping(grounded);
+    this.syncPhysicsDamping(grounded, dt);
 
     if (this.flightModel) {
       this.updateFlight(turnAxis, boostHeld, canMove, grounded, dt);
@@ -5232,14 +5355,16 @@ export class TankGameplayController {
     return right.scale(horizontal).add(Axis.Y.scale(vertical));
   }
 
-  private applyCameraShake(camera: TargetCamera, target: Vector3): void {
+  private applyCameraShake(camera: TargetCamera, target: Vector3 | null): void {
     const offset = this.getCameraShakeOffset(camera);
     if (!offset) {
       return;
     }
 
     camera.position.addInPlace(offset);
-    camera.setTarget(target);
+    if (target) {
+      camera.setTarget(target);
+    }
   }
 
   /**
@@ -5336,6 +5461,12 @@ export class TankGameplayController {
     const maxForce = this.config.suspension.maxForce;
     const groundContactTolerance = this.config.suspension.groundContactTolerance ?? 0.12;
     const springForcesEnabled = this.config.suspension.springForcesEnabled === true;
+    const deployHeight = this.config.flight?.gear.deployHeight ?? 6;
+    const deploySpeed = this.config.flight?.gear.deploySpeed ?? 8;
+    const airspeed = this.tankBody.getLinearVelocity().length();
+    const skipSpringForces =
+      this.flightModel !== null &&
+      (this.flightAltitudeAboveGround > deployHeight || airspeed > deploySpeed);
 
     let contactCount = 0;
     this.suspensionCompressions.fill(0);
@@ -5376,7 +5507,7 @@ export class TankGameplayController {
       const compression = clamp(effectiveRestLength - probeHeightAboveGround, 0, effectiveRestLength);
       this.suspensionCompressions[probeIndex] = compression;
 
-      if (!springForcesEnabled || compression <= 0) {
+      if (skipSpringForces || !springForcesEnabled || compression <= 0) {
         continue;
       }
 
@@ -5401,16 +5532,75 @@ export class TankGameplayController {
   }
 
   /** Réduit l'amortissement en vol pour conserver l'inertie après une rampe ou un saut. */
-  private syncPhysicsDamping(grounded: boolean): void {
+  private syncPhysicsDamping(grounded: boolean, dt: number): void {
     const physics = this.config.physics;
     if (grounded) {
       this.tankBody.setLinearDamping(physics.tankLinearDamping);
       this.tankBody.setAngularDamping(physics.tankAngularDamping);
+    } else {
+      this.tankBody.setLinearDamping(physics.airborneLinearDamping ?? physics.tankLinearDamping);
+      this.tankBody.setAngularDamping(physics.airborneAngularDamping ?? physics.tankAngularDamping);
+    }
+
+    const targetGravity = grounded ? 1 : this.resolveFlightGravityFactor();
+    if (this.flightModel) {
+      const blendRate = 6;
+      const step = blendRate * Math.max(dt, 0);
+      if (Math.abs(this.flightGravityFactor - targetGravity) <= step) {
+        this.flightGravityFactor = targetGravity;
+      } else {
+        this.flightGravityFactor += Math.sign(targetGravity - this.flightGravityFactor) * step;
+      }
+      this.tankBody.setGravityFactor(this.flightGravityFactor);
       return;
     }
 
-    this.tankBody.setLinearDamping(physics.airborneLinearDamping ?? physics.tankLinearDamping);
-    this.tankBody.setAngularDamping(physics.airborneAngularDamping ?? physics.tankAngularDamping);
+    this.tankBody.setGravityFactor(targetGravity);
+  }
+
+  /**
+   * Gravité réduite en croisière ; pleine uniquement bas + lent pour l'atterrissage.
+   * Les passes rapides en rase-mottes conservent la gravité arcade.
+   */
+  private resolveFlightGravityFactor(): number {
+    const flightCfg = this.config.flight;
+    const cruiseGravity = flightCfg?.gravityScale ?? 1;
+    if (!flightCfg) {
+      return cruiseGravity;
+    }
+
+    const deployHeight = flightCfg.gear.deployHeight ?? 6;
+    const altitude = this.flightAltitudeAboveGround;
+    const airspeed = this.tankBody.getLinearVelocity().length();
+    const { landingBlend } = resolveLowAltitudeFlightBlends(
+      altitude,
+      airspeed,
+      deployHeight,
+      flightCfg.gear.deploySpeed,
+      flightCfg.gear.retractSpeed
+    );
+
+    return lerp(cruiseGravity, 1, landingBlend);
+  }
+
+  /**
+   * Le contact suspension peut clignoter en vol bas : on retarde la sortie de sol,
+   * mais on réaccroche immédiatement au toucher.
+   */
+  private resolveFlightGrounded(suspensionContact: boolean, dt: number): boolean {
+    const releaseDelay = 0.14;
+
+    if (suspensionContact) {
+      this.flightGroundedLatch = true;
+      this.flightGroundedReleaseTimer = 0;
+      return true;
+    }
+
+    this.flightGroundedReleaseTimer += dt;
+    if (this.flightGroundedReleaseTimer >= releaseDelay) {
+      this.flightGroundedLatch = false;
+    }
+    return this.flightGroundedLatch;
   }
 
   /** Rebond vertical à la réception d’un saut : impulsion vers le haut selon la vitesse de chute. */
@@ -5437,6 +5627,10 @@ export class TankGameplayController {
   }
 
   private applyCamera(zoomHeld: boolean, dt: number): void {
+    if (!this.playerActive) {
+      return;
+    }
+
     this.zoomActive = zoomHeld;
     const orbitCam = this.tankCamera ?? null;
     const zoomCam = this.tankZoomCamera ?? null;
@@ -5451,14 +5645,16 @@ export class TankGameplayController {
     // If we're in the alternative view, make it FOLLOW the orbit camera orientation.
     // This keeps the view consistent while preserving gameplay aiming based on orbit camera.
     if (zoomHeld && zoomCam && orbitCam) {
-      orbitCam.computeWorldMatrix();
+      if (this.flightModel && this.cameraZoomNode) {
+        if (this.zoomCamFreezeSeconds <= 0) {
+          this.applyFlightRigCamera(zoomCam, this.cameraZoomNode);
+        }
+        this.applyCameraShake(zoomCam, null);
+      } else if (this.muzzleCannonNode) {
+        orbitCam.computeWorldMatrix();
 
-      // Position zoom camera near the muzzle, with a consistent "left + up + slight back" offset
-      // in the cannon's forward frame (world-space). This avoids bone axis surprises.
-      if (this.muzzleCannonNode) {
-        // `MUZZLE_canon_tank` is parented under the cannon bone, so it inherits the recoil translation.
-        // For the zoom camera, we want the cannon recoil to NOT pull the camera inside the tank.
-        // Cancel the recoil by subtracting the recoil offset along the cannon's local recoil axis (local +Y here).
+        // Position zoom camera near the muzzle, with a consistent "left + up + slight back" offset
+        // in the cannon's forward frame (world-space). This avoids bone axis surprises.
         const muzzlePosRaw = this.muzzleCannonNode.getAbsolutePosition();
         let muzzlePos = muzzlePosRaw.clone();
         if (this.cannonRecoilOffsetY !== 0 && this.cannonControl.transformNode) {
@@ -5512,7 +5708,6 @@ export class TankGameplayController {
         if (this.zoomCamFreezeSeconds <= 0) {
           zoomCam.position.copyFrom(desiredPos);
         }
-        // Keep aiming consistent even if position is frozen.
         const from = zoomCam.globalPosition ?? zoomCam.position;
         const target = from.add(forward.scale(1000));
         zoomCam.setTarget(target);
@@ -5544,7 +5739,8 @@ export class TankGameplayController {
       this.applyCameraShake(orbitCam, target);
     }
 
-    const boostMultiplier = this.boostActive ? this.config.camera.boostFovMultiplier : 1;
+    const boostMultiplier =
+      this.flightModel || !this.boostActive ? 1 : this.config.camera.boostFovMultiplier;
     const orbitFov = toRadians(this.config.camera.defaultFovDeg) * boostMultiplier;
     const zoomFov = toRadians(this.config.camera.zoomViewFovDeg) * boostMultiplier;
 
