@@ -2684,7 +2684,7 @@ export class TankGameplayController {
     const shellAmmoText = `${this.shellLoadedAmmo}/${this.shellReserveAmmo}`;
     const primaryIsDisplayed = this.isPrimaryWeapon(this.weaponHudDisplayedWeapon);
     const primaryProjectileIconUrl =
-      this.primaryWeaponKind === "missile" ? missileWeaponIconUrl : shellWeaponIconUrl;
+      this.primaryWeaponKind === "shell" ? shellWeaponIconUrl : missileWeaponIconUrl;
 
     if (primaryIsDisplayed) {
       if (this.hudWeaponPrimaryIcon) {
@@ -3773,11 +3773,7 @@ export class TankGameplayController {
   }
 
   private usesJetMissileReticle(): boolean {
-    return (
-      (this.config.movement.steeringMode ?? "tank") === "plane" &&
-      this.primaryWeaponKind === "missile" &&
-      Boolean(this.primaryWeaponConfig.missileLock)
-    );
+    return Boolean(this.primaryWeaponConfig.missileLock);
   }
 
   private ensureJetMissileLockController(): void {
@@ -3853,7 +3849,7 @@ export class TankGameplayController {
   }
 
   private playPrimaryProjectileSound(loadedBeforeShot: number): void {
-    if (this.primaryWeaponKind !== "missile") {
+    if (this.primaryWeaponKind === "shell") {
       this.cannonShotSound?.play();
       return;
     }

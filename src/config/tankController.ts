@@ -232,18 +232,23 @@ export interface TankControllerConfig {
       cameraZoomParentBone?: string;
       muzzleShell?: string;
       muzzleMissile?: string;
+      /** Muzzle des roquettes non guidées (ex. `MUZZLE_rocket`). */
+      muzzleRocket?: string;
       muzzleGun?: string;
       ammoShellMesh?: string;
       ammoShellColliderMesh?: string;
       ammoMissileMesh?: string;
       ammoMissileColliderMesh?: string;
-      /** Emplacements d'emport visuels (ex. `MUZZLE_missile_jet_L`, `_R`). Ordre = ordre de tir. */
+      /** Templates roquette : `AMMO_rocket` + `COL_rocket`. */
+      ammoRocketMesh?: string;
+      ammoRocketColliderMesh?: string;
+      /** Emplacements d'emport visuels (ex. `MUZZLE_missile_L`, `_R`). Ordre = ordre de tir. */
       missileHardpoints?: string[];
       playerTarget?: string;
       damageSmoke?: string[];
       /** Empty de la flamme de tuyère (ex. `jet_post_combustion`). */
       postCombustion?: string;
-      /** Empty fumée / turbine sur le mesh missile (ex. `jet_missile_smoke_1`). */
+      /** Empty fumée / turbine sur le mesh missile guidé (ex. `missile_smoke_1`). */
       missileSmoke?: string;
     };
   };
@@ -519,7 +524,9 @@ export interface TankControllerConfig {
     maxStacks: number;
     /** Obus (tank). */
     shell?: ProjectileWeaponConfig;
-    /** Missiles (voiture blindée, etc.). */
+    /** Roquettes non guidées (voiture blindée, etc.). */
+    rocket?: ProjectileWeaponConfig;
+    /** Missiles guidés (jet, etc.). */
     missile?: ProjectileWeaponConfig;
     bullet: {
       shotsPerSecond: number;
@@ -559,16 +566,19 @@ export interface ProjectileWeaponConfig {
   missileLock?: MissileLockConfig;
 }
 
-export type PrimaryWeaponKind = "shell" | "missile";
+export type PrimaryWeaponKind = "shell" | "rocket" | "missile";
 
 export function getPrimaryWeaponKind(config: TankControllerConfig): PrimaryWeaponKind {
-  if (config.weapons.missile) {
-    return "missile";
-  }
   if (config.weapons.shell) {
     return "shell";
   }
-  throw new Error("Vehicle config must define weapons.shell or weapons.missile");
+  if (config.weapons.rocket) {
+    return "rocket";
+  }
+  if (config.weapons.missile) {
+    return "missile";
+  }
+  throw new Error("Vehicle config must define weapons.shell, weapons.rocket, or weapons.missile");
 }
 
 export function getPrimaryWeaponConfig(config: TankControllerConfig): ProjectileWeaponConfig {

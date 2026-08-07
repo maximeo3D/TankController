@@ -1,5 +1,5 @@
-export type WeaponType = "shell" | "missile" | "bullet";
-export type PrimaryWeaponType = "shell" | "missile";
+export type WeaponType = "shell" | "rocket" | "missile" | "bullet";
+export type PrimaryWeaponType = "shell" | "rocket" | "missile";
 
 export interface TankInputFrame {
   moveAxis: number;

@@ -36,10 +36,10 @@
       "cameraStart": "CAM_armoredcar",
       "cameraZoom": "CAM_armoredcar_zoom",
       "cameraZoomParentBone": "armes",
-      "muzzleMissile": "MUZZLE_rocket_armoredcar",
+      "muzzleRocket": "MUZZLE_rocket_armoredcar",
       "muzzleGun": "MUZZLE_mg_armoredcar",
-      "ammoMissileMesh": "AMMO_missile",
-      "ammoMissileColliderMesh": "COL_missile",
+      "ammoRocketMesh": "AMMO_rocket",
+      "ammoRocketColliderMesh": "COL_rocket",
       "playerTarget": "TARGET_player_armoredcar",
       "damageSmoke": [
         "armoredcar_damage_smoke_1",
@@ -250,7 +250,7 @@
   "weapons": {
     "powerUpBonusPerStack": 0.25,
     "maxStacks": 2,
-    "missile": {
+    "rocket": {
       "startingReserveAmmo": 16,
       "startsChambered": true,
       "magazineSize": 4,

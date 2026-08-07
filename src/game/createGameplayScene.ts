@@ -29,7 +29,7 @@ import { Texture } from "@babylonjs/core/Materials/Textures/texture";
 import type { AssetContainer } from "@babylonjs/core/assetContainer";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import type { TankControllerConfig } from "../config/tankController";
-import { getSuspensionContactOffset } from "../config/tankController";
+import { getPrimaryWeaponKind, getSuspensionContactOffset } from "../config/tankController";
 import { getVehicleConfig } from "../config/vehicleRegistry";
 import { tankAssetUrl, armoredCarAssetUrl, fighterJetAssetUrl, skyboxAssetUrl, powerUpsAssetUrl, enemiesAssetUrl, vehicleTankIconUrl, vehicleArmoredCarIconUrl, vehicleFighterJetIconUrl } from "../assets/assetUrls";
 import { enemiesConfig } from "../config/enemiesController";
@@ -444,21 +444,44 @@ interface SpawnPlayerVehicleOptions {
 
 function resolveVehicleNodeNames(config: TankControllerConfig) {
   const nodes = config.rig.nodes ?? {};
+  const primaryKind = getPrimaryWeaponKind(config);
+
+  let muzzleShell: string;
+  let ammoShellMesh: string;
+  let ammoShellColliderMesh: string;
+
+  switch (primaryKind) {
+    case "rocket":
+      muzzleShell = nodes.muzzleRocket ?? nodes.muzzleMissile ?? "MUZZLE_rocket";
+      ammoShellMesh = nodes.ammoRocketMesh ?? "AMMO_rocket";
+      ammoShellColliderMesh = nodes.ammoRocketColliderMesh ?? "COL_rocket";
+      break;
+    case "missile":
+      muzzleShell = nodes.muzzleMissile ?? "MUZZLE_missile";
+      ammoShellMesh = nodes.ammoMissileMesh ?? "AMMO_missile";
+      ammoShellColliderMesh = nodes.ammoMissileColliderMesh ?? "COL_missile";
+      break;
+    default:
+      muzzleShell = nodes.muzzleShell ?? "MUZZLE_canon_tank";
+      ammoShellMesh = nodes.ammoShellMesh ?? "AMMO_obus";
+      ammoShellColliderMesh = nodes.ammoShellColliderMesh ?? "COL_obus";
+      break;
+  }
+
   return {
     colliderMesh: nodes.colliderMesh ?? "COL_tank",
     cameraPivot: nodes.cameraPivot ?? "CAM_pivot",
     cameraStart: nodes.cameraStart ?? "CAM_tank",
     cameraZoom: nodes.cameraZoom ?? null,
     cameraZoomParentBone: nodes.cameraZoomParentBone ?? null,
-    muzzleShell: nodes.muzzleMissile ?? nodes.muzzleShell ?? "MUZZLE_canon_tank",
+    muzzleShell,
     muzzleGun: nodes.muzzleGun ?? "MUZZLE_gun_tank",
-    ammoShellMesh: nodes.ammoMissileMesh ?? nodes.ammoShellMesh ?? "AMMO_obus",
-    ammoShellColliderMesh:
-      nodes.ammoMissileColliderMesh ?? nodes.ammoShellColliderMesh ?? "COL_obus",
+    ammoShellMesh,
+    ammoShellColliderMesh,
     missileHardpoints: nodes.missileHardpoints ?? [],
     playerTarget: nodes.playerTarget ?? "TARGET_player_tank",
     postCombustion: nodes.postCombustion ?? null,
-    missileSmoke: nodes.missileSmoke ?? null,
+    missileSmoke: primaryKind === "missile" ? nodes.missileSmoke ?? null : null,
     pitchBone: config.rig.pitchBone ?? "canon",
     damageSmokes: nodes.damageSmoke ?? [
       "tank_damage_smoke_1",
