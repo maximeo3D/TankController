@@ -1,0 +1,84 @@
+{
+    "name": "postCombustion",
+    "id": "postCombustion",
+    "capacity": 1000,
+    "emitter": [
+        0,
+        0,
+        0
+    ],
+    "particleTexture": "smoke.png",
+    "minEmitBox": [
+        -0.025,
+        0,
+        -0.025
+    ],
+    "maxEmitBox": [
+        0.025,
+        0,
+        0.025
+    ],
+    "color1": [
+        0.15,
+        0.055,
+        0.01,
+        0.045
+    ],
+    "color2": [
+        0.055,
+        0.02,
+        0.085,
+        0.005
+    ],
+    "colorDead": [
+        0.025,
+        0.005,
+        0.045,
+        0
+    ],
+    "minSize": 0.2,
+    "maxSize": 0.2,
+    "minScaleX": 1,
+    "maxScaleX": 1,
+    "minScaleY": 1,
+    "maxScaleY": 1,
+    "minLifeTime": 0.1,
+    "maxLifeTime": 0.25,
+    "emitRate": 500,
+    "manualEmitCount": -1,
+    "gravity": [
+        0,
+        0,
+        0
+    ],
+    "direction1": [
+        -0.05,
+        -0.05,
+        1
+    ],
+    "direction2": [
+        -0.05,
+        -0.05,
+        1
+    ],
+    "minEmitPower": 3,
+    "maxEmitPower": 6,
+    "minAngularSpeed": -1,
+    "maxAngularSpeed": 1,
+    "minInitialRotation": 0,
+    "maxInitialRotation": 0,
+    "updateSpeed": 0.016,
+    "blendMode": "2",
+    "isBillboardBased": true,
+    "billboardMode": 7,
+    "preWarmCycles": 0,
+    "preWarmStepOffset": 1,
+    "isAnimationSheetEnabled": false,
+    "spriteCellWidth": 64,
+    "spriteCellHeight": 64,
+    "startSpriteCellID": 0,
+    "endSpriteCellID": 0,
+    "spriteCellChangeSpeed": 1,
+    "spriteCellLoop": true,
+    "spriteRandomStartCell": false
+}

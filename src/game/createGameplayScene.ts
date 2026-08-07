@@ -48,6 +48,7 @@ import { VehicleSelectorHud, type VehicleSelectorEntry } from "./VehicleSelector
 import { TARGET_FRAME_SEC } from "./frameTiming";
 import { StackPanel } from "@babylonjs/gui";
 import { createTankDamageParticleBundle } from "./tankDamageParticles";
+import { createPostCombustionParticleBundle } from "./vehicle/postCombustionParticles";
 import { waitAnimationFrames } from "./frameTiming";
 import type { RadarWorldBounds } from "./RadarHud";
 
@@ -440,6 +441,7 @@ function resolveVehicleNodeNames(config: TankControllerConfig) {
       nodes.ammoMissileColliderMesh ?? nodes.ammoShellColliderMesh ?? "COL_obus",
     missileHardpoints: nodes.missileHardpoints ?? [],
     playerTarget: nodes.playerTarget ?? "TARGET_player_tank",
+    postCombustion: nodes.postCombustion ?? null,
     pitchBone: config.rig.pitchBone ?? "canon",
     damageSmokes: nodes.damageSmoke ?? [
       "tank_damage_smoke_1",
@@ -689,6 +691,22 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
     );
   }
 
+  let postCombustionParticles = null;
+  if (nodeNames.postCombustion) {
+    try {
+      postCombustionParticles = await createPostCombustionParticleBundle(
+        scene,
+        findTransformNode(vehicleContainer, nodeNames.postCombustion),
+        {
+          throttleThreshold: vehicleConfig.flight?.postCombustionThrottleThreshold ?? 0.15,
+          turboEmitScale: vehicleConfig.flight?.postCombustionTurboEmitScale ?? 2
+        }
+      );
+    } catch (err) {
+      console.warn("[TankController] Post-combustion particles could not be created:", err);
+    }
+  }
+
   let tankDamageParticles = null;
   try {
     tankDamageParticles = await createTankDamageParticleBundle(scene, {
@@ -733,6 +751,7 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
     trackTreadParticles,
     trackTreadParticlesReverse,
     tankDamageParticles,
+    postCombustionParticles,
     playerTargetNode,
     enemyTurretSystem,
     sharedPowerUpSystem,

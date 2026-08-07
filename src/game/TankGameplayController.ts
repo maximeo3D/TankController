@@ -22,6 +22,7 @@ import type { Camera } from "@babylonjs/core/Cameras/camera";
 import type { TargetCamera } from "@babylonjs/core/Cameras/targetCamera";
 import type { AssetContainer } from "@babylonjs/core/assetContainer";
 import type { Bone } from "@babylonjs/core/Bones/bone";
+import type { Skeleton } from "@babylonjs/core/Bones/skeleton";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import type { Scene } from "@babylonjs/core/scene";
 import { ParticleSystem } from "@babylonjs/core/Particles/particleSystem";
@@ -76,6 +77,11 @@ import {
 } from "../assets/assetUrls";
 import { resolveVehicleSoundUrl } from "../assets/soundLibrary";
 import { FlightModel, resolveLowAltitudeFlightBlends, type FlightState } from "./vehicle/FlightModel";
+import {
+  findContainerMaterial,
+  prepareEngineMaterial,
+  setMaterialEmissiveIntensity
+} from "./vehicle/flightEngineVisual";
 import { JetMissileLockController } from "./vehicle/JetMissileLockController";
 import { applyUiFontToTexture, TIMER_FONT_FAMILY } from "../ui/applyUiFont";
 import { TARGET_FRAME_SEC } from "./frameTiming";
@@ -85,6 +91,7 @@ import "@babylonjs/core/Layers/effectLayerSceneComponent";
 import { HighlightLayer } from "@babylonjs/core/Layers/highlightLayer";
 import type { TrackTreadParticleBundle } from "./trackTreadParticles";
 import type { TankDamageParticleBundle } from "./tankDamageParticles";
+import type { PostCombustionParticleBundle } from "./vehicle/postCombustionParticles";
 import { PowerUpSystem, type PowerUpTypeId } from "./PowerUpSystem";
 import { EnemyTurretSystem, type EnemyTurretPlayerTarget } from "./EnemyTurretSystem";
 import { RadarHud, type RadarWorldBounds } from "./RadarHud";
@@ -153,6 +160,23 @@ interface FlightRigControls {
   gearFront: HingeControl | null;
   gearLeft: HingeControl | null;
   gearRight: HingeControl | null;
+}
+
+/**
+ * Bone turbine : l'os est couché le long de la tuyère et seuls les vertices du
+ * bord sont pondérés dessus. Le scale s'applique donc aux deux axes
+ * perpendiculaires (ouverture / fermeture de la buse), jamais à l'axe tuyère.
+ */
+interface EngineBoneControl {
+  control: BoneControl;
+  skeleton: Skeleton | null;
+  baseScale: Vector3;
+  nozzleAxis: "x" | "y" | "z";
+}
+
+interface FlightEngineVisual {
+  bone: EngineBoneControl | null;
+  material: Material | null;
 }
 
 export interface TankGameplayDebugState {
@@ -257,6 +281,8 @@ export interface TankGameplayControllerOptions {
   trackTreadParticlesReverse?: TrackTreadParticleBundle | null;
   /** Fumée / étincelles de dégâts sur les empties `tank_damage_*` (si chargés). */
   tankDamageParticles?: TankDamageParticleBundle | null;
+  /** Flamme de tuyère sur l'empty `jet_post_combustion` (mode `plane`). */
+  postCombustionParticles?: PostCombustionParticleBundle | null;
   /** Empty `TARGET_player_tank` — world aim point for enemy turrets. Falls back to `tankAnchor`. */
   playerTargetNode?: TransformNode | AbstractMesh | null;
   enemyTurretSystem?: EnemyTurretSystem | null;
@@ -336,9 +362,12 @@ export class TankGameplayController {
   /** Non nul uniquement en mode `plane` : remplace toute la conduite au sol. */
   private readonly flightModel: FlightModel | null;
   private readonly flightRig: FlightRigControls | null;
+  private readonly flightEngineVisual: FlightEngineVisual | null;
   private flightAileronSmoothed = 0;
   private flightElevatorSmoothed = 0;
   private flightRudderSmoothed = 0;
+  private flightEngineScaleSmoothed = 1;
+  private flightEngineEmissiveSmoothed = 0.1;
   private flightAltitudeAboveGround = 0;
   private flightChaseCameraRadius = 8;
   private chaseCameraPivotSmoothed = Vector3.Zero();
@@ -420,6 +449,7 @@ export class TankGameplayController {
   private readonly trackTreadParticles: TrackTreadParticleBundle | null;
   private readonly trackTreadParticlesReverse: TrackTreadParticleBundle | null;
   private readonly tankDamageParticles: TankDamageParticleBundle | null;
+  private readonly postCombustionParticles: PostCombustionParticleBundle | null;
   private readonly powerUpSystem: PowerUpSystem | null;
   private readonly playerTargetNode: TransformNode | AbstractMesh | null;
   private readonly enemyTurretSystem: EnemyTurretSystem | null;
@@ -675,6 +705,7 @@ export class TankGameplayController {
     this.trackTreadParticles = options.trackTreadParticles ?? null;
     this.trackTreadParticlesReverse = options.trackTreadParticlesReverse ?? null;
     this.tankDamageParticles = options.tankDamageParticles ?? null;
+    this.postCombustionParticles = options.postCombustionParticles ?? null;
     this.powerUpSystem = this.createPowerUpSystem(options);
     this.enemyTurretSystem = options.enemyTurretSystem ?? null;
     this.ownsEnemyTurretSystem = options.ownsEnemyTurretSystem === true;
@@ -757,9 +788,16 @@ export class TankGameplayController {
       });
       this.flightChaseCameraRadius = options.config.camera.orbitDefaultRadius;
       this.flightRig = this.resolveFlightRig(options.tankContainer, options.config.rig.flight);
+      this.flightEngineVisual = this.resolveFlightEngineVisual(
+        options.tankContainer,
+        options.config.rig.flight,
+        options.config.flight
+      );
+      this.flightEngineEmissiveSmoothed = options.config.flight.engineEmissiveIdle ?? 0.1;
     } else {
       this.flightModel = null;
       this.flightRig = null;
+      this.flightEngineVisual = null;
       if ((options.config.movement.steeringMode ?? "tank") === "plane") {
         console.warn("[TankController] steeringMode `plane` requires a `flight` config block.");
       }
@@ -945,6 +983,7 @@ export class TankGameplayController {
     this.hudTexture?.dispose();
     this.hudTexture = null;
     this.tankDamageParticles?.syncHealthPercent(0);
+    this.postCombustionParticles?.syncFlight(0, false);
     this.stopEngineSounds();
     this.turretStartSound?.stop();
     this.turretLoopSound?.stop();
@@ -1216,9 +1255,21 @@ export class TankGameplayController {
     }
 
     const audio = this.config.audio;
-    let target: "idle" | "move" | "turbo" = isMoving ? "move" : "idle";
-    if (target === "move" && this.boostActive && this.tankTurboSound) {
-      target = "turbo";
+    let target: "idle" | "move" | "turbo";
+    if (this.flightModel) {
+      if (this.battery <= 0) {
+        target = "idle";
+      } else if (this.boostActive && this.tankTurboSound) {
+        target = "turbo";
+      } else {
+        // Pas de boucle idle : jet_move en continu, volume min au ralenti (throttle 0).
+        target = "move";
+      }
+    } else {
+      target = isMoving ? "move" : "idle";
+      if (target === "move" && this.boostActive && this.tankTurboSound) {
+        target = "turbo";
+      }
     }
 
     if (this.tankMovementSoundMode !== target) {
@@ -1238,10 +1289,11 @@ export class TankGameplayController {
     if (target === "turbo") {
       this.tankTurboSound?.setVolume(audio?.engineTurboVolume ?? 0.62);
     } else if (target === "move" && this.tankMoveSound) {
-      const speed = clamp(this.getEngineLoadForAudio(), 0, 1);
+      const load = clamp(this.getEngineLoadForAudio(), 0, 1);
       const minVolume = audio?.engineMoveVolumeMin ?? 0.28;
       const maxVolume = audio?.engineMoveVolumeMax ?? 0.7;
-      this.tankMoveSound.setVolume(minVolume + (maxVolume - minVolume) * speed);
+      // throttle 0 → volume min (démarrage moteur), throttle 1 → volume max
+      this.tankMoveSound.setVolume(minVolume + (maxVolume - minVolume) * load);
     } else if (this.tankIdleSound) {
       this.tankIdleSound.setVolume(audio?.engineIdleVolume ?? 0.42);
     }
@@ -3020,6 +3072,7 @@ export class TankGameplayController {
     this.trackTreadParticles?.dispose();
     this.trackTreadParticlesReverse?.dispose();
     this.tankDamageParticles?.dispose();
+    this.postCombustionParticles?.dispose();
     this.deathBlackMaterial?.dispose();
     this.deathBlackMaterial = null;
     this.shieldHighlightLayer?.removeAllMeshes();
@@ -4027,8 +4080,8 @@ export class TankGameplayController {
     if (this.primaryWeaponKind === "shell") {
       this.pendingCannonRecoilKickY += this.config.cannon.recoilKickY;
       this.applyHullRecoilImpulseFromWorldForward(forward);
+      this.triggerShellShotCameraShake();
     }
-    this.triggerShellShotCameraShake();
   }
 
   private updateProjectiles(dt: number): void {
@@ -4930,6 +4983,46 @@ export class TankGameplayController {
     };
   }
 
+  private resolveFlightEngineVisual(
+    container: AssetContainer,
+    rig: FlightRigConfig | undefined,
+    flightCfg: TankControllerConfig["flight"]
+  ): FlightEngineVisual | null {
+    if (!flightCfg) {
+      return null;
+    }
+
+    let bone: EngineBoneControl | null = null;
+
+    if (rig?.engineBone) {
+      const control = resolveBoneControl(container, rig.engineBone);
+      if (control.bone) {
+        bone = {
+          control,
+          skeleton: control.bone.getSkeleton(),
+          baseScale: control.bone.getScale().clone(),
+          nozzleAxis: rig.engineNozzleAxis ?? "y"
+        };
+      } else {
+        console.warn(`[TankController] flight engine bone "${rig.engineBone}" not found.`);
+      }
+    }
+
+    const materialName = flightCfg.engineMaterialName ?? "engine";
+    const material = findContainerMaterial(container, materialName);
+    if (!material) {
+      console.warn(`[TankController] flight engine material "${materialName}" not found.`);
+    } else {
+      prepareEngineMaterial(material, flightCfg.engineEmissiveIdle ?? 0.1);
+    }
+
+    if (!bone && !material) {
+      return null;
+    }
+
+    return { bone, material };
+  }
+
   /**
    * Mode avion : le modèle de vol pilote entièrement forces et couples. La
    * suspension reste active pour le roulage, mais aucune logique de conduite au
@@ -4986,32 +5079,101 @@ export class TankGameplayController {
     this.flightAltitudeAboveGround = state.altitudeAboveGround;
   }
 
-  /** Gouvernes braquées d'après le manche, trains déployés d'après l'état de vol. */
+  /** Gouvernes, trains, turbine et émissive moteur d'après l'état de vol. */
   private applyFlightRigVisuals(state: FlightState, dt: number): void {
-    const rig = this.flightRig;
     const cfg = this.config.flight;
-    if (!rig || !cfg) {
+    if (!cfg) {
       return;
     }
 
-    const smooth = 1 - Math.exp(-Math.max(cfg.surfaceSharpness, 0.01) * dt);
-    this.flightAileronSmoothed += (state.stickRoll - this.flightAileronSmoothed) * smooth;
-    this.flightElevatorSmoothed += (state.stickPitch - this.flightElevatorSmoothed) * smooth;
-    this.flightRudderSmoothed += (state.yawInput - this.flightRudderSmoothed) * smooth;
+    const rig = this.flightRig;
+    if (rig) {
+      const smooth = 1 - Math.exp(-Math.max(cfg.surfaceSharpness, 0.01) * dt);
+      this.flightAileronSmoothed += (state.stickRoll - this.flightAileronSmoothed) * smooth;
+      this.flightElevatorSmoothed += (state.stickPitch - this.flightElevatorSmoothed) * smooth;
+      this.flightRudderSmoothed += (state.yawInput - this.flightRudderSmoothed) * smooth;
 
-    const aileron = toRadians(this.flightAileronSmoothed * cfg.aileronMaxDeg);
-    const elevator = toRadians(this.flightElevatorSmoothed * cfg.elevatorMaxDeg);
-    const rudder = toRadians(this.flightRudderSmoothed * cfg.rudderMaxDeg);
-    this.setHingeAngle(rig.aileronLeft, aileron);
-    this.setHingeAngle(rig.aileronRight, aileron);
-    this.setHingeAngle(rig.elevatorLeft, elevator);
-    this.setHingeAngle(rig.elevatorRight, elevator);
-    this.setHingeAngle(rig.rudder, rudder);
+      const aileron = toRadians(this.flightAileronSmoothed * cfg.aileronMaxDeg);
+      const elevator = toRadians(this.flightElevatorSmoothed * cfg.elevatorMaxDeg);
+      const rudder = toRadians(this.flightRudderSmoothed * cfg.rudderMaxDeg);
+      this.setHingeAngle(rig.aileronLeft, aileron);
+      this.setHingeAngle(rig.aileronRight, aileron);
+      this.setHingeAngle(rig.elevatorLeft, elevator);
+      this.setHingeAngle(rig.elevatorRight, elevator);
+      this.setHingeAngle(rig.rudder, rudder);
 
-    const stowed = toRadians((1 - state.gearExtension) * cfg.gear.retractedDeg);
-    this.setHingeAngle(rig.gearFront, stowed);
-    this.setHingeAngle(rig.gearLeft, stowed);
-    this.setHingeAngle(rig.gearRight, stowed);
+      const stowed = toRadians((1 - state.gearExtension) * cfg.gear.retractedDeg);
+      this.setHingeAngle(rig.gearFront, stowed);
+      this.setHingeAngle(rig.gearLeft, stowed);
+      this.setHingeAngle(rig.gearRight, stowed);
+    }
+
+    this.applyFlightEngineVisuals(state, dt);
+    this.postCombustionParticles?.syncFlight(state.throttle, state.afterburner);
+  }
+
+  private applyFlightEngineVisuals(state: FlightState, dt: number): void {
+    const visual = this.flightEngineVisual;
+    const cfg = this.config.flight;
+    if (!visual || !cfg) {
+      return;
+    }
+
+    const scaleMin = cfg.engineScaleMin ?? 0.75;
+    const throttleT = clamp(state.throttle, 0, 1);
+    const targetScale = lerp(1, scaleMin, throttleT);
+
+    const maxAirspeed = cfg.maxAirspeed ?? 0;
+    const speedT = maxAirspeed > 0 ? clamp(state.airspeed / maxAirspeed, 0, 1) : 0;
+
+    const emissiveIdle = cfg.engineEmissiveIdle ?? 0.1;
+    const emissiveMax = cfg.engineEmissiveMax ?? 0.75;
+    const emissiveTurbo = cfg.engineEmissiveTurbo ?? 1;
+    const targetEmissive = state.afterburner
+      ? emissiveTurbo
+      : lerp(emissiveIdle, emissiveMax, speedT);
+
+    const sharpness = cfg.engineVisualSharpness ?? cfg.surfaceSharpness ?? 12;
+    const scaleSharpness = cfg.engineScaleSharpness ?? sharpness * 2.5;
+    const scaleSmooth = 1 - Math.exp(-Math.max(scaleSharpness, 0.01) * dt);
+    const emissiveSmooth = 1 - Math.exp(-Math.max(sharpness, 0.01) * dt);
+    this.flightEngineScaleSmoothed +=
+      (targetScale - this.flightEngineScaleSmoothed) * scaleSmooth;
+    this.flightEngineEmissiveSmoothed +=
+      (targetEmissive - this.flightEngineEmissiveSmoothed) * emissiveSmooth;
+
+    if (visual.bone) {
+      this.setEngineBoneScale(visual.bone, this.flightEngineScaleSmoothed);
+    }
+    if (visual.material) {
+      setMaterialEmissiveIntensity(visual.material, this.flightEngineEmissiveSmoothed);
+    }
+  }
+
+  /** `nozzleMultiplier` pince les deux axes perpendiculaires à la tuyère. */
+  private setEngineBoneScale(engine: EngineBoneControl, nozzleMultiplier: number): void {
+    const bone = engine.control.bone;
+    if (!bone) {
+      return;
+    }
+
+    const scale = engine.baseScale.clone();
+    if (engine.nozzleAxis !== "x") {
+      scale.x *= nozzleMultiplier;
+    }
+    if (engine.nozzleAxis !== "y") {
+      scale.y *= nozzleMultiplier;
+    }
+    if (engine.nozzleAxis !== "z") {
+      scale.z *= nozzleMultiplier;
+    }
+
+    bone.setScale(scale);
+    const transformNode = bone.getTransformNode();
+    if (transformNode) {
+      transformNode.scaling.copyFrom(scale);
+    }
+    engine.skeleton?.prepare();
   }
 
   private setHingeAngle(hinge: HingeControl | null, angleRad: number): void {

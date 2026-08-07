@@ -32,7 +32,9 @@
       "gearLeftBone": "gear_L",
       "gearRightBone": "gear_R",
       "gearMainAxis": "z",
-      "gearMainSign": -1
+      "gearMainSign": -1,
+      "engineBone": "engine",
+      "engineNozzleAxis": "y"
     },
     "nodes": {
       "colliderMesh": "COL_jet",
@@ -45,6 +47,7 @@
       "ammoMissileColliderMesh": "COL_missile_jet",
       "missileHardpoints": ["MUZZLE_missile_jet_L", "MUZZLE_missile_jet_R"],
       "playerTarget": "TARGET_player_jet",
+      "postCombustion": "jet_post_combustion",
       "damageSmoke": [
         "jet_damage_smoke_1",
         "jet_damage_smoke_2",
@@ -108,6 +111,14 @@
     "taxiSteerMaxDeg": 30.0,
     "taxiDragPerSpeed": 6.0,
     "taxiBrakeForce": 90.0,
+    "engineScaleMin": 0.625,
+    "engineScaleSharpness": 64.0,
+    "engineEmissiveIdle": 0.1,
+    "engineEmissiveMax": 0.75,
+    "engineEmissiveTurbo": 1.0,
+    "engineMaterialName": "engine",
+    "postCombustionThrottleThreshold": 0.15,
+    "postCombustionTurboEmitScale": 0.01,
     "gear": {
       "deploySpeed": 8.0,
       "retractSpeed": 11.0,
@@ -202,7 +213,7 @@
     "startingHealth": 180
   },
   "audio": {
-    "engineIdle": "jet_idle",
+    "engineIdle": null,
     "engineMove": "jet_move",
     "engineTurbo": "jet_turbo",
     "horn": null,

@@ -47,6 +47,14 @@ export interface FlightRigConfig {
   gearMainAxis?: RigAxis;
   /** Signe du train gauche ; le droit prend le signe opposé (repli symétrique). */
   gearMainSign?: RigSign;
+  /** Bone de la turbine arrière (scale local selon la vitesse). */
+  engineBone?: string;
+  /**
+   * Axe local du bone aligné sur la tuyère (typ. `y`, l'axe tête→queue de l'os).
+   * Il est exclu du scale : seuls les deux axes perpendiculaires se pincent, ce
+   * qui ouvre et ferme la buse sans l'allonger.
+   */
+  engineNozzleAxis?: RigAxis;
 }
 
 /** Modèle de vol arcade utilisé quand `movement.steeringMode` vaut `plane`. */
@@ -131,6 +139,24 @@ export interface FlightConfig {
   arcadePitchLift?: number;
   /** Amortissement de dérapage latéral (1/s) — la trajectoire suit le nez. */
   arcadeSlipDrag?: number;
+  /** Scale min de la turbine sur son axe local à vitesse max (1 = pas de variation). */
+  engineScaleMin?: number;
+  /** Intensité émissive turbine à l'arrêt (0–1). */
+  engineEmissiveIdle?: number;
+  /** Intensité émissive turbine à vitesse max sans turbo (0–1). */
+  engineEmissiveMax?: number;
+  /** Intensité émissive turbine sous post-combustion (0–1). */
+  engineEmissiveTurbo?: number;
+  /** Nom du material GLB de la turbine (ex. `engine`). */
+  engineMaterialName?: string;
+  /** Lissage visuel turbine ; reprend `surfaceSharpness` si absent. */
+  engineVisualSharpness?: number;
+  /** Lissage du scale buse ; reprend `engineVisualSharpness * 2.5` si absent. */
+  engineScaleSharpness?: number;
+  /** Manette des gaz allumant la flamme de tuyère (0–1 ; défaut 0.15). */
+  postCombustionThrottleThreshold?: number;
+  /** Facteur de débit de la flamme sous post-combustion (défaut 2). */
+  postCombustionTurboEmitScale?: number;
   gear: {
     /** Vitesse sol max (m/s) autorisant la sortie du train. */
     deploySpeed: number;
@@ -213,6 +239,8 @@ export interface TankControllerConfig {
       missileHardpoints?: string[];
       playerTarget?: string;
       damageSmoke?: string[];
+      /** Empty de la flamme de tuyère (ex. `jet_post_combustion`). */
+      postCombustion?: string;
     };
   };
   movement: {
