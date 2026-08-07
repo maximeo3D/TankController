@@ -79,6 +79,10 @@ export const jetTurboSoundAssetUrl = new URL(
   "../../assets/sounds/jet_turbo.wav",
   import.meta.url
 ).href;
+export const helicopterBladesSoundAssetUrl = new URL(
+  "../../assets/sounds/helicopter_blades.wav",
+  import.meta.url
+).href;
 export const suspensionImpactSoundAssetUrl = new URL(
   "../../assets/sounds/suspension.wav",
   import.meta.url

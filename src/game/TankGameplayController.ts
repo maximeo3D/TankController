@@ -1061,6 +1061,7 @@ export class TankGameplayController {
     this.scene.onBeforeRenderObservable.add(this.update);
     this.scene.onBeforePhysicsObservable.add(this.syncUprightResetBeforePhysics);
     this.scene.onAfterPhysicsObservable.add(this.finishUprightResetPrestep);
+    this.scene.onAfterPhysicsObservable.add(this.syncHelicopterAfterPhysics);
   }
 
   private createPowerUpSystem(options: TankGameplayControllerOptions): PowerUpSystem | null {
@@ -1411,7 +1412,55 @@ export class TankGameplayController {
 
   private syncTankMovementSounds(): void {
     const isMoving = this.battery > 0 && this.getEngineLoadForAudio() > 0.001;
+    if (this.helicopterModel) {
+      this.syncHelicopterSounds();
+      return;
+    }
     this.updateTankMovementSounds(isMoving);
+  }
+
+  private syncHelicopterSounds(): void {
+    if (!this.audioUnlocked) {
+      return;
+    }
+    if (!this.playerActive) {
+      this.stopEngineSounds();
+      return;
+    }
+
+    if (this.battery <= 0) {
+      if (this.tankMovementSoundMode !== "stopped") {
+        this.tankMoveSound?.stop();
+        this.tankMovementSoundMode = "stopped";
+      }
+      return;
+    }
+
+    if (this.tankMovementSoundMode !== "move") {
+      this.tankIdleSound?.stop();
+      this.tankTurboSound?.stop();
+      this.tankMoveSound?.play();
+      this.tankMovementSoundMode = "move";
+    }
+
+    this.tankMoveSound?.setVolume(this.resolveHelicopterBladesVolume());
+  }
+
+  /** Volume des pales selon l'état de vol : turbo > montée > descente > stationnaire. */
+  private resolveHelicopterBladesVolume(): number {
+    const audio = this.config.audio;
+    if (this.boostActive) {
+      return audio?.helicopterBladesVolumeTurbo ?? 1;
+    }
+
+    const climb = this.helicopterModel?.getState().climbInput ?? 0;
+    if (climb > 0.01) {
+      return audio?.helicopterBladesVolumeClimb ?? 0.75;
+    }
+    if (climb < -0.01) {
+      return audio?.helicopterBladesVolumeDescend ?? 0.25;
+    }
+    return audio?.helicopterBladesVolumeIdle ?? 0.25;
   }
 
   private updateTankMovementSounds(isMoving: boolean): void {
@@ -3182,6 +3231,7 @@ export class TankGameplayController {
     this.scene.onBeforeRenderObservable.removeCallback(this.update);
     this.scene.onBeforePhysicsObservable.removeCallback(this.syncUprightResetBeforePhysics);
     this.scene.onAfterPhysicsObservable.removeCallback(this.finishUprightResetPrestep);
+    this.scene.onAfterPhysicsObservable.removeCallback(this.syncHelicopterAfterPhysics);
     this.input.dispose();
 
     this.debugCameraRayLine?.dispose();
@@ -3408,6 +3458,11 @@ export class TankGameplayController {
     if (this.uprightResetPrestepFrames === 0) {
       this.tankBody.disablePreStep = true;
     }
+  };
+
+  /** Verrouille l'assiette arcade après Havok pour éviter les retournements. */
+  private readonly syncHelicopterAfterPhysics = (): void => {
+    this.helicopterModel?.enforcePoseAfterPhysics();
   };
 
   private computeRestAnchorY(
@@ -5438,6 +5493,7 @@ export class TankGameplayController {
   private updateHelicopter(
     moveAxis: number,
     turnAxis: number,
+    effectiveBoost: boolean,
     canMove: boolean,
     grounded: boolean,
     dt: number
@@ -5460,10 +5516,17 @@ export class TankGameplayController {
       dt
     );
 
-    // Pas de post-combustion sur un hélicoptère : le turbo ne fait que recharger.
-    this.boostActive = false;
+    this.boostActive = effectiveBoost;
     const overchargeMax = this.config.energy.overchargeMax;
-    if (this.overcharge < overchargeMax) {
+    if (effectiveBoost) {
+      this.overcharge = Math.max(
+        0,
+        this.overcharge - this.config.energy.overchargeDrainBoostPerSecond * dt
+      );
+      if (this.overcharge <= 0) {
+        this.boostEngaged = false;
+      }
+    } else if (this.overcharge < overchargeMax) {
       this.overcharge = Math.min(
         overchargeMax,
         this.overcharge + this.config.energy.overchargeRechargePerSecond * dt
@@ -5772,7 +5835,7 @@ export class TankGameplayController {
     }
 
     if (this.helicopterModel) {
-      this.updateHelicopter(moveAxis, turnAxis, canMove, grounded, dt);
+      this.updateHelicopter(moveAxis, turnAxis, effectiveBoost, canMove, grounded, dt);
       this.hullDrivePitchTarget = 0;
       this.syncTankMovementSounds();
       return;
@@ -6148,6 +6211,7 @@ export class TankGameplayController {
     if (this.helicopterModel) {
       // La portance du rotor est simulée par le maintien d'altitude : pas de gravité.
       this.tankBody.setGravityFactor(0);
+      this.tankBody.setAngularDamping(Math.max(physics.tankAngularDamping, 8));
       return;
     }
 
@@ -6619,6 +6683,13 @@ export class TankGameplayController {
 
   private applyVisualSmoothing(dt: number): void {
     if (!this.tankVisualRoot || !this.tankAnchor.absoluteRotationQuaternion) {
+      return;
+    }
+
+    if (this.helicopterModel) {
+      this.tankVisualRoot.rotationQuaternion ??= Quaternion.Identity();
+      this.tankVisualRoot.rotationQuaternion.copyFrom(Quaternion.Identity());
+      this.tankVisualRoot.position.copyFromFloats(0, 0, 0);
       return;
     }
 

@@ -47,8 +47,6 @@ export interface HelicopterState {
 }
 
 const AGL_RAY_LENGTH = 300;
-/** Vitesse angulaire max de rattrapage d'assiette (rad/s) — évite les à-coups. */
-const MAX_ATTITUDE_RATE = 6;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
@@ -71,29 +69,32 @@ function smoothFactor(sharpness: number, dt: number): number {
   return 1 - Math.exp(-Math.max(sharpness, 0) * dt);
 }
 
-/**
- * Vitesse angulaire monde ramenant `current` sur `target` en `1 / sharpness` seconde.
- */
-function attitudeAngularVelocity(
-  current: Quaternion,
-  target: Quaternion,
-  sharpness: number
-): Vector3 {
-  // Ordre monde : `current * delta = target` avec la convention vecteur-ligne de Babylon.
-  let delta = Quaternion.Inverse(current).multiply(target);
-  if (delta.w < 0) {
-    // Chemin le plus court : -q représente la même rotation.
-    delta = new Quaternion(-delta.x, -delta.y, -delta.z, -delta.w);
+/** Cap horizontal (monde) à partir du lacet intégré. */
+function flatBasisFromYaw(yawRad: number): { forward: Vector3; right: Vector3 } {
+  const forward = new Vector3(Math.sin(yawRad), 0, Math.cos(yawRad));
+  if (forward.lengthSquared() < 1e-6) {
+    forward.copyFrom(Axis.Z);
+  } else {
+    forward.normalize();
   }
-
-  const sinHalf = Math.sqrt(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z);
-  if (sinHalf < 1e-6) {
-    return Vector3.Zero();
+  const right = Vector3.Cross(forward, Axis.Y);
+  if (right.lengthSquared() > 1e-6) {
+    right.normalize();
+  } else {
+    right.copyFrom(Axis.X);
   }
+  return { forward, right };
+}
 
-  const angle = 2 * Math.atan2(sinHalf, delta.w);
-  const rate = clamp(angle * sharpness, -MAX_ATTITUDE_RATE, MAX_ATTITUDE_RATE);
-  return new Vector3(delta.x / sinHalf, delta.y / sinHalf, delta.z / sinHalf).scale(rate);
+/** Lacet horizontal initial depuis l'orientation courante du rig. */
+function readFlatYawRad(anchor: TransformNode, noseLocal: Vector3): number {
+  const nose = anchor.getDirection(noseLocal);
+  const flat = new Vector3(nose.x, 0, nose.z);
+  if (flat.lengthSquared() < 1e-6) {
+    return 0;
+  }
+  flat.normalize();
+  return Math.atan2(flat.x, flat.z);
 }
 
 /**
@@ -110,7 +111,6 @@ export class HelicopterModel {
   private readonly body: PhysicsBody;
   private readonly anchor: TransformNode;
   private readonly config: HelicopterConfig;
-  private readonly mass: number;
   private readonly noseLocal: Vector3;
   /**
    * Amène le nez du rig sur l'axe +Z canonique, seul repère dans lequel
@@ -125,6 +125,8 @@ export class HelicopterModel {
   private targetYawRad: number | null = null;
   private holdAltitude: number | null = null;
   private rotorAngleRad = 0;
+  /** Dernière assiette commandée — réappliquée après la physique si Havok dérive. */
+  private commandedRotation: Quaternion | null = null;
   private state: HelicopterState;
 
   public constructor(options: HelicopterModelOptions) {
@@ -132,13 +134,14 @@ export class HelicopterModel {
     this.body = options.body;
     this.anchor = options.anchor;
     this.config = options.config;
-    this.mass = Math.max(options.mass, 0.1);
     this.noseLocal = options.noseLocal.clone().normalize();
     this.noseAlign = Quaternion.RotationAxis(
       Axis.Y,
       Math.atan2(-this.noseLocal.x, this.noseLocal.z)
     );
     this.body.setGravityFactor(0);
+    this.targetYawRad = readFlatYawRad(this.anchor, this.noseLocal);
+    this.commandedRotation = this.buildTargetRotation(0, 0);
     this.state = {
       altitudeAboveGround: 0,
       holdAltitude: 0,
@@ -163,9 +166,21 @@ export class HelicopterModel {
     this.stickPitch = 0;
     this.yawInput = 0;
     this.yawRateDeg = 0;
-    this.targetYawRad = null;
+    this.targetYawRad = readFlatYawRad(this.anchor, this.noseLocal);
     this.holdAltitude = null;
     this.body.setGravityFactor(0);
+    this.commandedRotation = this.buildTargetRotation(0, 0);
+    this.applyCommandedRotation(this.commandedRotation);
+    this.body.setAngularVelocity(Vector3.Zero());
+  }
+
+  /** Réapplique l'assiette arcade après le pas Havok (collisions latérales). */
+  public enforcePoseAfterPhysics(): void {
+    if (!this.commandedRotation) {
+      return;
+    }
+    this.applyCommandedRotation(this.commandedRotation);
+    this.body.setAngularVelocity(Vector3.Zero());
   }
 
   public update(
@@ -181,26 +196,15 @@ export class HelicopterModel {
     const position = this.anchor.getAbsolutePosition();
     const altitude = this.measureAltitudeAboveGround();
     const velocity = this.body.getLinearVelocity();
-
-    const nose = this.anchor.getDirection(this.noseLocal);
-    nose.normalize();
-
-    // Repère horizontal stabilisé : la translation ne dépend pas du roulis courant.
-    const flatNose = new Vector3(nose.x, 0, nose.z);
-    if (flatNose.lengthSquared() > 1e-6) {
-      flatNose.normalize();
-    } else {
-      flatNose.copyFrom(Axis.Z);
-    }
-    // Scène en main droite : le flanc droit est `nez × haut`.
-    const flatRight = Vector3.Cross(flatNose, Axis.Y).normalize();
+    const yawRad = this.targetYawRad ?? readFlatYawRad(this.anchor, this.noseLocal);
+    const { forward: flatNose, right: flatRight } = flatBasisFromYaw(yawRad);
 
     this.updateStick(input, powered, dt);
     this.updateRotors(powered, dt);
 
     const targetVy = this.resolveTargetVerticalSpeed(input, position, altitude, grounded, powered);
     this.applyVelocityImpulse(velocity, targetVy, flatNose, flatRight, powered, dt);
-    this.applyAttitude(nose, input, powered, dt);
+    this.applyAttitude(input, powered, dt);
 
     const nextVelocity = this.body.getLinearVelocity();
     const horizontal = new Vector3(nextVelocity.x, 0, nextVelocity.z);
@@ -292,8 +296,8 @@ export class HelicopterModel {
   }
 
   /**
-   * Une seule impulsion pour les trois axes : la vitesse est amenée vers la
-   * consigne sans être écrasée, ce qui laisse les collisions agir normalement.
+   * Amène la vitesse vers la consigne sans impulsion brutale : les collisions
+   * restent possibles mais ne font plus vriller l'appareil.
    */
   private applyVelocityImpulse(
     velocity: Vector3,
@@ -307,14 +311,12 @@ export class HelicopterModel {
     const horizontal = new Vector3(velocity.x, 0, velocity.z);
 
     if (powered) {
-      // L'inclinaison porte la translation : nez piqué => avant, roulis droit => droite.
       const accel = flatNose
         .scale(-this.stickPitch * cfg.translationAccel)
         .add(flatRight.scale(this.stickRoll * cfg.translationAccel));
       horizontal.addInPlace(accel.scale(dt));
     }
 
-    // Traînée : manche neutre => l'appareil retrouve le stationnaire.
     horizontal.scaleInPlace(1 - smoothFactor(cfg.horizontalDrag, dt));
 
     const speed = horizontal.length();
@@ -323,27 +325,26 @@ export class HelicopterModel {
     }
 
     const verticalBlend = smoothFactor(cfg.verticalDamping, dt);
-    const deltaV = new Vector3(
-      horizontal.x - velocity.x,
-      (targetVy - velocity.y) * verticalBlend,
-      horizontal.z - velocity.z
-    );
-    if (deltaV.lengthSquared() < 1e-10) {
-      return;
-    }
-    this.body.applyImpulse(deltaV.scale(this.mass), this.body.getObjectCenterWorld());
+    const nextVy = velocity.y + (targetVy - velocity.y) * verticalBlend;
+    this.body.setLinearVelocity(new Vector3(horizontal.x, nextVy, horizontal.z));
+  }
+
+  private buildTargetRotation(pitchRad: number, rollRad: number): Quaternion {
+    const yawRad = this.targetYawRad ?? 0;
+    return Quaternion.RotationYawPitchRoll(yawRad, pitchRad, rollRad).multiply(this.noseAlign);
+  }
+
+  private applyCommandedRotation(rotation: Quaternion): void {
+    this.anchor.rotationQuaternion ??= Quaternion.Identity();
+    this.anchor.rotationQuaternion.copyFrom(rotation);
+    this.anchor.computeWorldMatrix(true);
   }
 
   /**
-   * Assiette pilotée en vitesse angulaire : lacet intégré depuis Q / D, roulis
-   * et tangage directement issus du manche. L'appareil ne part jamais en vrille.
+   * Assiette pilotée en slerp direct : pas de couple Havok, donc pas de retournement
+   * au décollage ni de tremblement une fois à l'envers.
    */
-  private applyAttitude(
-    nose: Vector3,
-    input: HelicopterInputFrame,
-    powered: boolean,
-    dt: number
-  ): void {
+  private applyAttitude(input: HelicopterInputFrame, powered: boolean, dt: number): void {
     const cfg = this.config;
 
     const commandedYaw = powered ? clamp(input.yawAxis, -1, 1) : 0;
@@ -352,25 +353,24 @@ export class HelicopterModel {
       (commandedYaw * cfg.yawSpeedDeg - this.yawRateDeg) * smoothFactor(cfg.yawSharpness, dt);
 
     if (this.targetYawRad === null) {
-      this.targetYawRad = Math.atan2(nose.x, nose.z);
+      this.targetYawRad = readFlatYawRad(this.anchor, this.noseLocal);
     }
     this.targetYawRad += toRadians(this.yawRateDeg) * dt;
 
-    // Dans le repère aligné sur le nez, un tangage positif pique le nez : le
-    // manche tiré (stickPitch > 0) doit donc produire un tangage négatif.
     const targetRollRad = powered ? toRadians(this.stickRoll * cfg.maxBankDeg) : 0;
     const targetPitchRad = powered ? toRadians(-this.stickPitch * cfg.maxPitchDeg) : 0;
-    const target = Quaternion.RotationYawPitchRoll(
-      this.targetYawRad,
-      targetPitchRad,
-      targetRollRad
-    ).multiply(this.noseAlign);
+    const target = this.buildTargetRotation(targetPitchRad, targetRollRad);
 
     const current =
       this.anchor.absoluteRotationQuaternion ??
       this.anchor.rotationQuaternion ??
       Quaternion.Identity();
-    this.body.setAngularVelocity(attitudeAngularVelocity(current, target, cfg.attitudeSharpness));
+    const blend = smoothFactor(cfg.attitudeSharpness, dt);
+    const next = Quaternion.Slerp(current, target, blend);
+
+    this.commandedRotation = next;
+    this.applyCommandedRotation(next);
+    this.body.setAngularVelocity(Vector3.Zero());
   }
 
   private measureAltitudeAboveGround(): number {

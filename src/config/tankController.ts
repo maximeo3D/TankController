@@ -533,6 +533,14 @@ export interface TankControllerConfig {
     /** Volume de `engineMove` à l'input plein. */
     engineMoveVolumeMax?: number;
     engineTurboVolume?: number;
+    /** Volume de la boucle `helicopter_blades` en stationnaire. */
+    helicopterBladesVolumeIdle?: number;
+    /** Volume de la boucle `helicopter_blades` en montée (Z). */
+    helicopterBladesVolumeClimb?: number;
+    /** Volume de la boucle `helicopter_blades` en descente (S). */
+    helicopterBladesVolumeDescend?: number;
+    /** Volume de la boucle `helicopter_blades` en turbo. */
+    helicopterBladesVolumeTurbo?: number;
     hornVolume?: number;
     /** Délai min. entre deux coups de klaxon (s). */
     hornCooldownSeconds?: number;

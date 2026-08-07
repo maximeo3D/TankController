@@ -6,6 +6,7 @@ import {
   jetIdleSoundAssetUrl,
   jetMoveSoundAssetUrl,
   jetTurboSoundAssetUrl,
+  helicopterBladesSoundAssetUrl,
   missileLockSoundAssetUrl,
   suspensionImpactSoundAssetUrl,
   tankHornSoundAssetUrl,
@@ -31,6 +32,7 @@ export const vehicleSoundUrls: Record<string, string> = {
   jet_idle: jetIdleSoundAssetUrl,
   jet_move: jetMoveSoundAssetUrl,
   jet_turbo: jetTurboSoundAssetUrl,
+  helicopter_blades: helicopterBladesSoundAssetUrl,
   missile_lock: missileLockSoundAssetUrl,
   suspension: suspensionImpactSoundAssetUrl
 };
