@@ -48,7 +48,14 @@ export const MENU_MAPS: readonly MenuMapEntry[] = [
       id: "training-ground",
       name: "Training",
       description: "Terrain de test.",
-      terrainUrl: terrainAssetUrl
+      terrainUrl: terrainAssetUrl,
+      environment: {
+        fog: {
+          mode: "exp2",
+          color: [0.72, 0.78, 0.88],
+          density: 0.002
+        }
+      }
     },
     missions: [
       {
@@ -83,7 +90,17 @@ export const MENU_MAPS: readonly MenuMapEntry[] = [
       id: "living-room",
       name: "Living Room",
       description: "Salon",
-      terrainUrl: new URL("../../assets/livingroom.glb", import.meta.url).href
+      terrainUrl: new URL("../../assets/livingroom.glb", import.meta.url).href,
+      environment: {
+        clearColor: [0.06, 0.05, 0.045, 1],
+        environmentIntensity: 0.35,
+        sunIntensity: 0.35,
+        fog: {
+          mode: "exp2",
+          color: [0.89, 0.824, 0.765],
+          density: 0.005
+        }
+      }
     },
     missions: [
       {

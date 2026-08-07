@@ -49,6 +49,7 @@ import { TARGET_FRAME_SEC } from "./frameTiming";
 import { StackPanel } from "@babylonjs/gui";
 import { createTankDamageParticleBundle } from "./tankDamageParticles";
 import { createPostCombustionParticleBundle } from "./vehicle/postCombustionParticles";
+import { applyLevelEnvironment, resolveSunIntensity } from "./applyLevelEnvironment";
 import { waitAnimationFrames } from "./frameTiming";
 import type { RadarWorldBounds } from "./RadarHud";
 
@@ -155,7 +156,10 @@ export async function createGameplayScene(
   const missionContext = levelManager.missionContext;
   const scene = new Scene(engine);
   scene.useRightHandedSystem = true;
-  scene.clearColor = new Color4(0.05, 0.06, 0.08, 1);
+  applyLevelEnvironment(scene, level.environment);
+  if (!level.environment?.clearColor) {
+    scene.clearColor = new Color4(0.05, 0.06, 0.08, 1);
+  }
 
   // Hide the default cursor in Babylon.js
   scene.defaultCursor = "none";
@@ -164,7 +168,7 @@ export async function createGameplayScene(
   const envTex = CubeTexture.CreateFromPrefilteredData(skyboxAssetUrl, scene);
   await waitForCubeTextureReady(envTex);
   scene.environmentTexture = envTex;
-  scene.environmentIntensity = 0.5;
+  scene.environmentIntensity = level.environment?.environmentIntensity ?? 0.5;
   onProgress(0.1);
 
   const skyboxReflection = envTex.clone();
@@ -184,7 +188,10 @@ export async function createGameplayScene(
   fallbackCamera.fov = toRadians(config.camera.defaultFovDeg);
   scene.activeCamera = fallbackCamera;
 
-  new HemisphericLight("sun", new Vector3(0.2, 1, 0.1), scene).intensity = 0.5;
+  new HemisphericLight("sun", new Vector3(0.2, 1, 0.1), scene).intensity = resolveSunIntensity(
+    level.environment,
+    0.5
+  );
 
   const havok = await HavokPhysics();
   const havokPlugin = new HavokPlugin(true, havok);
