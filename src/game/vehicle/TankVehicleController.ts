@@ -45,6 +45,10 @@ export class TankVehicleController implements VehicleController {
     this.syncPausedState();
   }
 
+  public canSwitchVehicle(): boolean {
+    return this.controller.isStoppedForVehicleSwitch();
+  }
+
   public getDebugState(): VehicleDebugState {
     return toVehicleDebugState(this.controller.getDebugState());
   }

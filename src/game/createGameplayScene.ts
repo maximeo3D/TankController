@@ -73,6 +73,7 @@ export interface GameplaySceneBundle {
   summary: GameplaySceneSummary;
   getDebugState: () => VehicleDebugState | null;
   setPaused: (paused: boolean) => void;
+  notifyVehicleSwitchBlocked: () => void;
   dispose: () => void;
 }
 
@@ -404,6 +405,9 @@ export async function createGameplayScene(
     },
     getDebugState: () => levelManager.getDebugState(),
     setPaused: (paused) => levelManager.setPaused(paused),
+    notifyVehicleSwitchBlocked: () => {
+      getSceneGameplayUi(scene)?.vehicleSelectorHud?.playSwitchBlockedFeedback();
+    },
     dispose: () => {
       scene.onBeforeRenderObservable.removeCallback(updateVehicleSelectorHud);
       const ui = getSceneGameplayUi(scene);

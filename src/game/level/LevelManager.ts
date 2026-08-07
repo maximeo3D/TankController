@@ -46,6 +46,11 @@ export class LevelManager {
       return true;
     }
 
+    const active = this.getActiveVehicle();
+    if (active && !active.canSwitchVehicle()) {
+      return false;
+    }
+
     const previous = this.activeVehicleId ? this.vehicles.get(this.activeVehicleId) : null;
     previous?.deactivate();
 
@@ -63,9 +68,19 @@ export class LevelManager {
       return false;
     }
 
+    const active = this.getActiveVehicle();
+    if (active && !active.canSwitchVehicle()) {
+      return false;
+    }
+
     const currentIndex = ids.indexOf(this.activeVehicleId);
     const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % ids.length : 0;
     return this.setActiveVehicle(ids[nextIndex]);
+  }
+
+  public isActiveVehicleSwitchLocked(): boolean {
+    const active = this.getActiveVehicle();
+    return active !== null && !active.canSwitchVehicle();
   }
 
   public getActiveVehicle(): VehicleController | null {

@@ -132,6 +132,8 @@ const FUEL_BAR_LOW_BLINK_HZ = 2.5;
 const BOOST_BAR_LOW_THRESHOLD_PCT = 20;
 const BOOST_BAR_LOW_BLINK_HZ = 2.5;
 const VEHICLE_STATUS_BAR_BOOST_LOW = "#ff9800";
+const VEHICLE_SWITCH_MAX_LINEAR_SPEED = 0.35;
+const VEHICLE_SWITCH_MAX_ANGULAR_SPEED = 0.25;
 const VEHICLE_STATUS_ROW_HEIGHT = 36;
 const VEHICLE_STATUS_ROW_GAP = 20;
 const VEHICLE_STATUS_STACK_PADDING_V = 12;
@@ -3004,6 +3006,16 @@ export class TankGameplayController {
       fireHeld: this.fireHeld,
       position: this.tankBody.getObjectCenterWorld()
     };
+  }
+
+  /** Switch véhicule autorisé uniquement à l'arrêt (vitesse linéaire / angulaire faibles). */
+  public isStoppedForVehicleSwitch(): boolean {
+    const linearSpeed = this.tankBody.getLinearVelocity().length();
+    const angularSpeed = this.tankBody.getAngularVelocity().length();
+    return (
+      linearSpeed <= VEHICLE_SWITCH_MAX_LINEAR_SPEED &&
+      angularSpeed <= VEHICLE_SWITCH_MAX_ANGULAR_SPEED
+    );
   }
 
   public dispose(): void {

@@ -8,6 +8,9 @@ const VEHICLE_SLOT_GAP_PX = 10;
 const VEHICLE_SLOT_INACTIVE_ALPHA = 0.55;
 const VEHICLE_SLOT_INACTIVE_SCALE = 0.85;
 const VEHICLE_SWITCH_BLINK_SEC = 0.24;
+const VEHICLE_SWITCH_BLOCKED_BLINK_SEC = 0.9;
+const VEHICLE_SWITCH_BLOCKED_BLINK_COUNT = 3;
+const VEHICLE_SWITCH_BLOCKED_BG = "rgba(244,67,54,0.88)";
 const VEHICLE_FRAME_BG = "rgba(72,72,72,0.58)";
 
 export interface VehicleSelectorEntry {
@@ -22,7 +25,7 @@ interface VehicleSlotUi {
   icon: Image;
 }
 
-type VehicleHudAnimPhase = "idle" | "blink";
+type VehicleHudAnimPhase = "idle" | "blink" | "blocked";
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -60,7 +63,7 @@ export class VehicleSelectorHud {
       this.slots.push(this.createSlot(hudTexture, panel, entry));
     }
 
-    this.applyIdleVisuals();
+    this.applyVisuals();
   }
 
   public setActiveVehicle(id: VehicleInstanceId): void {
@@ -71,27 +74,46 @@ export class VehicleSelectorHud {
     this.activeVehicleId = id;
     this.animPhase = "blink";
     this.animTime = 0;
-    this.applyIdleVisuals();
+    this.applyVisuals();
+  }
+
+  /** Feedback rouge bref quand le switch est refusé (véhicule en mouvement). */
+  public playSwitchBlockedFeedback(): void {
+    this.animPhase = "blocked";
+    this.animTime = 0;
   }
 
   public update(dt: number): void {
-    if (this.animPhase === "idle") {
-      this.applyIdleVisuals();
-      return;
-    }
-
-    this.animTime += dt;
     if (this.animPhase === "blink") {
+      this.animTime += dt;
       const t = clamp(this.animTime / VEHICLE_SWITCH_BLINK_SEC, 0, 1);
       const flicker = 0.68 + 0.32 * Math.abs(Math.sin(t * Math.PI * 3));
-      this.applyIdleVisuals(flicker);
+      this.applyVisuals({ switchBlinkAlpha: flicker });
 
       if (t >= 1) {
         this.animPhase = "idle";
         this.animTime = 0;
-        this.applyIdleVisuals();
+        this.applyVisuals();
       }
+      return;
     }
+
+    if (this.animPhase === "blocked") {
+      this.animTime += dt;
+      const t = clamp(this.animTime / VEHICLE_SWITCH_BLOCKED_BLINK_SEC, 0, 1);
+      const wave = Math.sin(t * Math.PI * VEHICLE_SWITCH_BLOCKED_BLINK_COUNT);
+      const showRedBg = wave > 0;
+      this.applyVisuals({ blockedRedBg: showRedBg });
+
+      if (t >= 1) {
+        this.animPhase = "idle";
+        this.animTime = 0;
+        this.applyVisuals();
+      }
+      return;
+    }
+
+    this.applyVisuals();
   }
 
   public dispose(): void {
@@ -136,18 +158,38 @@ export class VehicleSelectorHud {
     return { id: entry.id, frame, icon };
   }
 
-  private applyIdleVisuals(activeBlinkAlpha: number | null = null): void {
+  private applyVisuals(options?: { switchBlinkAlpha?: number; blockedRedBg?: boolean }): void {
     for (const slot of this.slots) {
       const isActive = slot.id === this.activeVehicleId;
       const baseAlpha = isActive ? 1 : VEHICLE_SLOT_INACTIVE_ALPHA;
-      const alpha = isActive && activeBlinkAlpha !== null ? activeBlinkAlpha : baseAlpha;
       const scale = isActive ? 1 : VEHICLE_SLOT_INACTIVE_SCALE;
 
-      slot.frame.alpha = alpha;
+      if (isActive && options?.switchBlinkAlpha !== undefined) {
+        slot.frame.alpha = options.switchBlinkAlpha;
+        slot.icon.alpha = 1;
+        slot.frame.background = VEHICLE_FRAME_BG;
+        slot.frame.scaleX = scale;
+        slot.frame.scaleY = scale;
+        this.setBracketAlpha(slot.frame, options.switchBlinkAlpha);
+        continue;
+      }
+
+      if (isActive && options?.blockedRedBg !== undefined) {
+        slot.frame.alpha = 1;
+        slot.icon.alpha = 1;
+        slot.frame.background = options.blockedRedBg ? VEHICLE_SWITCH_BLOCKED_BG : VEHICLE_FRAME_BG;
+        slot.frame.scaleX = scale;
+        slot.frame.scaleY = scale;
+        this.setBracketAlpha(slot.frame, 1);
+        continue;
+      }
+
+      slot.frame.alpha = baseAlpha;
       slot.icon.alpha = 1;
+      slot.frame.background = VEHICLE_FRAME_BG;
       slot.frame.scaleX = scale;
       slot.frame.scaleY = scale;
-      this.setBracketAlpha(slot.frame, isActive ? alpha : VEHICLE_SLOT_INACTIVE_ALPHA);
+      this.setBracketAlpha(slot.frame, isActive ? baseAlpha : VEHICLE_SLOT_INACTIVE_ALPHA);
     }
   }
 

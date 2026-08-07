@@ -27,6 +27,8 @@ export interface VehicleController {
   activate(): void;
   deactivate(): void;
   setPaused(paused: boolean): void;
+  /** Vrai si le véhicule est suffisamment à l'arrêt pour autoriser un switch joueur. */
+  canSwitchVehicle(): boolean;
   getDebugState(): VehicleDebugState;
   /** Caméra gameplay à activer quand ce véhicule devient actif. */
   focusCamera(): void;

@@ -247,6 +247,9 @@ export class GameApp {
     ) {
       if (this.gameplayBundle.levelManager.cycleActiveVehicle()) {
         event.preventDefault();
+      } else if (this.gameplayBundle.levelManager.isActiveVehicleSwitchLocked()) {
+        this.gameplayBundle.notifyVehicleSwitchBlocked();
+        event.preventDefault();
       }
       return;
     }
