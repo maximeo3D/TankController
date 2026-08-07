@@ -480,6 +480,8 @@ export interface TankControllerConfig {
     overchargeDrainBoostPerSecond: number;
     /** Recharge de la jauge boost (%) par seconde quand Maj n'est pas maintenue. */
     overchargeRechargePerSecond: number;
+    /** Seuil min. (0–1) pour activer le turbo ; en dessous, reactivation bloquée jusqu'à recharge. */
+    overchargeMinActivateRatio?: number;
   };
   powerUps?: {
     enabled: boolean;

@@ -129,6 +129,9 @@ const HEALTH_BAR_SEGMENT_GAP_PX = 2;
 const FUEL_BAR_LOW_SEGMENT_RATIO = 0.2;
 const FUEL_BAR_LOW_THRESHOLD_PCT = 20;
 const FUEL_BAR_LOW_BLINK_HZ = 2.5;
+const BOOST_BAR_LOW_THRESHOLD_PCT = 20;
+const BOOST_BAR_LOW_BLINK_HZ = 2.5;
+const VEHICLE_STATUS_BAR_BOOST_LOW = "#ff9800";
 const VEHICLE_STATUS_ROW_HEIGHT = 36;
 const VEHICLE_STATUS_ROW_GAP = 20;
 const VEHICLE_STATUS_STACK_PADDING_V = 12;
@@ -424,6 +427,9 @@ export class TankGameplayController {
   private zoomActive = false;
   private fireHeld = false;
   private boostInputHeld = false;
+  /** Turbo en cours : autorise de vider la jauge sous 20 % jusqu'à 0. */
+  private boostEngaged = false;
+  private boostLowBlinkPhase = 0;
   private shellReserveAmmo: number;
   private shellChambered: boolean;
   private readonly shellMagazineSize: number;
@@ -1894,13 +1900,9 @@ export class TankGameplayController {
     const overchargeMax = this.config.energy.overchargeMax;
     const batPct = clamp((this.battery / batteryMax) * 100, 0, 100);
     const ocPct = clamp((this.overcharge / overchargeMax) * 100, 0, 100);
-    const ocHud = this.boostInputHeld ? Math.floor(ocPct) : Math.round(ocPct);
     this.fuelLowBlinkPhase = 0;
     this.updateFuelBarSegments(batPct, 0);
-    if (this.hudBoostFill) {
-      this.hudBoostFill.width = `${ocHud}%`;
-      this.hudBoostFill.background = VEHICLE_STATUS_BAR_FILL;
-    }
+    this.updateBoostBarFill(ocPct, 0);
 
     this.tankDamageParticles?.syncHealthPercent(hpPct);
   }
@@ -1993,12 +1995,8 @@ export class TankGameplayController {
     const overchargeMax = this.config.energy.overchargeMax;
     const batPct = clamp((this.battery / batteryMax) * 100, 0, 100);
     const ocPct = clamp((this.overcharge / overchargeMax) * 100, 0, 100);
-    const ocHud = this.boostInputHeld ? Math.floor(ocPct) : Math.round(ocPct);
     this.updateFuelBarSegments(batPct, dt);
-    if (this.hudBoostFill) {
-      this.hudBoostFill.width = `${ocHud}%`;
-      this.hudBoostFill.background = VEHICLE_STATUS_BAR_FILL;
-    }
+    this.updateBoostBarFill(ocPct, dt);
 
     this.updateWeaponHud(dt);
     this.sessionElapsedSeconds += dt;
@@ -2172,6 +2170,64 @@ export class TankGameplayController {
         segment.alpha = 1;
       }
     }
+  }
+
+  private updateBoostBarFill(ocPct: number, dt: number): void {
+    if (!this.hudBoostFill) {
+      return;
+    }
+
+    const ocHud = this.boostInputHeld ? Math.floor(ocPct) : Math.round(ocPct);
+    this.hudBoostFill.width = `${ocHud}%`;
+
+    const lowBoost = ocPct < BOOST_BAR_LOW_THRESHOLD_PCT;
+    if (lowBoost) {
+      this.boostLowBlinkPhase += dt;
+    } else {
+      this.boostLowBlinkPhase = 0;
+    }
+
+    const blinkAlpha =
+      0.45 +
+      0.55 * (0.5 + 0.5 * Math.sin(this.boostLowBlinkPhase * Math.PI * 2 * BOOST_BAR_LOW_BLINK_HZ));
+
+    if (lowBoost && ocHud > 0) {
+      this.hudBoostFill.background = VEHICLE_STATUS_BAR_BOOST_LOW;
+      this.hudBoostFill.alpha = blinkAlpha;
+    } else if (lowBoost) {
+      this.hudBoostFill.background = VEHICLE_STATUS_BAR_BOOST_LOW;
+      this.hudBoostFill.alpha = 0.35;
+    } else {
+      this.hudBoostFill.background = VEHICLE_STATUS_BAR_FILL;
+      this.hudBoostFill.alpha = 1;
+    }
+  }
+
+  /**
+   * Maj maintenue : le turbo ne démarre que si la jauge est ≥ 20 %.
+   * Une fois engagé, il peut descendre sous 20 % jusqu'à 0.
+   */
+  private resolveBoostHeld(boostHeld: boolean): boolean {
+    const overchargeMax = this.config.energy.overchargeMax;
+    const minActivate =
+      overchargeMax * clamp(this.config.energy.overchargeMinActivateRatio ?? 0.2, 0, 1);
+
+    if (!boostHeld) {
+      this.boostEngaged = false;
+      return false;
+    }
+
+    if (this.overcharge <= 0) {
+      this.boostEngaged = false;
+      return false;
+    }
+
+    if (!this.boostEngaged && this.overcharge < minActivate) {
+      return false;
+    }
+
+    this.boostEngaged = true;
+    return true;
   }
 
   private updateHealthBarSegments(hpPct: number, shieldActive: boolean): void {
@@ -3288,6 +3344,10 @@ export class TankGameplayController {
 
     this.playerActive = active;
     this.input.resetState();
+    if (!active) {
+      this.boostEngaged = false;
+      this.boostActive = false;
+    }
 
     if (active) {
       this.showSharedHud();
@@ -5085,7 +5145,7 @@ export class TankGameplayController {
         yawAxis: canMove ? turnAxis : 0,
         lookDeltaX: this.lastLookDeltaX,
         lookDeltaY: this.lastLookDeltaY,
-        boostHeld: boostHeld && this.overcharge > 0
+        boostHeld
       },
       grounded,
       canMove,
@@ -5099,6 +5159,9 @@ export class TankGameplayController {
         0,
         this.overcharge - this.config.energy.overchargeDrainBoostPerSecond * dt
       );
+      if (this.overcharge <= 0) {
+        this.boostEngaged = false;
+      }
     } else if (this.overcharge < overchargeMax) {
       this.overcharge = Math.min(
         overchargeMax,
@@ -5327,6 +5390,7 @@ export class TankGameplayController {
   }
 
   private applyMovement(moveAxis: number, turnAxis: number, boostHeld: boolean, dt: number): void {
+    const effectiveBoost = this.resolveBoostHeld(boostHeld);
     const canMove = this.battery > 0;
     const desiredMoveAxis = canMove ? moveAxis * this.movementInputSign : 0;
     const inputRate =
@@ -5373,7 +5437,7 @@ export class TankGameplayController {
     this.syncPhysicsDamping(grounded, dt);
 
     if (this.flightModel) {
-      this.updateFlight(turnAxis, boostHeld, canMove, grounded, dt);
+      this.updateFlight(turnAxis, effectiveBoost, canMove, grounded, dt);
       this.hullDrivePitchTarget = 0;
       this.syncTankMovementSounds();
       return;
@@ -5422,22 +5486,18 @@ export class TankGameplayController {
     }
 
     const overchargeMax = this.config.energy.overchargeMax;
-    if (boostHeld) {
-      this.overcharge = Math.max(
-        0,
-        this.overcharge - this.config.energy.overchargeDrainBoostPerSecond * dt
-      );
-    } else if (this.overcharge < overchargeMax) {
-      this.overcharge = Math.min(
-        overchargeMax,
-        this.overcharge + this.config.energy.overchargeRechargePerSecond * dt
-      );
-    }
 
     let tractionMultiplier = 1;
+    const isBoosting = isMoving && effectiveBoost;
     if (isMoving) {
-      const canBoost = boostHeld && this.overcharge > 0;
-      if (canBoost) {
+      if (effectiveBoost) {
+        this.overcharge = Math.max(
+          0,
+          this.overcharge - this.config.energy.overchargeDrainBoostPerSecond * dt
+        );
+        if (this.overcharge <= 0) {
+          this.boostEngaged = false;
+        }
         tractionMultiplier *= this.config.movement.boostMultiplier;
         this.boostActive = true;
       }
@@ -5446,6 +5506,13 @@ export class TankGameplayController {
         this.battery - this.config.energy.batteryDrainMovingPerSecond * dt,
         0,
         this.config.energy.batteryMax
+      );
+    }
+
+    if (!isBoosting && this.overcharge < overchargeMax) {
+      this.overcharge = Math.min(
+        overchargeMax,
+        this.overcharge + this.config.energy.overchargeRechargePerSecond * dt
       );
     }
 
@@ -5940,8 +6007,7 @@ export class TankGameplayController {
       this.applyCameraShake(orbitCam, target);
     }
 
-    const boostMultiplier =
-      this.flightModel || !this.boostActive ? 1 : this.config.camera.boostFovMultiplier;
+    const boostMultiplier = !this.boostActive ? 1 : this.config.camera.boostFovMultiplier;
     const orbitFov = toRadians(this.config.camera.defaultFovDeg) * boostMultiplier;
     const zoomFov = toRadians(this.config.camera.zoomViewFovDeg) * boostMultiplier;
 
