@@ -41,6 +41,7 @@ function findBestTargetInCone(
   origin: Vector3,
   forward: Vector3,
   halfAngleDeg: number,
+  maxDistance: number,
   targets: EnemyLockTarget[]
 ): EnemyLockTarget | null {
   const cosLimit = Math.cos(toRadians(halfAngleDeg));
@@ -50,7 +51,7 @@ function findBestTargetInCone(
   for (const target of targets) {
     const offset = target.aimPoint.subtract(origin);
     const distance = offset.length();
-    if (distance < 1e-3) {
+    if (distance < 1e-3 || distance > maxDistance) {
       continue;
     }
 
@@ -139,6 +140,7 @@ export class JetMissileLockController {
       origin.position,
       origin.forward,
       this.config.coneHalfAngleDeg,
+      this.config.maxLockDistance,
       this.getTargets()
     );
 

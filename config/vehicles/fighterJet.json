@@ -320,6 +320,7 @@
       "gravityMultiplier": 0,
       "missileLock": {
         "coneHalfAngleDeg": 15.0,
+        "maxLockDistance": 100.0,
         "acquireSeconds": 1.0,
         "loseSeconds": 0.2,
         "guidanceTurnRateDeg": 140.0,

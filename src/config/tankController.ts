@@ -530,6 +530,8 @@ export interface TankControllerConfig {
 export interface MissileLockConfig {
   /** Demi-angle du cône de lock devant l'origine (deg). */
   coneHalfAngleDeg: number;
+  /** Distance max. (m) pour acquérir / conserver un verrouillage. */
+  maxLockDistance: number;
   /** Durée d'apparition du réticule de lock (s). */
   acquireSeconds: number;
   /** Durée de disparition quand la cible sort du cône (s). */
