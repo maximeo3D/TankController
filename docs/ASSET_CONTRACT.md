@@ -62,7 +62,7 @@ Projectile template names are resolved per vehicle via `rig.nodes.ammoShellMesh`
 
 ### Required Nodes
 
-- one `SPAWN_*` per vehicle declared in the mission (e.g. `SPAWN_tank`, `SPAWN_armoredcar`)
+- one `SPAWN_*` per vehicle declared in the mission (e.g. `SPAWN_tank`, `SPAWN_armoredcar`, `SPAWN_jet`)
 
 ### Supported Mesh Types
 
@@ -255,6 +255,8 @@ Verify after export with `node tools/inspectVehicleGlb.mjs assets/jet.glb`.
 | Enemy aim target | `TARGET_player_jet` | `rig.nodes.playerTarget` |
 | Ground probes | `SUS_F`, `SUS_RL`, `SUS_RR` | `rig.suspensionProbeNames` |
 | Damage smoke | `jet_damage_smoke_1..4` | `rig.nodes.damageSmoke` |
+| Post-combustion emitter | `jet_post_combustion` | `rig.nodes.postCombustion` |
+| Zoom camera (optional) | `CAM_jet_zoom` | `rig.nodes.cameraZoom` |
 
 Terrain must also gain a `SPAWN_jet` empty for the mission that includes the jet.
 
@@ -270,8 +272,14 @@ jet_armature
 │       ├── flap_L, flap_R          optional, deployed with the gear
 │       ├── airbrake                optional
 │       ├── gear_F, gear_L, gear_R  retractable struts, no separate doors
-│       └── wheel_F, wheel_L, wheel_R   optional, children of their strut
+│       └── engine                  nozzle bone (scale on X/Z for throttle visual)
 └── jet                             single skinned mesh
+```
+
+The **`engine`** bone is aligned along the exhaust axis (`rig.flight.engineNozzleAxis`, default local **Y**). Only vertices at the nozzle **rim** should be weighted to `engine`; the rest of the mesh stays on `fuselage`. Check weights with:
+
+```bash
+node tools/inspectBoneWeights.mjs assets/jet.glb engine
 ```
 
 ### Reserved bone names — must not be used
@@ -342,13 +350,18 @@ comes from the two main-gear probes, which is how a real tricycle gear behaves.
   if the jet should show shockwaves.
 - `jet_damage_smoke_1..4`: slot 1 triggers at ≤ 75 % health, slots 2 and 3 at ≤ 50 %, slot 4 at
   ≤ 25 %. Engine nozzle and wing roots are the natural spots.
-- No `CAM_jet_zoom` is needed; the zoom camera is created in code.
+- **`jet_post_combustion`**: empty at the exhaust centre; local **+Z** points aft. Drives the
+  afterburner particle system (`assets/effects/post_combustion.json`). Tune appearance in that
+  file (comments document each field); throttle / turbo multipliers in `fighterJet.json`
+  (`postCombustionThrottleThreshold`, `postCombustionTurboEmitScale`).
+- **`CAM_jet_zoom`**: optional authored zoom camera pose; if absent, code synthesizes a fallback.
 - No `TEX_tracks` and no `tracks` block in the config.
 - No `wheelBones` in the config: the car wheel spin/steer/travel path does not apply.
 
 ### Validation checklist
 
 - `node tools/inspectVehicleGlb.mjs assets/jet.glb` lists every node in the table above
+- `node tools/inspectBoneWeights.mjs assets/jet.glb engine` confirms rim vertices on `engine`
 - no bone named `caisse`, `tourelle`, `canon`, `track_L`, `track_R`
 - every animated bone reports `local Y -> …` along its intended hinge axis
 - `COL_jet` bottom sits at the tire contact plane, gear extended
@@ -458,6 +471,30 @@ Reload gauge rectangles are added in code on the primary slot (shell chamber rel
 - Panel chrome (corner brackets, segment bars, weapon grids, reload gauges) is completed in code after parse.
 - Timer `fontSize` / panel dimensions are safe to tune in JSON; font family for the timer is forced to `Digital` in code.
 - Most other text blocks receive `Square` via `applyUiFontToTexture()` except `hud_timer_label`.
+
+## Particle effect JSON (`assets/effects/`)
+
+Shared particle definitions loaded at runtime (not embedded in vehicle GLBs).
+
+| File | Used by | Notes |
+|------|---------|-------|
+| `post_combustion.json` | Fighter jet afterburner | Emitter parented to `jet_post_combustion`; `//` comments allowed |
+| `damage_smoke.json` | All vehicles (damage slots) | Existing contract |
+
+Authoring rules:
+
+- Keep exhaust directions in **vehicle local space** with **+Z aft** for the jet empty
+- Tune appearance (colors, sizes, `emitRate`, `direction1`/`direction2`, billboard mode) in the JSON file
+- Tune when/how hard it fires (throttle threshold, turbo multiplier) in `config/vehicles/fighterJet.json` → `flight.*`
+
+## Per-map environment (data, not GLB)
+
+Fog, sky tint, and light intensity are **not** authored in terrain GLBs. Each map entry in `src/ui/menuData.ts` may set `LevelDefinition.environment`:
+
+- `fog` — mode (`exp`, `exp2`, `linear`), `color`, `density` / `start` / `end`
+- `clearColor`, `environmentIntensity`, `sunIntensity`
+
+Applied in gameplay via `src/game/applyLevelEnvironment.ts` after scene creation. See `docs/TECHNICAL_SPEC.md` → **Per-map environment**.
 
 ## Non-Goals For v0
 

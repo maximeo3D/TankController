@@ -138,7 +138,7 @@ Notes:
 
 - generic `VehicleController` interface + `TankVehicleController` adapter (shared `TankGameplayController`)
 - `LevelManager` vehicle roster with `cycleActiveVehicle()` / `setActiveVehicle()` and `V` key switching
-- per-vehicle JSON config resolved via `vehicleRegistry.ts` (`tank`, `armoredCar`)
+- per-vehicle JSON config resolved via `vehicleRegistry.ts` (`tank`, `armoredCar`, `fighterJet`)
 - mission declares `vehicles[]` + `startVehicleId` (`menuData.ts`)
 - shared scene resources across vehicles: single HUD (`sceneGameplayUi`), single `PowerUpSystem` (`bindActivePlayer`), single `EnemyTurretSystem` (rebound on switch)
 - armored car rig: `armes` pitch bone, spinning `minigun`, four wheels, four suspension probes, missile + minigun muzzles
@@ -163,6 +163,34 @@ Car-specific locomotion and suspension on top of the shared `TankGameplayControl
 **Status:** implemented; feel tuning ongoing (spring rates, grip, bounce, airborne damping).
 
 Key config: `config/vehicles/armoredCar.json`. See `docs/TECHNICAL_SPEC.md` → **Armored Car — Driving and Suspension**.
+
+## Phase 14 - Fighter Jet and Per-Map Environment
+
+Fighter jet as a third playable vehicle plus map-specific fog / lighting.
+
+### Fighter jet
+
+- **`movement.steeringMode: "plane"`** — `FlightModel` thrust / lift / drag / torques on Havok body
+- **Inputs:** `Z`/`S` throttle; mouse pitch/roll; `Q`/`D` yaw; `Shift` afterburner (throttle > 60 % + overcharge)
+- **Rig:** `assets/jet.glb` — `fuselage`, gear bones, `engine` nozzle bone, `jet_post_combustion` empty
+- **Engine visual:** bone scale on axes ⊥ nozzle (`engineNozzleAxis`); emissive `engine` material vs airspeed / turbo
+- **Post-combustion:** `assets/effects/post_combustion.json` + `postCombustionParticles.ts`; synced each frame from throttle / afterburner
+- **Missiles:** lock-on primary (`JetMissileLockController`); no shell recoil / no camera shake on missile fire
+- **Camera:** orbit via `CAM_pivot` (synthesized if missing); optional `CAM_jet_zoom`
+- **Audio:** no idle loop; movement sound while flying
+- **Spawn:** `SPAWN_jet` on terrain; mission declares jet in `vehicles[]`
+
+**Status:** implemented; VFX and flight feel tuning ongoing.
+
+Key config: `config/vehicles/fighterJet.json`. See `docs/TECHNICAL_SPEC.md` → **Fighter Jet — Flight, VFX, and Weapons**.
+
+### Per-map environment
+
+- **`LevelDefinition.environment`** on each map in `menuData.ts` (fog, clear color, IBL / sun intensity)
+- **`applyLevelEnvironment.ts`** applies settings when gameplay scene loads
+- Examples: training map (cool exp2 fog), living room (warm exp2 fog, reduced sun)
+
+**Status:** implemented.
 
 ## Deferred After Vertical Slice
 
@@ -195,3 +223,5 @@ The vertical slice is successful when:
 - tuning can be changed through `config/TankController.json` (including orbit, suspension, vehicle, energy, powerUps)
 - armored car: car steering, spring suspension, ground-contact gating, and ramp/jump inertia behave as documented in `config/vehicles/armoredCar.json`
 - vehicle switch (`V`) rebinding HUD, power-ups, and enemy turret targeting works with two vehicles in one scene
+- fighter jet: throttle flight, afterburner post-combustion, engine bone scale, lock-on missiles, and `SPAWN_jet` spawn behave as documented in `config/vehicles/fighterJet.json`
+- per-map fog / lighting from `menuData.ts` `environment` applies on level load

@@ -12,7 +12,7 @@ The player controls one or more vehicles on a terrain loaded from `GLB` assets. 
 - camera orbit and zoom
 - fuel (battery) and boost (overcharge) resources
 - vehicle health, power-ups, and HUD feedback
-- **multiple playable vehicles** (tank + armored car) switchable in-mission
+- **multiple playable vehicles** (tank, armored car, fighter jet) switchable in-mission
 - asset loading conventions stable enough to support later content
 
 ## Engine and Runtime
@@ -23,6 +23,7 @@ The player controls one or more vehicles on a terrain loaded from `GLB` assets. 
 - Parameters: external JSON config files, one per vehicle type:
   - `config/TankController.json` (tank — also the default/base schema)
   - `config/vehicles/armoredCar.json` (armored car)
+  - `config/vehicles/fighterJet.json` (fighter jet)
   - resolved at runtime via `src/config/vehicleRegistry.ts` (`getVehicleConfig(type)`)
 
 ## Scale
@@ -70,8 +71,12 @@ The game is built as a single application with UI states, not as a multi-page we
 
 - `assets/tank.glb`
 - `assets/armoredcar.glb`
+- `assets/jet.glb`
 - `assets/terrain.glb`
+- `assets/livingroom.glb`
 - `assets/power-ups.glb`
+- `assets/effects/post_combustion.json` (jet afterburner particles; see **Post-combustion VFX**)
+- `assets/textures/skybox.env` (global IBL / skybox for gameplay scenes)
 
 ### Terrain
 
@@ -113,6 +118,46 @@ The tank file contains:
 
 Driving behavior diverges from the tank via JSON (`movement.steeringMode: "car"`, spring suspension, ground-contact gating). See **Armored car — driving and suspension** below.
 
+### Fighter jet
+
+`assets/jet.glb`, driven by `config/vehicles/fighterJet.json`. See `docs/ASSET_CONTRACT.md` → **Fighter Jet Contract** for the full GLB checklist. Highlights:
+
+- `movement.steeringMode: "plane"` — arcade flight via `FlightModel` (`src/game/vehicle/FlightModel.ts`), not tank/car traction
+- **Throttle:** `Z` / `S` raise / lower throttle (not instant forward/backward like ground vehicles)
+- **Attitude:** mouse = pitch/roll stick; `Q` / `D` = yaw; `Shift` = afterburner when throttle > 60 % and boost gauge > 0
+- **Landing gear:** bones `gear_F`, `gear_L`, `gear_R` retract above `flight.gear.retractSpeed` / altitude; extend when slow and low
+- **Control surfaces:** ailerons, elevators, rudder driven from flight stick state (`rig.flight.*` bones)
+- **Engine nozzle:** bone `engine` scales on X/Z (not `engineNozzleAxis`, default `y`) with throttle; emissive on material `engine`
+- **Post-combustion:** particle system on empty `jet_post_combustion`, JSON `assets/effects/post_combustion.json`
+- **Missiles:** lock-on + autoguidance (`JetMissileLockController`); visible stores on wing hardpoints; reticle icons `reticle_missile_jet*.png`
+- **Camera:** chase-style orbit when `CAM_pivot` is present; optional authored zoom empty `CAM_jet_zoom`
+- **Audio:** continuous `jet_move` (no idle loop); `jet_turbo` on afterburner
+- Tricycle suspension probes `SUS_F`, `SUS_RL`, `SUS_RR`; no tracks, no wheel-travel car logic
+
+## Per-map environment (fog, sky, light)
+
+Each map can declare an optional `environment` block on its `LevelDefinition` (`src/app/levels.ts`), populated in `src/ui/menuData.ts` → `MENU_MAPS[].level.environment`.
+
+Applied at gameplay scene creation by `applyLevelEnvironment()` (`src/game/applyLevelEnvironment.ts`) before terrain load. Based on Babylon [Environment / Fog](https://doc.babylonjs.com/features/featuresDeepDive/environment/environment_introduction).
+
+| Field | Role |
+|-------|------|
+| `clearColor` | `[r,g,b,a]` background if skybox does not fill the view |
+| `environmentIntensity` | IBL strength (`scene.environmentIntensity`) |
+| `sunIntensity` | `HemisphericLight` intensity |
+| `fog.mode` | `"exp"`, `"exp2"`, or `"linear"` |
+| `fog.color` | RGB fog tint `[0–1]` |
+| `fog.density` | Used by `exp` / `exp2` |
+| `fog.start` / `fog.end` | Used by `linear` mode |
+| `fog.enabled: false` | Explicitly disables fog on a map |
+
+**Examples (current `menuData.ts`):**
+
+- **Training** — outdoor `exp2` fog, bluish tint
+- **Living room** — warmer fog, lower sun / IBL for indoor feel
+
+Maps without `environment` keep the default clear color and no fog.
+
 ## Multi-Vehicle Architecture
 
 A mission can declare several playable vehicles; the player cycles the active one in-game.
@@ -120,7 +165,7 @@ A mission can declare several playable vehicles; the player cycles the active on
 ### Configuration
 
 - `MenuMission.vehicles: MissionVehicleSpawn[]` (`src/ui/menuData.ts`) lists `{ id, type, spawnNode }` entries; `startVehicleId` selects the one active at load.
-- `VehicleTypeId = "tank" | "armoredCar"` maps to a config via `vehicleRegistry.ts`.
+- `VehicleTypeId = "tank" | "armoredCar" | "fighterJet"` maps to a config via `vehicleRegistry.ts`.
 - Each vehicle type owns its JSON config; shared schema is `TankControllerConfig` (`src/config/tankController.ts`).
 
 ### Runtime
@@ -273,6 +318,50 @@ Reference values in `config/vehicles/armoredCar.json` (subject to feel tuning):
 | Grip | lateralFriction 10.5; carSteerGripMultiplier 2.8 |
 | Wheels | radius 0.093 m; travel enabled; front steer max 32° |
 
+## Fighter Jet — Flight, VFX, and Weapons
+
+Config: `config/vehicles/fighterJet.json`. Code: `FlightModel`, `TankGameplayController` (flight branch), `JetMissileLockController`, `postCombustionParticles.ts`, `flightEngineVisual.ts`.
+
+### Flight model (`movement.steeringMode: "plane"`)
+
+Requires a top-level `flight` block in the vehicle JSON. `FlightModel` integrates thrust, lift, drag, and torques on the Havok body each frame.
+
+| Input | Effect |
+|-------|--------|
+| `Z` / `S` | Raise / lower throttle (`flight.throttleRatePerSecond`) |
+| Mouse | Pitch / roll stick (respects `invertPitchAxis` / `invertRollAxis`) |
+| `Q` / `D` | Yaw |
+| `Shift` | Afterburner when throttle > 60 % and overcharge > 0 (`afterburnerMultiplier` on thrust) |
+
+Low-altitude blends (`resolveLowAltitudeFlightBlends`) soften full gravity near the ground at low speed so the jet can taxi / take off without “magnet” snap. Suspension springs disable at high forward speed in flight mode.
+
+### Engine visuals
+
+- Bone `rig.flight.engineBone` (`engine`): scales **perpendicular** to `rig.flight.engineNozzleAxis` (default `y`) based on **throttle** (`flight.engineScaleMin`, `flight.engineScaleSharpness`)
+- PBR material `flight.engineMaterialName` (`engine`): emissive intensity follows airspeed; turbo uses `engineEmissiveTurbo`
+
+Vertices at the nozzle rim must be weighted to the `engine` bone (not only `fuselage`) for the scale to deform geometry. Validate with `node tools/inspectBoneWeights.mjs assets/jet.glb engine`.
+
+### Post-combustion VFX
+
+- **Empty:** `rig.nodes.postCombustion` → `jet_post_combustion` (local **+Z** = aft / exhaust direction)
+- **Definition:** `assets/effects/post_combustion.json` (supports `//` line comments; stripped at load)
+- **Runtime:** `createPostCombustionParticleBundle()` parents an invisible emitter mesh to the empty; `syncFlight(throttle, afterburner)` each frame
+- **Tuning in JSON:** emit rate, colors, sizes, `direction1`/`direction2`, `emitPower`, `billboardMode`, etc. — see comments in the file
+- **Tuning in vehicle config:**
+  - `flight.postCombustionThrottleThreshold` — no flame below this throttle (0–1)
+  - `flight.postCombustionTurboEmitScale` — multiplier on `emitRate` when afterburner is active (code also bumps power/size/color slightly)
+
+### Missiles (jet primary)
+
+- Magazine + reserve like armored car; **lock-on** reticle (`reticle_missile_jet.png` / `_locked` variant)
+- Guided flight after launch; visible missiles hidden on hardpoints when fired
+- Camera shake on shell fire is **skipped** for missiles (jet uses missiles, not shells)
+
+### Missile firing — no bone recoil
+
+Same as armored car: no hull/cannon recoil on missile launch; camera shake only where applicable.
+
 ### Power-Ups
 
 Implemented in `src/game/PowerUpSystem.ts` (wired from `TankGameplayController`).
@@ -300,7 +389,8 @@ Implemented in `src/game/PowerUpSystem.ts` (wired from `TankGameplayController`)
 
 ### Movement
 
-- `ZQSD`: chassis movement
+- **Ground vehicles (tank, armored car):** `ZQSD` — forward/back and turn / steer
+- **Fighter jet:** `Z` / `S` — throttle up/down; mouse — pitch/roll; `Q` / `D` — yaw (see **Fighter Jet — Flight, VFX, and Weapons**)
 - `Shift`: boost while held (drains the boost gauge; see **Boost** below)
 
 If fuel (battery) is `0%`:
@@ -545,8 +635,9 @@ All vehicle gameplay tuning must be externalized in the per-vehicle JSON config 
 
 Each config is the source of truth for:
 
-- `rig` node/bone names and axes (per-vehicle: `pitchBone`, `minigunBone`, `wheelBones`, `frontWheelBones`, `wheelRadius`, `wheelTravel*`, `suspensionProbeNames`, `nodes.*`)
-- `movement` (including `steeringMode`, car steering keys, `requireGroundContactForControl`)
+- `rig` node/bone names and axes (per-vehicle: `pitchBone`, `minigunBone`, `wheelBones`, `frontWheelBones`, `wheelRadius`, `wheelTravel*`, `suspensionProbeNames`, `rig.flight.*`, `nodes.*`)
+- `movement` (including `steeringMode`: `"tank"`, `"car"`, `"plane"`, car steering keys, `requireGroundContactForControl`)
+- `flight` (fighter jet only: thrust, lift, surfaces, gear, engine visuals, post-combustion thresholds)
 - `suspension` (spring forces, contact tolerance, landing bounce, compression/rebound damping)
 - `physics` (including `airborneLinearDamping` / `airborneAngularDamping`)
 - `grounding`, `vehicle` health
@@ -555,7 +646,9 @@ Each config is the source of truth for:
 - fuel (`energy` battery) and boost (`energy` overcharge) drain/recharge
 - weapon values (`weapons.shell` **or** `weapons.missile`, plus `weapons.bullet`)
 - `powerUps` global + per-type settings (`types.*`)
-- `tracks` (tank only; armored car omits this section)
+- `tracks` (tank only; armored car and jet omit this section)
+
+**Per-map ambiance** (not in vehicle JSON): `LevelDefinition.environment` in `src/ui/menuData.ts` — fog, `clearColor`, `environmentIntensity`, `sunIntensity`. See **Per-map environment**.
 
 The game code should avoid hardcoding gameplay numbers except for small glue constants (e.g. reticle `baseScale` in `TankGameplayController.ts` until moved to JSON).
 
@@ -568,13 +661,16 @@ Optional debug visuals can be enabled via `debug` in `config/TankController.json
 
 ## Recommended Module Layout (actual)
 
-- `src/app/` — bootstrap, state transitions, global input (`V` switch wiring)
-- `src/game/` — `createGameplayScene`, `TankGameplayController`, `TankInput`, `PowerUpSystem`, `sceneGameplayUi`
-- `src/game/vehicle/` — `VehicleController` interface + `TankVehicleController` adapter
+- `src/app/` — bootstrap, state transitions, global input (`V` switch wiring); `levels.ts` types for `LevelDefinition` / `environment`
+- `src/ui/` — `menuData.ts` (maps, missions, per-map `environment`)
+- `src/game/` — `createGameplayScene`, `applyLevelEnvironment`, `TankGameplayController`, `TankInput`, `PowerUpSystem`, `sceneGameplayUi`
+- `src/game/vehicle/` — `VehicleController`, `TankVehicleController`, `FlightModel`, `JetMissileLockController`, `postCombustionParticles`, `flightEngineVisual`
 - `src/game/level/` — `LevelManager` (vehicle roster + active vehicle switching)
 - `src/config/` — typed config + JSON import + `vehicleRegistry`
 - `src/assets/` — asset URLs
-- `config/vehicles/` — per-vehicle JSON configs (e.g. `armoredCar.json`)
+- `config/vehicles/` — per-vehicle JSON configs (`armoredCar.json`, `fighterJet.json`, …)
+- `assets/effects/` — particle JSON definitions (`post_combustion.json`, `damage_smoke.json`, …)
+- `tools/` — GLB inspection scripts (`inspectVehicleGlb.mjs`, `inspectBoneWeights.mjs`)
 
 ## Vertical Slice Scope
 
