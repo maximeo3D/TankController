@@ -311,8 +311,9 @@ export class HelicopterModel {
     const horizontal = new Vector3(velocity.x, 0, velocity.z);
 
     if (powered) {
+      // Même signe que l'assiette : nez baissé => translation avant, roulis droit => droite.
       const accel = flatNose
-        .scale(-this.stickPitch * cfg.translationAccel)
+        .scale(this.stickPitch * cfg.translationAccel)
         .add(flatRight.scale(this.stickRoll * cfg.translationAccel));
       horizontal.addInPlace(accel.scale(dt));
     }
@@ -358,7 +359,7 @@ export class HelicopterModel {
     this.targetYawRad += toRadians(this.yawRateDeg) * dt;
 
     const targetRollRad = powered ? toRadians(this.stickRoll * cfg.maxBankDeg) : 0;
-    const targetPitchRad = powered ? toRadians(-this.stickPitch * cfg.maxPitchDeg) : 0;
+    const targetPitchRad = powered ? toRadians(this.stickPitch * cfg.maxPitchDeg) : 0;
     const target = this.buildTargetRotation(targetPitchRad, targetRollRad);
 
     const current =
