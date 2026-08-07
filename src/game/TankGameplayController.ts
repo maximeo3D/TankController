@@ -92,6 +92,11 @@ import { HighlightLayer } from "@babylonjs/core/Layers/highlightLayer";
 import type { TrackTreadParticleBundle } from "./trackTreadParticles";
 import type { TankDamageParticleBundle } from "./tankDamageParticles";
 import type { PostCombustionParticleBundle } from "./vehicle/postCombustionParticles";
+import type {
+  MissileJetSmokeFactory,
+  MissileJetSmokeInstance
+} from "./vehicle/missileJetSmokeParticles";
+import { findDescendantByName } from "./vehicle/missileJetSmokeParticles";
 import { PowerUpSystem, type PowerUpTypeId } from "./PowerUpSystem";
 import { EnemyTurretSystem, type EnemyTurretPlayerTarget } from "./EnemyTurretSystem";
 import { RadarHud, type RadarWorldBounds } from "./RadarHud";
@@ -283,6 +288,10 @@ export interface TankGameplayControllerOptions {
   tankDamageParticles?: TankDamageParticleBundle | null;
   /** Flamme de tuyère sur l'empty `jet_post_combustion` (mode `plane`). */
   postCombustionParticles?: PostCombustionParticleBundle | null;
+  /** Factory fumée / turbine sur les missiles en vol (jet). */
+  missileJetSmokeFactory?: MissileJetSmokeFactory | null;
+  /** Nom de l'empty fumée sur le mesh missile (ex. `jet_missile_smoke_1`). */
+  missileSmokeNodeName?: string | null;
   /** Empty `TARGET_player_tank` — world aim point for enemy turrets. Falls back to `tankAnchor`. */
   playerTargetNode?: TransformNode | AbstractMesh | null;
   enemyTurretSystem?: EnemyTurretSystem | null;
@@ -438,6 +447,7 @@ export class TankGameplayController {
     lastPos: Vector3;
     impactHandled: boolean;
     debugMesh?: AbstractMesh | null;
+    missileSmoke?: MissileJetSmokeInstance | null;
     guided?: {
       targetId: string;
       speed: number;
@@ -450,6 +460,8 @@ export class TankGameplayController {
   private readonly trackTreadParticlesReverse: TrackTreadParticleBundle | null;
   private readonly tankDamageParticles: TankDamageParticleBundle | null;
   private readonly postCombustionParticles: PostCombustionParticleBundle | null;
+  private readonly missileJetSmokeFactory: MissileJetSmokeFactory | null;
+  private readonly missileSmokeNodeName: string | null;
   private readonly powerUpSystem: PowerUpSystem | null;
   private readonly playerTargetNode: TransformNode | AbstractMesh | null;
   private readonly enemyTurretSystem: EnemyTurretSystem | null;
@@ -706,6 +718,8 @@ export class TankGameplayController {
     this.trackTreadParticlesReverse = options.trackTreadParticlesReverse ?? null;
     this.tankDamageParticles = options.tankDamageParticles ?? null;
     this.postCombustionParticles = options.postCombustionParticles ?? null;
+    this.missileJetSmokeFactory = options.missileJetSmokeFactory ?? null;
+    this.missileSmokeNodeName = options.missileSmokeNodeName ?? null;
     this.powerUpSystem = this.createPowerUpSystem(options);
     this.enemyTurretSystem = options.enemyTurretSystem ?? null;
     this.ownsEnemyTurretSystem = options.ownsEnemyTurretSystem === true;
@@ -3064,9 +3078,7 @@ export class TankGameplayController {
     this.tankMovementSoundMode = "stopped";
 
     for (const proj of this.activeProjectiles) {
-      proj.body.dispose();
-      proj.shape.dispose();
-      proj.mesh.dispose();
+      this.disposeProjectile(proj);
     }
 
     this.trackTreadParticles?.dispose();
@@ -4001,6 +4013,8 @@ export class TankGameplayController {
       visual.rotationQuaternion ??= Quaternion.Identity();
     }
 
+    const missileSmoke = this.attachMissileJetSmoke(mesh);
+
     const forward = this.getMuzzleNodeWorldForward(muzzleNode);
     mesh.rotationQuaternion = this.getMuzzleNodeWorldRotation(muzzleNode);
 
@@ -4038,6 +4052,7 @@ export class TankGameplayController {
       lastPos: mesh.getAbsolutePosition().clone(),
       impactHandled: false,
       debugMesh,
+      missileSmoke,
       guided:
         guidedTargetId && weaponConfig.missileLock
           ? {
@@ -4073,9 +4088,7 @@ export class TankGameplayController {
       if (idx >= 0) {
         this.activeProjectiles.splice(idx, 1);
       }
-      proj.body.dispose();
-      proj.shape.dispose();
-      proj.mesh.dispose();
+      this.disposeProjectile(proj);
     });
     if (this.primaryWeaponKind === "shell") {
       this.pendingCannonRecoilKickY += this.config.cannon.recoilKickY;
@@ -4117,9 +4130,7 @@ export class TankGameplayController {
           proj.impactHandled = true;
           void this.spawnExplosionAt(hit.pickedPoint.clone());
           this.applyShellDamageAt(hit.pickedPoint.clone());
-          proj.body.dispose();
-          proj.shape.dispose();
-          proj.mesh.dispose();
+          this.disposeProjectile(proj);
           this.activeProjectiles.splice(i, 1);
           continue;
         }
@@ -4132,12 +4143,40 @@ export class TankGameplayController {
           // PhysicsViewer automatically cleans up debug meshes when the body is disposed,
           // but we can also hide it explicitly if needed.
         }
-        proj.body.dispose();
-        proj.shape.dispose();
-        proj.mesh.dispose();
+        this.disposeProjectile(proj);
         this.activeProjectiles.splice(i, 1);
       }
     }
+  }
+
+  private attachMissileJetSmoke(
+    projectileRoot: AbstractMesh | null
+  ): MissileJetSmokeInstance | null {
+    if (
+      this.primaryWeaponKind !== "missile" ||
+      !this.missileJetSmokeFactory ||
+      !this.missileSmokeNodeName ||
+      !projectileRoot
+    ) {
+      return null;
+    }
+
+    const smokeNode = findDescendantByName(projectileRoot, this.missileSmokeNodeName);
+    if (!smokeNode) {
+      console.warn(
+        `[TankController] Missile smoke empty "${this.missileSmokeNodeName}" not found on projectile.`
+      );
+      return null;
+    }
+
+    return this.missileJetSmokeFactory.attach(smokeNode);
+  }
+
+  private disposeProjectile(proj: (typeof this.activeProjectiles)[number]): void {
+    proj.missileSmoke?.dispose();
+    proj.body.dispose();
+    proj.shape.dispose();
+    proj.mesh.dispose();
   }
 
   /**

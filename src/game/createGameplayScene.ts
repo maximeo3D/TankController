@@ -49,6 +49,10 @@ import { TARGET_FRAME_SEC } from "./frameTiming";
 import { StackPanel } from "@babylonjs/gui";
 import { createTankDamageParticleBundle } from "./tankDamageParticles";
 import { createPostCombustionParticleBundle } from "./vehicle/postCombustionParticles";
+import {
+  createMissileJetSmokeFactory,
+  type MissileJetSmokeFactory
+} from "./vehicle/missileJetSmokeParticles";
 import { applyLevelEnvironment, resolveSunIntensity } from "./applyLevelEnvironment";
 import { waitAnimationFrames } from "./frameTiming";
 import type { RadarWorldBounds } from "./RadarHud";
@@ -449,6 +453,7 @@ function resolveVehicleNodeNames(config: TankControllerConfig) {
     missileHardpoints: nodes.missileHardpoints ?? [],
     playerTarget: nodes.playerTarget ?? "TARGET_player_tank",
     postCombustion: nodes.postCombustion ?? null,
+    missileSmoke: nodes.missileSmoke ?? null,
     pitchBone: config.rig.pitchBone ?? "canon",
     damageSmokes: nodes.damageSmoke ?? [
       "tank_damage_smoke_1",
@@ -631,6 +636,19 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
   if (ammoShellMesh) {
     ammoShellMesh.isVisible = false;
     ammoShellMesh.setParent(null);
+    if (nodeNames.missileSmoke) {
+      const missileSmokeNode = findTransformNode(vehicleContainer, nodeNames.missileSmoke);
+      if (missileSmokeNode) {
+        // setParent conserve la transformée monde : les deux matrices doivent être à jour.
+        ammoShellMesh.computeWorldMatrix(true);
+        missileSmokeNode.computeWorldMatrix(true);
+        missileSmokeNode.setParent(ammoShellMesh);
+      } else {
+        console.warn(
+          `[TankController] missile smoke empty "${nodeNames.missileSmoke}" not found on "${vehicleSpawn.id}".`
+        );
+      }
+    }
   }
   const ammoShellColliderMesh = findMeshByName(vehicleContainer, nodeNames.ammoShellColliderMesh);
   if (ammoShellColliderMesh) {
@@ -701,9 +719,13 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
   let postCombustionParticles = null;
   if (nodeNames.postCombustion) {
     try {
+      const postCombustionNode = findTransformNode(vehicleContainer, nodeNames.postCombustion);
+      if (postCombustionNode) {
+        postCombustionNode.computeWorldMatrix(true);
+      }
       postCombustionParticles = await createPostCombustionParticleBundle(
         scene,
-        findTransformNode(vehicleContainer, nodeNames.postCombustion),
+        postCombustionNode,
         {
           throttleThreshold: vehicleConfig.flight?.postCombustionThrottleThreshold ?? 0.15,
           turboEmitScale: vehicleConfig.flight?.postCombustionTurboEmitScale ?? 2
@@ -711,6 +733,15 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
       );
     } catch (err) {
       console.warn("[TankController] Post-combustion particles could not be created:", err);
+    }
+  }
+
+  let missileJetSmokeFactory: MissileJetSmokeFactory | null = null;
+  if (nodeNames.missileSmoke) {
+    try {
+      missileJetSmokeFactory = await createMissileJetSmokeFactory(scene);
+    } catch (err) {
+      console.warn("[TankController] Missile jet smoke factory could not be created:", err);
     }
   }
 
@@ -759,6 +790,8 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
     trackTreadParticlesReverse,
     tankDamageParticles,
     postCombustionParticles,
+    missileJetSmokeFactory,
+    missileSmokeNodeName: nodeNames.missileSmoke,
     playerTargetNode,
     enemyTurretSystem,
     sharedPowerUpSystem,
@@ -821,16 +854,20 @@ function parentVehicleNodes(
   }
 }
 
+function normalizeNodeName(name: string): string {
+  return name.trim().toLowerCase().replace(/\.\d+$/, "");
+}
+
 function findTransformNode(
   container: AssetContainer,
   name: string
 ): TransformNode | AbstractMesh | null {
   const candidates = [...container.transformNodes, ...container.meshes];
-  const wanted = name.trim().toLowerCase();
+  const wanted = normalizeNodeName(name);
   return (
     candidates.find((node) => {
-      const n = node.name.trim().toLowerCase();
-      return n === wanted || n.startsWith(`${wanted}.`);
+      const normalized = normalizeNodeName(node.name);
+      return normalized === wanted || normalized.startsWith(`${wanted}.`);
     }) ?? null
   );
 }

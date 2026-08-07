@@ -1,0 +1,55 @@
+{
+  "name": "missileJetSmoke",
+  // Fumée blanche touffue sur l'empty `jet_missile_smoke_1` (parenté à AMMO_missile_jet).
+  // Repère local : nez du missile sur -Z, arrière / échappement sur +Z.
+  "generators": [
+    {
+      "id": "smoke",
+      "capacity": 2000,
+      "emitter": [0, 0, 0],
+      "particleTexture": "smoke2.png",
+      // Monde : la fumée reste là où le missile passe (traînée).
+      "isLocal": false,
+      // Boîte d'émission élargie = nuages décalés latéralement.
+      "minEmitBox": [-0.035, -0.035, -0.035],
+      "maxEmitBox": [0.035, 0.035, 0.035],
+      "color1": [1, 1, 1, 0.1],
+      "color2": [0.97, 0.97, 0.99, 0.1],
+      "colorDead": [0.94, 0.94, 0.96, 0],
+      // Taille de base aléatoire (minSize..maxSize) + étirement aléatoire par particule.
+      "minSize": 0.1,
+      "maxSize": 0.24,
+      "minScaleX": 0.65,
+      "maxScaleX": 1.45,
+      "minScaleY": 0.55,
+      "maxScaleY": 1.55,
+      // Rotation initiale aléatoire (rad) + spin pendant la vie.
+      "minInitialRotation": 0,
+      "maxInitialRotation": 6.283,
+      "minAngularSpeed": -1.8,
+      "maxAngularSpeed": 1.8,
+      // Fin à l'émission, épaissit, puis s'efface.
+      "sizeGradients": [
+        { "gradient": 0, "factor1": 0.1 },
+        { "gradient": 0.12, "factor1": 0.35 },
+        { "gradient": 0.35, "factor1": 0.85 },
+        { "gradient": 0.55, "factor1": 1.35 },
+        { "gradient": 0.78, "factor1": 1.55 },
+        { "gradient": 1, "factor1": 0 }
+      ],
+      "minLifeTime": 0.4,
+      "maxLifeTime": 0.8,
+      "emitRate": 600,
+      "gravity": [0, 0.06, 0],
+      // Dispersion large : chaque bouffée part dans une direction légèrement différente.
+      "direction1": [-0.45, -0.15, -0.45],
+      "direction2": [0.45, 0.55, 0.45],
+      "minEmitPower": 0.08,
+      "maxEmitPower": 0.35,
+      "updateSpeed": 0.016,
+      "blendMode": 1,
+      "isBillboardBased": true,
+      "billboardMode": 7
+    }
+  ]
+}

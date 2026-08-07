@@ -48,6 +48,7 @@
       "missileHardpoints": ["MUZZLE_missile_jet_L", "MUZZLE_missile_jet_R"],
       "playerTarget": "TARGET_player_jet",
       "postCombustion": "jet_post_combustion",
+      "missileSmoke": "jet_missile_smoke_1",
       "damageSmoke": [
         "jet_damage_smoke_1",
         "jet_damage_smoke_2",

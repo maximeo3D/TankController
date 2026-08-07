@@ -241,6 +241,8 @@ export interface TankControllerConfig {
       damageSmoke?: string[];
       /** Empty de la flamme de tuyère (ex. `jet_post_combustion`). */
       postCombustion?: string;
+      /** Empty fumée / turbine sur le mesh missile (ex. `jet_missile_smoke_1`). */
+      missileSmoke?: string;
     };
   };
   movement: {
