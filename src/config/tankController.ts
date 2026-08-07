@@ -228,6 +228,8 @@ export interface TankControllerConfig {
       cameraStart?: string;
       /** Empty de vue zoom (ex. `CAM_jet_zoom`). */
       cameraZoom?: string;
+      /** Bone skeleton parent du zoom (ex. `tourelle`) pour suivre la tourelle. */
+      cameraZoomParentBone?: string;
       muzzleShell?: string;
       muzzleMissile?: string;
       muzzleGun?: string;

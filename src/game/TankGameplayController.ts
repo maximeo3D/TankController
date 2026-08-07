@@ -5304,6 +5304,7 @@ export class TankGameplayController {
     camera: TargetCamera,
     rigNode: TransformNode | AbstractMesh
   ): void {
+    this.tankAnchor.computeWorldMatrix(true);
     rigNode.computeWorldMatrix(true);
     camera.position.copyFrom(rigNode.getAbsolutePosition());
 
@@ -5925,7 +5926,7 @@ export class TankGameplayController {
     // If we're in the alternative view, make it FOLLOW the orbit camera orientation.
     // This keeps the view consistent while preserving gameplay aiming based on orbit camera.
     if (zoomHeld && zoomCam && orbitCam) {
-      if (this.flightModel && this.cameraZoomNode) {
+      if (this.cameraZoomNode) {
         if (this.zoomCamFreezeSeconds <= 0) {
           this.applyFlightRigCamera(zoomCam, this.cameraZoomNode);
         }

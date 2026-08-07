@@ -449,6 +449,7 @@ function resolveVehicleNodeNames(config: TankControllerConfig) {
     cameraPivot: nodes.cameraPivot ?? "CAM_pivot",
     cameraStart: nodes.cameraStart ?? "CAM_tank",
     cameraZoom: nodes.cameraZoom ?? null,
+    cameraZoomParentBone: nodes.cameraZoomParentBone ?? null,
     muzzleShell: nodes.muzzleMissile ?? nodes.muzzleShell ?? "MUZZLE_canon_tank",
     muzzleGun: nodes.muzzleGun ?? "MUZZLE_gun_tank",
     ammoShellMesh: nodes.ammoMissileMesh ?? nodes.ammoShellMesh ?? "AMMO_obus",
@@ -542,6 +543,11 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
   const camZoomNode = nodeNames.cameraZoom
     ? findTransformNode(vehicleContainer, nodeNames.cameraZoom)
     : null;
+  if (nodeNames.cameraZoom && !camZoomNode) {
+    console.warn(
+      `[TankController] ${nodeNames.cameraZoom} not found in "${vehicleSpawn.id}" GLB; zoom view will use fallback rig.`
+    );
+  }
 
   if (!camPivotNode && camStartNode) {
     camPivotNode = createCameraPivotFallback(
@@ -669,6 +675,14 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
   const muzzleShellNode = findTransformNode(vehicleContainer, nodeNames.muzzleShell);
   const muzzleGunNode = findTransformNode(vehicleContainer, nodeNames.muzzleGun);
   parentMuzzleNodesToPitchBone(vehicleContainer, nodeNames.pitchBone, muzzleShellNode, muzzleGunNode);
+  if (camZoomNode && nodeNames.cameraZoomParentBone) {
+    parentNodeToSkeletonBone(
+      vehicleContainer,
+      nodeNames.cameraZoomParentBone,
+      camZoomNode,
+      nodeNames.cameraZoom ?? "CAM_zoom"
+    );
+  }
   const missileHardpoints = createMissileHardpointVisuals(
     vehicleContainer,
     nodeNames.missileHardpoints,
@@ -905,8 +919,8 @@ function createCameraPivotFallback(
   return pivot;
 }
 
-function findPitchBoneTransform(container: AssetContainer, pitchBoneName: string): TransformNode | null {
-  const wanted = pitchBoneName.trim().toLowerCase();
+function findSkeletonBoneTransform(container: AssetContainer, boneName: string): TransformNode | null {
+  const wanted = boneName.trim().toLowerCase();
   const bone =
     container.skeletons
       .flatMap((skeleton) => skeleton.bones)
@@ -916,6 +930,31 @@ function findPitchBoneTransform(container: AssetContainer, pitchBoneName: string
       }) ?? null;
 
   return bone?.getTransformNode() ?? null;
+}
+
+function parentNodeToSkeletonBone(
+  container: AssetContainer,
+  boneName: string,
+  node: TransformNode | AbstractMesh | null,
+  nodeLabel: string
+): void {
+  if (!node) {
+    return;
+  }
+
+  const boneTransform = findSkeletonBoneTransform(container, boneName);
+  if (!boneTransform) {
+    console.warn(
+      `[TankController] bone "${boneName}" not found; ${nodeLabel} was not reparented.`
+    );
+    return;
+  }
+
+  if (node.parent === boneTransform) {
+    return;
+  }
+
+  node.setParent(boneTransform, true);
 }
 
 function createMissileHardpointVisuals(
@@ -958,7 +997,7 @@ function parentMuzzleNodesToPitchBone(
   muzzleShellNode: TransformNode | AbstractMesh | null,
   muzzleGunNode: TransformNode | AbstractMesh | null
 ): void {
-  const pitchTransform = findPitchBoneTransform(container, pitchBoneName);
+  const pitchTransform = findSkeletonBoneTransform(container, pitchBoneName);
   if (!pitchTransform) {
     console.warn(
       `[TankController] pitch bone "${pitchBoneName}" not found; MUZZLE_* nodes were not reparented.`
