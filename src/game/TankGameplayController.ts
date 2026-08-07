@@ -30,9 +30,10 @@ import type {
   TankControllerConfig,
   ProjectileWeaponConfig,
   PrimaryWeaponKind,
-  FlightRigConfig
+  FlightRigConfig,
+  HelicopterConfig
 } from "../config/tankController";
-import { getPrimaryWeaponKind, getPrimaryWeaponConfig, getSuspensionContactOffset } from "../config/tankController";
+import { getProjectileWeaponKinds, getSuspensionContactOffset } from "../config/tankController";
 import { TankInput, type WeaponType } from "./TankInput";
 import {
   AdvancedDynamicTexture,
@@ -77,6 +78,7 @@ import {
 } from "../assets/assetUrls";
 import { resolveVehicleSoundUrl } from "../assets/soundLibrary";
 import { FlightModel, resolveLowAltitudeFlightBlends, type FlightState } from "./vehicle/FlightModel";
+import { HelicopterModel } from "./vehicle/HelicopterModel";
 import {
   findContainerMaterial,
   prepareEngineMaterial,
@@ -117,6 +119,8 @@ const WEAPON_SWITCH_EXIT_SEC = 0.14;
 const WEAPON_SWITCH_ENTER_SEC = 0.14;
 const WEAPON_SWITCH_BLINK_SEC = 0.24;
 const WEAPON_SLOT_SECONDARY_ALPHA = 0.9;
+/** Le rotor anticouple tourne nettement plus vite que le rotor principal. */
+const ROTOR_TAIL_SPEED_RATIO = 4.5;
 const UPRIGHT_RESET_COOLDOWN_SEC = 3;
 const UPRIGHT_RESET_LIFT_M = 2.5;
 const VEHICLE_STATUS_BAR_FILL = "#d9d9d9";
@@ -221,6 +225,71 @@ interface MissileHardpoint {
   visualMesh: Mesh | null;
 }
 
+/** Meshes et points de tir résolus pour une arme à projectile d'un véhicule. */
+export interface ProjectileWeaponAssets {
+  kind: PrimaryWeaponKind;
+  ammoMesh: Mesh | null;
+  colliderMesh: Mesh | null;
+  /** Points de tir utilisés en alternance ; vide = canon principal. */
+  muzzles: (TransformNode | AbstractMesh)[];
+  /** Emports visibles à masquer au fil des tirs ; l'ordre fixe l'ordre de tir. */
+  hardpoints?: MissileHardpoint[];
+}
+
+/**
+ * État d'exécution d'une arme à projectile. Un véhicule peut en cumuler
+ * plusieurs (l'hélicoptère embarque missiles guidés et roquettes), chacune avec
+ * son propre chargeur, sa réserve et ses points de tir.
+ */
+interface ProjectileWeaponSlot extends ProjectileWeaponAssets {
+  config: ProjectileWeaponConfig;
+  hardpoints: MissileHardpoint[];
+  hardpointLoaded: boolean[];
+  nextMuzzleIndex: number;
+  magazineSize: number;
+  loadedAmmo: number;
+  reserveAmmo: number;
+  reloadTimer: number;
+  chambered: boolean;
+}
+
+function createProjectileWeaponSlots(
+  config: TankControllerConfig,
+  assets: ProjectileWeaponAssets[]
+): Map<PrimaryWeaponKind, ProjectileWeaponSlot> {
+  const slots = new Map<PrimaryWeaponKind, ProjectileWeaponSlot>();
+
+  for (const kind of getProjectileWeaponKinds(config)) {
+    const weaponConfig = config.weapons[kind];
+    if (!weaponConfig) {
+      continue;
+    }
+
+    const asset = assets.find((entry) => entry.kind === kind) ?? null;
+    const magazineSize = Math.max(1, Math.floor(weaponConfig.magazineSize ?? 1));
+    const loadedAmmo = weaponConfig.startsChambered ? magazineSize : 0;
+    const hardpoints = asset?.hardpoints ?? [];
+
+    slots.set(kind, {
+      kind,
+      config: weaponConfig,
+      ammoMesh: asset?.ammoMesh ?? null,
+      colliderMesh: asset?.colliderMesh ?? null,
+      muzzles: asset?.muzzles ?? [],
+      hardpoints,
+      hardpointLoaded: hardpoints.map((_, index) => index < loadedAmmo),
+      nextMuzzleIndex: 0,
+      magazineSize,
+      loadedAmmo,
+      reserveAmmo: weaponConfig.startingReserveAmmo,
+      reloadTimer: 0,
+      chambered: loadedAmmo > 0
+    });
+  }
+
+  return slots;
+}
+
 const TRACK_UV_TEXTURE_PROPERTIES = [
   "albedoTexture",
   "diffuseTexture",
@@ -278,12 +347,9 @@ export interface TankGameplayControllerOptions {
   muzzleCannonNode: TransformNode | AbstractMesh | null;
   muzzleGunNode: TransformNode | AbstractMesh | null;
   tracksSourceMesh?: AbstractMesh | null;
-  ammoShellMesh: Mesh | null;
-  /** Optional collider template mesh from GLB (ex: `COL_obus`) */
-  ammoShellColliderMesh?: Mesh | null;
+  /** Une entrée par arme à projectile déclarée dans `weapons` (obus, roquette, missile). */
+  projectileWeapons: ProjectileWeaponAssets[];
   ammoBulletMesh: Mesh | null;
-  /** Emports missiles visuels ; l'ordre du tableau fixe l'ordre de tir. */
-  missileHardpoints?: MissileHardpoint[];
   physicsViewer?: PhysicsViewer;
   /** Chenilles : fumée + gravillons sur SUS_BL / SUS_BR (si chargés). */
   trackTreadParticles?: TrackTreadParticleBundle | null;
@@ -375,6 +441,11 @@ export class TankGameplayController {
   private flightGravityFactor = 1;
   /** Non nul uniquement en mode `plane` : remplace toute la conduite au sol. */
   private readonly flightModel: FlightModel | null;
+  /** Non nul uniquement en mode `helicopter` : vol stationnaire. */
+  private helicopterModel: HelicopterModel | null = null;
+  private rotorControls: RotorControls | null = null;
+  /** Vrai tant que la vue zoom pilote la tourelle au lieu de l'appareil. */
+  private helicopterZoomLookActive = false;
   private readonly flightRig: FlightRigControls | null;
   private readonly flightEngineVisual: FlightEngineVisual | null;
   private flightAileronSmoothed = 0;
@@ -400,12 +471,13 @@ export class TankGameplayController {
   private readonly trackUvScrollers: TrackUvScroller[] = [];
   private readonly tankMeshIdsToIgnore = new Set<number>();
   private readonly tankDeathVisualMeshes: AbstractMesh[];
-  private readonly ammoShellMesh: Mesh | null;
-  private readonly ammoShellColliderMesh: Mesh | null;
   private readonly ammoBulletMesh: Mesh | null;
-  private readonly missileHardpoints: readonly MissileHardpoint[];
-  /** État chargé de chaque emport ; réinitialisé à la recharge. */
-  private missileHardpointLoaded: boolean[] = [];
+  /** Une arme à projectile par type de munition embarqué. */
+  private readonly projectileSlots: Map<PrimaryWeaponKind, ProjectileWeaponSlot>;
+  /** Ordre de cycle des munitions (touches 1..N et molette). */
+  private readonly projectileKinds: PrimaryWeaponKind[];
+  /** Munition sélectionnée ; conservée quand le joueur passe à la mitrailleuse. */
+  private activeProjectileKind: PrimaryWeaponKind;
   private jetMissileLock: JetMissileLockController | null = null;
   private readonly movementForwardAxis: Vector3;
   private readonly movementInputSign: 1 | -1;
@@ -422,8 +494,6 @@ export class TankGameplayController {
   private static readonly SHIELD_GLOW_COLOR = new Color3(0.26, 0.65, 0.96);
   private battery: number;
   private overcharge: number;
-  private readonly primaryWeaponKind: PrimaryWeaponKind;
-  private readonly primaryWeaponConfig: ProjectileWeaponConfig;
   private activeWeapon: WeaponType;
   private boostActive = false;
   private zoomActive = false;
@@ -432,10 +502,6 @@ export class TankGameplayController {
   /** Turbo en cours : autorise de vider la jauge sous 20 % jusqu'à 0. */
   private boostEngaged = false;
   private boostLowBlinkPhase = 0;
-  private shellReserveAmmo: number;
-  private shellChambered: boolean;
-  private readonly shellMagazineSize: number;
-  private shellLoadedAmmo: number;
   private shellFireWasHeld = false;
 
   private targetTurretYawDeg = 0;
@@ -445,7 +511,6 @@ export class TankGameplayController {
   private smoothedMoveAxis = 0;
   private smoothedTurnAxis = 0;
 
-  private shellReloadTimer = 0;
   private bulletCooldownTimer = 0;
   private activeProjectiles: {
     mesh: Mesh;
@@ -454,6 +519,8 @@ export class TankGameplayController {
     age: number;
     lastPos: Vector3;
     impactHandled: boolean;
+    /** Dégâts de l'arme qui a tiré : ils diffèrent d'une munition à l'autre. */
+    damage: number;
     debugMesh?: AbstractMesh | null;
     missileSmoke?: MissileJetSmokeInstance | null;
     guided?: {
@@ -662,16 +729,66 @@ export class TankGameplayController {
   private debugLogZoomCamOnNextShellShot = false;
   private zoomCamFreezeSeconds = 0;
 
+  /**
+   * L'état munitions historique (`shell*`) est redirigé vers l'arme à projectile
+   * sélectionnée : les véhicules à munition unique se comportent comme avant,
+   * ceux qui en cumulent plusieurs gardent un chargeur distinct par type.
+   */
+  private get activeSlot(): ProjectileWeaponSlot {
+    const slot = this.projectileSlots.get(this.activeProjectileKind);
+    if (!slot) {
+      throw new Error(`No projectile weapon slot for "${this.activeProjectileKind}"`);
+    }
+    return slot;
+  }
+
+  private get primaryWeaponKind(): PrimaryWeaponKind {
+    return this.activeProjectileKind;
+  }
+
+  private get primaryWeaponConfig(): ProjectileWeaponConfig {
+    return this.activeSlot.config;
+  }
+
+  private get shellMagazineSize(): number {
+    return this.activeSlot.magazineSize;
+  }
+
+  private get shellLoadedAmmo(): number {
+    return this.activeSlot.loadedAmmo;
+  }
+
+  private set shellLoadedAmmo(value: number) {
+    this.activeSlot.loadedAmmo = value;
+  }
+
+  private get shellReserveAmmo(): number {
+    return this.activeSlot.reserveAmmo;
+  }
+
+  private set shellReserveAmmo(value: number) {
+    this.activeSlot.reserveAmmo = value;
+  }
+
+  private get shellChambered(): boolean {
+    return this.activeSlot.chambered;
+  }
+
+  private set shellChambered(value: boolean) {
+    this.activeSlot.chambered = value;
+  }
+
   public constructor(options: TankGameplayControllerOptions) {
     this.scene = options.scene;
     // Babylon `Sound.play()` is gated by `scene.audioEnabled`.
     this.scene.audioEnabled = true;
     this.config = options.config;
-    this.primaryWeaponKind = getPrimaryWeaponKind(options.config);
-    this.primaryWeaponConfig = getPrimaryWeaponConfig(options.config);
-    this.activeWeapon = this.primaryWeaponKind;
-    this.weaponHudDisplayedWeapon = this.primaryWeaponKind;
-    this.weaponHudAnimTargetWeapon = this.primaryWeaponKind;
+    this.projectileKinds = getProjectileWeaponKinds(options.config);
+    this.projectileSlots = createProjectileWeaponSlots(options.config, options.projectileWeapons);
+    this.activeProjectileKind = this.projectileKinds[0];
+    this.activeWeapon = this.activeProjectileKind;
+    this.weaponHudDisplayedWeapon = this.activeWeapon;
+    this.weaponHudAnimTargetWeapon = this.activeWeapon;
     this.onPlayerDeath = options.onPlayerDeath ?? null;
     this.tracksConfig = options.config.tracks ?? {
       enabled: false,
@@ -717,10 +834,7 @@ export class TankGameplayController {
     );
     this.shieldHighlightMeshes.push(...collectTankHighlightMeshes(options.tankContainer));
     this.shieldHighlightLayer = this.createShieldHighlightLayer();
-    this.ammoShellMesh = options.ammoShellMesh;
-    this.ammoShellColliderMesh = options.ammoShellColliderMesh ?? null;
     this.ammoBulletMesh = options.ammoBulletMesh;
-    this.missileHardpoints = options.missileHardpoints ?? [];
     this.physicsViewer = options.physicsViewer;
     this.trackTreadParticles = options.trackTreadParticles ?? null;
     this.trackTreadParticlesReverse = options.trackTreadParticlesReverse ?? null;
@@ -734,7 +848,13 @@ export class TankGameplayController {
     this.playerTargetNode = options.playerTargetNode ?? null;
     this.radarMapUrl = options.radarMapUrl ?? null;
     this.radarWorldBounds = options.radarWorldBounds ?? null;
-    this.input = new TankInput(options.canvas, () => !this.paused, this.primaryWeaponKind);
+    this.input = new TankInput(
+      options.canvas,
+      () => !this.paused,
+      options.config.weapons.zoomGunOnly === true
+        ? this.projectileKinds
+        : [...this.projectileKinds, "bullet"]
+    );
     this.turretControl = resolveBoneControl(options.tankContainer, "tourelle");
     const pitchBoneName = options.config.rig.pitchBone ?? "canon";
     this.cannonControl = resolveBoneControl(options.tankContainer, pitchBoneName);
@@ -824,6 +944,31 @@ export class TankGameplayController {
         console.warn("[TankController] steeringMode `plane` requires a `flight` config block.");
       }
     }
+
+    if ((options.config.movement.steeringMode ?? "tank") === "helicopter") {
+      if (options.config.helicopter) {
+        this.helicopterModel = new HelicopterModel({
+          scene: options.scene,
+          body: this.tankBody,
+          anchor: this.tankAnchor,
+          config: options.config.helicopter,
+          mass: options.config.physics.tankMass,
+          noseLocal: this.movementForwardAxis.scale(
+            this.movementInputSign * options.config.rig.movementForwardSign
+          )
+        });
+        this.flightChaseCameraRadius = options.config.camera.orbitDefaultRadius;
+        this.rotorControls = resolveRotorControls(
+          options.tankContainer,
+          this.tankAnchor,
+          options.config.helicopter
+        );
+      } else {
+        console.warn(
+          "[TankController] steeringMode `helicopter` requires a `helicopter` config block."
+        );
+      }
+    }
     this.turretYawAxis = axisFromConfig(
       options.config.rig.turretYawAxis,
       options.config.rig.turretYawSign
@@ -839,11 +984,7 @@ export class TankGameplayController {
 
     this.battery = options.config.energy.startingBattery;
     this.overcharge = options.config.energy.startingOvercharge;
-    this.shellReserveAmmo = this.primaryWeaponConfig.startingReserveAmmo;
-    this.shellMagazineSize = Math.max(1, Math.floor(this.primaryWeaponConfig.magazineSize ?? 1));
-    this.shellLoadedAmmo = this.primaryWeaponConfig.startsChambered ? this.shellMagazineSize : 0;
-    this.shellChambered = this.shellLoadedAmmo > 0;
-    this.resetMissileHardpointLoadedState();
+    this.syncMissileHardpointVisuals();
 
     if (!this.tankAnchor.rotationQuaternion) {
       this.tankAnchor.rotationQuaternion = Quaternion.Identity();
@@ -1255,6 +1396,12 @@ export class TankGameplayController {
     if (this.flightModel) {
       return this.flightModel.getState().throttle;
     }
+    if (this.helicopterModel) {
+      // Le rotor tourne en permanence : la charge suit la vitesse sol.
+      const state = this.helicopterModel.getState();
+      const speed = Math.hypot(state.horizontalSpeed, state.verticalSpeed);
+      return clamp(speed / Math.max(this.config.helicopter?.maxHorizontalSpeed ?? 1, 1), 0.25, 1);
+    }
     const throttle = Math.abs(this.smoothedMoveAxis);
     if ((this.config.movement.steeringMode ?? "tank") === "car") {
       return throttle;
@@ -1278,7 +1425,7 @@ export class TankGameplayController {
 
     const audio = this.config.audio;
     let target: "idle" | "move" | "turbo";
-    if (this.flightModel) {
+    if (this.flightModel || this.helicopterModel) {
       if (this.battery <= 0) {
         target = "idle";
       } else if (this.boostActive && this.tankTurboSound) {
@@ -2529,11 +2676,10 @@ export class TankGameplayController {
   }
 
   private updateShellReloadGauge(): void {
-    const reloadTotal = this.primaryWeaponConfig.reloadSeconds;
-    const isReloading =
-      this.shellLoadedAmmo <= 0 && this.shellReserveAmmo > 0 && this.shellReloadTimer > 0;
+    const slot = this.resolveHudProjectileSlot();
+    const isReloading = slot.loadedAmmo <= 0 && slot.reserveAmmo > 0 && slot.reloadTimer > 0;
     const progress = isReloading
-      ? clamp(1 - this.shellReloadTimer / reloadTotal, 0, 1)
+      ? clamp(1 - slot.reloadTimer / slot.config.reloadSeconds, 0, 1)
       : 0;
     const primaryIsDisplayed = this.isPrimaryWeapon(this.weaponHudDisplayedWeapon);
 
@@ -2585,6 +2731,7 @@ export class TankGameplayController {
 
     if (this.weaponHudAnimPhase === "idle") {
       this.refreshWeaponHudContent();
+      this.syncPrimaryWeaponReticleAsset();
       this.resetWeaponSlotTransforms();
       this.updateShellReloadGauge();
       return;
@@ -2680,11 +2827,24 @@ export class TankGameplayController {
     this.updateShellReloadGauge();
   }
 
+  /** Arme à projectile affichée par le HUD : celle en cours d'animation d'échange. */
+  private resolveHudProjectileSlot(): ProjectileWeaponSlot {
+    const displayed = this.weaponHudDisplayedWeapon;
+    if (displayed !== "bullet") {
+      const slot = this.projectileSlots.get(displayed);
+      if (slot) {
+        return slot;
+      }
+    }
+    return this.activeSlot;
+  }
+
   private refreshWeaponHudContent(): void {
-    const shellAmmoText = `${this.shellLoadedAmmo}/${this.shellReserveAmmo}`;
+    const slot = this.resolveHudProjectileSlot();
+    const shellAmmoText = `${slot.loadedAmmo}/${slot.reserveAmmo}`;
     const primaryIsDisplayed = this.isPrimaryWeapon(this.weaponHudDisplayedWeapon);
     const primaryProjectileIconUrl =
-      this.primaryWeaponKind === "shell" ? shellWeaponIconUrl : missileWeaponIconUrl;
+      slot.kind === "shell" ? shellWeaponIconUrl : missileWeaponIconUrl;
 
     if (primaryIsDisplayed) {
       if (this.hudWeaponPrimaryIcon) {
@@ -3040,8 +3200,10 @@ export class TankGameplayController {
     this.muzzleDebugVisuals?.cannonLinkLine.dispose();
     this.muzzleDebugVisuals?.gunLinkLine.dispose();
     this.muzzleDebugVisuals = null;
-    for (const hardpoint of this.missileHardpoints) {
-      hardpoint.visualMesh?.dispose();
+    for (const slot of this.projectileSlots.values()) {
+      for (const hardpoint of slot.hardpoints) {
+        hardpoint.visualMesh?.dispose();
+      }
     }
     this.releaseJetMissileLockUi();
 
@@ -3318,6 +3480,7 @@ export class TankGameplayController {
     this.flightGroundedReleaseTimer = 0;
     this.flightGravityFactor = 1;
     this.flightAltitudeAboveGround = 0;
+    this.helicopterModel?.reset();
     this.chaseCameraInitialized = false;
     this.suspensionContactCount = 0;
     this.suspensionCompressions.fill(0);
@@ -3423,8 +3586,11 @@ export class TankGameplayController {
 
     this.chaseCameraInitialized = false;
     this.zoomActive = false;
+    this.helicopterZoomLookActive = false;
+    // L'appareil a pu dériver hors pilotage : on repart de son assiette réelle.
+    this.helicopterModel?.reset();
 
-    if (this.flightModel && this.cameraStartNode && this.cameraPivotNode) {
+    if ((this.flightModel || this.helicopterModel) && this.cameraStartNode && this.cameraPivotNode) {
       this.applyFlightChaseCameraNoRoll(this.tankCamera);
     }
 
@@ -3508,7 +3674,7 @@ export class TankGameplayController {
     }
 
     const frame = this.input.consumeFrame();
-    this.activeWeapon = frame.selectedWeapon;
+    this.resolveActiveWeapon(frame.selectedWeapon, frame.zoomHeld);
     this.fireHeld = frame.fireHeld;
     this.boostInputHeld = frame.boostHeld;
 
@@ -3549,7 +3715,22 @@ export class TankGameplayController {
       }
     }
 
-    if (this.flightModel) {
+    if (this.helicopterModel) {
+      // Hélicoptère : la souris pilote l'appareil en vue normale, la tourelle en vue zoom.
+      if (frame.zoomHeld) {
+        if (!this.helicopterZoomLookActive) {
+          this.helicopterZoomLookActive = true;
+          this.initOrbitCameraState();
+        }
+        this.lastLookDeltaX = 0;
+        this.lastLookDeltaY = 0;
+        this.applyOrbitCamera(lookX, lookY);
+      } else {
+        this.helicopterZoomLookActive = false;
+        this.lastLookDeltaX = frame.lookDeltaX;
+        this.lastLookDeltaY = frame.lookDeltaY;
+      }
+    } else if (this.flightModel) {
       // En avion la souris est le manche : la caméra suit l'appareil au lieu d'orbiter.
       this.lastLookDeltaX = frame.lookDeltaX;
       this.lastLookDeltaY = frame.lookDeltaY;
@@ -3565,7 +3746,7 @@ export class TankGameplayController {
     this.applyMinigunSpin(dt);
     this.updateWeapons(dt);
     this.applyMovement(frame.moveAxis, frame.turnAxis, frame.boostHeld, dt);
-    if (this.flightModel) {
+    if (this.flightModel || (this.helicopterModel && !frame.zoomHeld)) {
       this.applyChaseCamera(dt);
     }
     this.applyVisualSmoothing(dt);
@@ -3626,28 +3807,9 @@ export class TankGameplayController {
     }
     this.gunReticleKickTime += dt;
 
-    // Shell / missile magazine reload.
-    if (this.shellLoadedAmmo <= 0 && this.shellReserveAmmo > 0) {
-      if (this.shellReloadTimer <= 0) {
-        this.shellReloadTimer = this.primaryWeaponConfig.reloadSeconds;
-        this.shellInsertSoundPlayed = false;
-      }
-      if (
-        this.shellMagazineSize === 1 &&
-        !this.shellInsertSoundPlayed &&
-        this.shellReloadTimer <= TankGameplayController.SHELL_INSERT_SOUND_BEFORE_END_S
-      ) {
-        this.playShellInsertSound();
-        this.shellInsertSoundPlayed = true;
-      }
-      this.shellReloadTimer -= dt;
-      if (this.shellReloadTimer <= 0) {
-        const reloadAmount = Math.min(this.shellMagazineSize, this.shellReserveAmmo);
-        this.shellLoadedAmmo = reloadAmount;
-        this.shellReserveAmmo -= reloadAmount;
-        this.shellChambered = this.shellLoadedAmmo > 0;
-        this.resetMissileHardpointLoadedState();
-      }
+    // Chaque type de munition recharge indépendamment, y compris hors sélection.
+    for (const slot of this.projectileSlots.values()) {
+      this.updateProjectileSlotReload(slot, dt);
     }
 
     // Firing
@@ -3682,17 +3844,50 @@ export class TankGameplayController {
     }
   }
 
+  private updateProjectileSlotReload(slot: ProjectileWeaponSlot, dt: number): void {
+    if (slot.loadedAmmo > 0 || slot.reserveAmmo <= 0) {
+      return;
+    }
+
+    if (slot.reloadTimer <= 0) {
+      slot.reloadTimer = slot.config.reloadSeconds;
+      this.shellInsertSoundPlayed = false;
+    }
+
+    if (
+      slot.magazineSize === 1 &&
+      !this.shellInsertSoundPlayed &&
+      slot.reloadTimer <= TankGameplayController.SHELL_INSERT_SOUND_BEFORE_END_S
+    ) {
+      this.playShellInsertSound();
+      this.shellInsertSoundPlayed = true;
+    }
+
+    slot.reloadTimer -= dt;
+    if (slot.reloadTimer > 0) {
+      return;
+    }
+
+    const reloadAmount = Math.min(slot.magazineSize, slot.reserveAmmo);
+    slot.loadedAmmo = reloadAmount;
+    slot.reserveAmmo -= reloadAmount;
+    slot.chambered = slot.loadedAmmo > 0;
+    slot.nextMuzzleIndex = 0;
+    this.resetSlotHardpointLoadedState(slot);
+  }
+
   private firePrimaryProjectile(): void {
-    const loadedBeforeShot = this.shellLoadedAmmo;
-    const fireMuzzle = this.resolvePrimaryProjectileMuzzle();
+    const slot = this.activeSlot;
+    const loadedBeforeShot = slot.loadedAmmo;
+    const fireMuzzle = this.resolvePrimaryProjectileMuzzle(slot);
     if (!fireMuzzle) {
       return;
     }
 
-    this.shellLoadedAmmo = Math.max(0, this.shellLoadedAmmo - 1);
-    this.shellChambered = this.shellLoadedAmmo > 0;
-    if (this.shellLoadedAmmo <= 0 && this.shellReserveAmmo > 0) {
-      this.shellReloadTimer = this.primaryWeaponConfig.reloadSeconds;
+    slot.loadedAmmo = Math.max(0, slot.loadedAmmo - 1);
+    slot.chambered = slot.loadedAmmo > 0;
+    if (slot.loadedAmmo <= 0 && slot.reserveAmmo > 0) {
+      slot.reloadTimer = slot.config.reloadSeconds;
     }
     this.shellInsertSoundPlayed = false;
     this.playPrimaryProjectileSound(loadedBeforeShot);
@@ -3709,9 +3904,7 @@ export class TankGameplayController {
       TankGameplayController.CANNON_MUZZLE_FLASH_LIFE_S
     );
     this.spawnProjectile(
-      this.ammoShellMesh,
-      this.ammoShellColliderMesh,
-      this.primaryWeaponConfig,
+      slot,
       0.4,
       fireMuzzle,
       this.jetMissileLock?.getLockedTargetId() ?? null
@@ -3719,40 +3912,50 @@ export class TankGameplayController {
     this.syncMissileHardpointVisuals();
   }
 
-  /** Premier emport encore chargé, ou le canon unique des autres véhicules. */
-  private resolvePrimaryProjectileMuzzle(): TransformNode | AbstractMesh | null {
-    if (this.missileHardpoints.length === 0) {
-      return this.muzzleCannonNode;
-    }
-
-    for (let index = 0; index < this.missileHardpoints.length; index++) {
-      if (!this.missileHardpointLoaded[index]) {
-        continue;
+  /**
+   * Emports visibles en priorité (jet), sinon rampes de tir en alternance
+   * (hélicoptère), sinon le canon unique des autres véhicules.
+   */
+  private resolvePrimaryProjectileMuzzle(
+    slot: ProjectileWeaponSlot
+  ): TransformNode | AbstractMesh | null {
+    if (slot.hardpoints.length > 0) {
+      for (let index = 0; index < slot.hardpoints.length; index++) {
+        if (!slot.hardpointLoaded[index]) {
+          continue;
+        }
+        slot.hardpointLoaded[index] = false;
+        return slot.hardpoints[index]?.muzzleNode ?? null;
       }
-      this.missileHardpointLoaded[index] = false;
-      return this.missileHardpoints[index]?.muzzleNode ?? null;
+      return null;
     }
 
-    return null;
+    if (slot.muzzles.length > 0) {
+      const muzzle = slot.muzzles[slot.nextMuzzleIndex % slot.muzzles.length];
+      slot.nextMuzzleIndex = (slot.nextMuzzleIndex + 1) % slot.muzzles.length;
+      return muzzle;
+    }
+
+    return this.muzzleCannonNode;
   }
 
   /** Réaligne les modèles d'emport sur l'état du chargeur interne. */
-  private resetMissileHardpointLoadedState(): void {
-    if (this.missileHardpoints.length === 0) {
+  private resetSlotHardpointLoadedState(slot: ProjectileWeaponSlot): void {
+    if (slot.hardpoints.length === 0) {
       return;
     }
 
-    this.missileHardpointLoaded = this.missileHardpoints.map(
-      (_, index) => index < this.shellLoadedAmmo
-    );
+    slot.hardpointLoaded = slot.hardpoints.map((_, index) => index < slot.loadedAmmo);
     this.syncMissileHardpointVisuals();
   }
 
   private syncMissileHardpointVisuals(): void {
-    for (let index = 0; index < this.missileHardpoints.length; index++) {
-      const visual = this.missileHardpoints[index]?.visualMesh;
-      if (visual) {
-        visual.isVisible = this.missileHardpointLoaded[index] === true;
+    for (const slot of this.projectileSlots.values()) {
+      for (let index = 0; index < slot.hardpoints.length; index++) {
+        const visual = slot.hardpoints[index]?.visualMesh;
+        if (visual) {
+          visual.isVisible = slot.hardpointLoaded[index] === true;
+        }
       }
     }
   }
@@ -3835,17 +4038,37 @@ export class TankGameplayController {
   }
 
   private updateJetMissileLock(dt: number): void {
-    if (!this.usesJetMissileReticle()) {
+    const missileSelected = this.usesJetMissileReticle() && this.isPrimaryWeapon(this.activeWeapon);
+    if (!missileSelected && !this.jetMissileLock) {
       return;
     }
 
     this.ensureJetMissileLockController();
     const camera = this.scene.activeCamera as Camera | null;
-    this.jetMissileLock?.update(dt, this.isPrimaryWeapon(this.activeWeapon), camera);
+    // Passer `false` plutôt que sortir tôt : le contrôleur masque alors son réticule.
+    this.jetMissileLock?.update(dt, missileSelected, camera);
   }
 
   private isPrimaryWeapon(weapon: WeaponType): boolean {
-    return weapon === this.primaryWeaponKind;
+    return weapon !== "bullet" && this.projectileSlots.has(weapon);
+  }
+
+  /**
+   * `zoomGunOnly` (hélicoptère) : la mitrailleuse est liée à la vue zoom et les
+   * projectiles à la vue normale, sans changement de munition possible en zoom.
+   */
+  private resolveActiveWeapon(selected: WeaponType, zoomHeld: boolean): void {
+    if (selected !== "bullet" && this.projectileSlots.has(selected)) {
+      this.activeProjectileKind = selected;
+    }
+
+    if (this.config.weapons.zoomGunOnly !== true) {
+      this.activeWeapon = selected;
+      return;
+    }
+
+    this.input.setWeaponSelectionLocked(zoomHeld);
+    this.activeWeapon = zoomHeld ? "bullet" : this.activeProjectileKind;
   }
 
   private playPrimaryProjectileSound(loadedBeforeShot: number): void {
@@ -4049,13 +4272,14 @@ export class TankGameplayController {
   }
 
   private spawnProjectile(
-    baseMesh: Mesh | null,
-    colliderTemplate: Mesh | null,
-    weaponConfig: { muzzleVelocity: number; gravityMultiplier: number; missileLock?: import("../config/tankController").MissileLockConfig },
+    slot: ProjectileWeaponSlot,
     radius: number,
     muzzleNode: TransformNode | AbstractMesh | null = this.muzzleCannonNode,
     guidedTargetId: string | null = null
   ): void {
+    const baseMesh = slot.ammoMesh;
+    const colliderTemplate = slot.colliderMesh;
+    const weaponConfig = slot.config;
     if (!baseMesh || !muzzleNode) {
       return;
     }
@@ -4081,7 +4305,7 @@ export class TankGameplayController {
       visual.rotationQuaternion ??= Quaternion.Identity();
     }
 
-    const missileSmoke = this.attachMissileJetSmoke(mesh);
+    const missileSmoke = this.attachMissileJetSmoke(slot, mesh);
 
     const forward = this.getMuzzleNodeWorldForward(muzzleNode);
     mesh.rotationQuaternion = this.getMuzzleNodeWorldRotation(muzzleNode);
@@ -4119,6 +4343,7 @@ export class TankGameplayController {
       age: 0,
       lastPos: mesh.getAbsolutePosition().clone(),
       impactHandled: false,
+      damage: weaponConfig.damage,
       debugMesh,
       missileSmoke,
       guided:
@@ -4150,7 +4375,7 @@ export class TankGameplayController {
         proj.mesh.getAbsolutePosition().clone();
 
       void this.spawnExplosionAt(p.clone());
-      this.applyShellDamageAt(p.clone());
+      this.applyShellDamageAt(p.clone(), proj.damage);
 
       const idx = this.activeProjectiles.indexOf(proj);
       if (idx >= 0) {
@@ -4158,7 +4383,7 @@ export class TankGameplayController {
       }
       this.disposeProjectile(proj);
     });
-    if (this.primaryWeaponKind === "shell") {
+    if (slot.kind === "shell") {
       this.pendingCannonRecoilKickY += this.config.cannon.recoilKickY;
       this.applyHullRecoilImpulseFromWorldForward(forward);
       this.triggerShellShotCameraShake();
@@ -4197,7 +4422,7 @@ export class TankGameplayController {
         if (hit?.hit && hit.pickedPoint) {
           proj.impactHandled = true;
           void this.spawnExplosionAt(hit.pickedPoint.clone());
-          this.applyShellDamageAt(hit.pickedPoint.clone());
+          this.applyShellDamageAt(hit.pickedPoint.clone(), proj.damage);
           this.disposeProjectile(proj);
           this.activeProjectiles.splice(i, 1);
           continue;
@@ -4218,10 +4443,11 @@ export class TankGameplayController {
   }
 
   private attachMissileJetSmoke(
+    slot: ProjectileWeaponSlot,
     projectileRoot: AbstractMesh | null
   ): MissileJetSmokeInstance | null {
     if (
-      this.primaryWeaponKind !== "missile" ||
+      slot.kind !== "missile" ||
       !this.missileJetSmokeFactory ||
       !this.missileSmokeNodeName ||
       !projectileRoot
@@ -4455,8 +4681,7 @@ export class TankGameplayController {
     }
   }
 
-  private applyShellDamageAt(worldPos: Vector3): void {
-    const damage = this.primaryWeaponConfig.damage;
+  private applyShellDamageAt(worldPos: Vector3, damage: number): void {
     if (damage <= 0 || !this.enemyTurretSystem) {
       return;
     }
@@ -4555,6 +4780,10 @@ export class TankGameplayController {
       }
     }
 
+    // Hélicoptère : en vue normale la souris pilote l'appareil, la tourelle reste figée.
+    const turretFollowsAim =
+      this.config.turret.aimOnlyInZoom !== true || this.helicopterZoomLookActive || this.zoomActive;
+
     if (targetPoint) {
       this.lastAimTargetPoint = targetPoint.clone();
 
@@ -4574,7 +4803,9 @@ export class TankGameplayController {
       this.updateAimDebug(controlCamera.globalPosition.clone(), ray.direction, targetPoint);
       // Camera reticle is now screen-space GUI; no world-space update needed.
       this.updateBarrelReticles(renderCamera);
+    }
 
+    if (targetPoint && turretFollowsAim) {
       // Transform target point to tank's local space
       const invHullMatrix = this.tankAnchor.getWorldMatrix().clone().invert();
       const localTarget = Vector3.TransformCoordinates(targetPoint, invHullMatrix);
@@ -4583,7 +4814,10 @@ export class TankGameplayController {
       // Math.atan2(x, z) means 0 is forward (+z), PI/2 is right (+x)
       // Negating x and z to flip the turret 180 degrees
       let desiredYawRad = Math.atan2(-localTarget.x, -localTarget.z);
-      this.targetTurretYawDeg = (desiredYawRad * 180) / Math.PI * this.config.rig.turretYawSign;
+      this.targetTurretYawDeg = clampTurretYawDeg(
+        ((desiredYawRad * 180) / Math.PI) * this.config.rig.turretYawSign,
+        this.config.turret
+      );
 
       // For pitch, calculate distance from cannon pivot to target
       let cannonLocalPos = Vector3.Zero();
@@ -4611,11 +4845,19 @@ export class TankGameplayController {
     }
 
     const turretPrevYawDeg = this.currentTurretYawDeg;
-    const turretNextYawDeg = moveTowardsAngle(
-      this.currentTurretYawDeg,
-      this.targetTurretYawDeg,
-      this.config.turret.yawSpeedDeg * dt
-    );
+    // Tourelle à butées : interpolation directe, sinon le chemin le plus court
+    // ferait passer la tourelle par l'arrière, hors du secteur autorisé.
+    const turretNextYawDeg = hasTurretYawLimits(this.config.turret)
+      ? moveTowards(
+          this.currentTurretYawDeg,
+          this.targetTurretYawDeg,
+          this.config.turret.yawSpeedDeg * dt
+        )
+      : moveTowardsAngle(
+          this.currentTurretYawDeg,
+          this.targetTurretYawDeg,
+          this.config.turret.yawSpeedDeg * dt
+        );
     const turretStepDeg = Math.abs(turretNextYawDeg - turretPrevYawDeg);
     const turretStepRad = toRadians(turretNextYawDeg - turretPrevYawDeg);
     this.currentTurretYawDeg = turretNextYawDeg;
@@ -5189,6 +5431,83 @@ export class TankGameplayController {
     this.flightAltitudeAboveGround = state.altitudeAboveGround;
   }
 
+  /**
+   * Hélicoptère : Z / S montent et descendent, Q / D tournent sur le lacet, et
+   * la souris incline l'appareil sauf en vue zoom où elle pilote la tourelle.
+   */
+  private updateHelicopter(
+    moveAxis: number,
+    turnAxis: number,
+    canMove: boolean,
+    grounded: boolean,
+    dt: number
+  ): void {
+    const helicopter = this.helicopterModel;
+    if (!helicopter) {
+      return;
+    }
+
+    const state = helicopter.update(
+      {
+        climbAxis: canMove ? moveAxis : 0,
+        yawAxis: canMove ? turnAxis : 0,
+        lookDeltaX: this.lastLookDeltaX,
+        lookDeltaY: this.lastLookDeltaY,
+        attitudeControlEnabled: !this.helicopterZoomLookActive
+      },
+      grounded,
+      canMove,
+      dt
+    );
+
+    // Pas de post-combustion sur un hélicoptère : le turbo ne fait que recharger.
+    this.boostActive = false;
+    const overchargeMax = this.config.energy.overchargeMax;
+    if (this.overcharge < overchargeMax) {
+      this.overcharge = Math.min(
+        overchargeMax,
+        this.overcharge + this.config.energy.overchargeRechargePerSecond * dt
+      );
+    }
+
+    this.battery = clamp(
+      this.battery - this.config.energy.batteryDrainMovingPerSecond * dt,
+      0,
+      this.config.energy.batteryMax
+    );
+
+    this.applyRotorSpin(state.rotorAngleRad);
+    this.flightAltitudeAboveGround = state.altitudeAboveGround;
+  }
+
+  /** Rotors principal et de queue entraînés par le modèle de vol. */
+  private applyRotorSpin(angleRad: number): void {
+    const rotors = this.rotorControls;
+    if (!rotors) {
+      return;
+    }
+
+    if (rotors.main) {
+      setControlAxisAngle(
+        rotors.main.control,
+        rotors.main.baseLocalRotation,
+        rotors.main.axis,
+        angleRad,
+        this.tankAnchor
+      );
+    }
+    if (rotors.tail) {
+      // Le rotor anticouple tourne plus vite que le rotor principal.
+      setControlAxisAngle(
+        rotors.tail.control,
+        rotors.tail.baseLocalRotation,
+        rotors.tail.axis,
+        angleRad * ROTOR_TAIL_SPEED_RATIO,
+        this.tankAnchor
+      );
+    }
+  }
+
   /** Gouvernes, trains, turbine et émissive moteur d'après l'état de vol. */
   private applyFlightRigVisuals(state: FlightState, dt: number): void {
     const cfg = this.config.flight;
@@ -5348,7 +5667,7 @@ export class TankGameplayController {
       return;
     }
 
-    if (this.flightModel && this.cameraStartNode) {
+    if ((this.flightModel || this.helicopterModel) && this.cameraStartNode) {
       this.applyFlightChaseCameraNoRoll(this.tankCamera);
       return;
     }
@@ -5447,6 +5766,13 @@ export class TankGameplayController {
 
     if (this.flightModel) {
       this.updateFlight(turnAxis, effectiveBoost, canMove, grounded, dt);
+      this.hullDrivePitchTarget = 0;
+      this.syncTankMovementSounds();
+      return;
+    }
+
+    if (this.helicopterModel) {
+      this.updateHelicopter(moveAxis, turnAxis, canMove, grounded, dt);
       this.hullDrivePitchTarget = 0;
       this.syncTankMovementSounds();
       return;
@@ -5704,7 +6030,7 @@ export class TankGameplayController {
    */
   private resolveTractionApplyPoint(
     objectCenterWorld: Vector3,
-    steeringMode: "tank" | "car" | "plane"
+    steeringMode: NonNullable<TankControllerConfig["movement"]["steeringMode"]>
   ): Vector3 {
     if (steeringMode !== "car") {
       return objectCenterWorld;
@@ -5817,6 +6143,12 @@ export class TankGameplayController {
     } else {
       this.tankBody.setLinearDamping(physics.airborneLinearDamping ?? physics.tankLinearDamping);
       this.tankBody.setAngularDamping(physics.airborneAngularDamping ?? physics.tankAngularDamping);
+    }
+
+    if (this.helicopterModel) {
+      // La portance du rotor est simulée par le maintien d'altitude : pas de gravité.
+      this.tankBody.setGravityFactor(0);
+      return;
     }
 
     const targetGravity = grounded ? 1 : this.resolveFlightGravityFactor();
@@ -6724,6 +7056,64 @@ function moveTowardsAngle(current: number, target: number, maxDelta: number): nu
   }
 
   return current + Math.sign(delta) * maxDelta;
+}
+
+interface RotorControl {
+  control: BoneControl;
+  baseLocalRotation: Quaternion;
+  axis: Vector3;
+}
+
+interface RotorControls {
+  main: RotorControl | null;
+  tail: RotorControl | null;
+}
+
+function resolveRotorControl(
+  container: AssetContainer,
+  anchor: TransformNode,
+  boneName: string | undefined,
+  axisName: "x" | "y" | "z" | undefined
+): RotorControl | null {
+  if (!boneName) {
+    return null;
+  }
+
+  const control = resolveBoneControl(container, boneName);
+  if (!control.bone && !control.transformNode) {
+    console.warn(`[TankController] Rotor bone "${boneName}" not found.`);
+    return null;
+  }
+
+  return {
+    control,
+    baseLocalRotation: getControlLocalRotation(control, anchor),
+    axis: axisFromConfig(axisName ?? "y", 1)
+  };
+}
+
+function resolveRotorControls(
+  container: AssetContainer,
+  anchor: TransformNode,
+  config: HelicopterConfig
+): RotorControls {
+  return {
+    main: resolveRotorControl(container, anchor, config.mainRotorBone, config.mainRotorAxis),
+    tail: resolveRotorControl(container, anchor, config.tailRotorBone, config.tailRotorAxis)
+  };
+}
+
+type TurretConfig = TankControllerConfig["turret"];
+
+function hasTurretYawLimits(turret: TurretConfig): boolean {
+  return turret.minYawDeg !== undefined || turret.maxYawDeg !== undefined;
+}
+
+function clampTurretYawDeg(yawDeg: number, turret: TurretConfig): number {
+  if (!hasTurretYawLimits(turret)) {
+    return yawDeg;
+  }
+  return clamp(yawDeg, turret.minYawDeg ?? -180, turret.maxYawDeg ?? 180);
 }
 
 function collectTankHighlightMeshes(container: AssetContainer): Mesh[] {

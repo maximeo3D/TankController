@@ -173,6 +173,56 @@ export interface FlightConfig {
   };
 }
 
+/**
+ * Vol stationnaire arcade utilisé quand `movement.steeringMode` vaut `helicopter`.
+ * L'appareil tient son altitude tout seul : Z / S ne sont pas une manette des gaz
+ * mais des commandes de montée / descente, et la souris incline l'appareil.
+ */
+export interface HelicopterConfig {
+  /** Vitesse verticale (m/s) sous Z / S. */
+  climbSpeed: number;
+  /** Réactivité du maintien d'altitude (1/s) — plus haut = tenue plus ferme. */
+  altitudeHoldSharpness: number;
+  /** Amortissement vertical du stationnaire (1/s). */
+  verticalDamping: number;
+  /** Altitude sol (m) sous laquelle l'appareil se pose au lieu de tenir le stationnaire. */
+  groundHoverHeight: number;
+  /** Vitesse de lacet (deg/s) sous Q / D. */
+  yawSpeedDeg: number;
+  /** Réactivité du lacet (1/s). */
+  yawSharpness: number;
+  /** Inclinaison latérale max (deg) au manche plein. */
+  maxBankDeg: number;
+  /** Assiette longitudinale max (deg) au manche plein. */
+  maxPitchDeg: number;
+  /** Réactivité de mise en assiette (1/s). */
+  attitudeSharpness: number;
+  /** Sensibilité du manche souris (unités de manche par pixel). */
+  stickRollPerPixel: number;
+  stickPitchPerPixel: number;
+  /** Recentrage automatique du manche (unités/s ; 0 = manche libre). */
+  stickReturnPerSecond: number;
+  /** Inverse l'axe souris avant qu'il n'atteigne le manche. */
+  invertPitchAxis?: boolean;
+  invertRollAxis?: boolean;
+  /** Accélération horizontale (m/s²) à inclinaison pleine. */
+  translationAccel: number;
+  /** Vitesse horizontale max (m/s). */
+  maxHorizontalSpeed: number;
+  /** Traînée horizontale (1/s) — ramène l'appareil au stationnaire manche neutre. */
+  horizontalDrag: number;
+  /** Bone du rotor principal (rotation continue). */
+  mainRotorBone?: string;
+  mainRotorAxis?: RigAxis;
+  /** Bone du rotor de queue. */
+  tailRotorBone?: string;
+  tailRotorAxis?: RigAxis;
+  /** Vitesse de rotation des rotors (deg/s). */
+  rotorSpeedDeg?: number;
+  /** Vitesse des rotors au repos moteur coupé (deg/s). */
+  rotorIdleSpeedDeg?: number;
+}
+
 export interface TankControllerConfig {
   debug?: {
     showSuspensionSpheres?: boolean;
@@ -242,8 +292,18 @@ export interface TankControllerConfig {
       /** Templates roquette : `AMMO_rocket` + `COL_rocket`. */
       ammoRocketMesh?: string;
       ammoRocketColliderMesh?: string;
+      /** Points de tir missiles utilisés en alternance (ex. `MUZZLE_missile_L`, `_R`). */
+      missileMuzzles?: string[];
+      /** Points de tir roquettes utilisés en alternance. */
+      rocketMuzzles?: string[];
       /** Emplacements d'emport visuels (ex. `MUZZLE_missile_L`, `_R`). Ordre = ordre de tir. */
       missileHardpoints?: string[];
+      /**
+       * Rampes reparentées au bone de pitch (`pitchBone`). Défaut : la rampe de
+       * l'arme principale et celle de la mitrailleuse. L'hélicoptère n'y met que
+       * son canon, ses missiles et roquettes restant solidaires du fuselage.
+       */
+      pitchBoneMuzzles?: string[];
       playerTarget?: string;
       damageSmoke?: string[];
       /** Empty de la flamme de tuyère (ex. `jet_post_combustion`). */
@@ -263,9 +323,10 @@ export interface TankControllerConfig {
     lateralGrip: number;
     /**
      * `tank` = rotation sur place ; `car` = braquage lié à la vitesse avant/arrière ;
-     * `plane` = modèle de vol (voir `flight`), le sol ne sert qu'au roulage.
+     * `plane` = modèle de vol (voir `flight`), le sol ne sert qu'au roulage ;
+     * `helicopter` = vol stationnaire (voir `helicopter`).
      */
-    steeringMode?: "tank" | "car" | "plane";
+    steeringMode?: "tank" | "car" | "plane" | "helicopter";
     /** Vitesse linéaire min. (m/s) pour entamer un virage en mode `car`. */
     carMinSteerSpeed?: number;
     /** Vitesse de référence pour le facteur de braquage en mode `car` (défaut ≈ moveSpeed × 8). */
@@ -354,6 +415,14 @@ export interface TankControllerConfig {
   turret: {
     yawSpeedDeg: number;
     mouseSensitivityDegPerPixel: number;
+    /** Butée de lacet (deg, relative à l'axe du véhicule). Absent = rotation libre 360°. */
+    minYawDeg?: number;
+    maxYawDeg?: number;
+    /**
+     * La tourelle ne suit la visée qu'en vue zoom ; en vue normale elle garde
+     * son orientation courante (hélicoptère : la souris pilote l'appareil).
+     */
+    aimOnlyInZoom?: boolean;
   };
   cannon: {
     pitchSpeedDeg: number;
@@ -397,6 +466,8 @@ export interface TankControllerConfig {
   };
   /** Requis quand `movement.steeringMode` vaut `plane`. */
   flight?: FlightConfig;
+  /** Requis quand `movement.steeringMode` vaut `helicopter`. */
+  helicopter?: HelicopterConfig;
   // Optional for backward compatibility with older configs.
   tracks?: {
     enabled: boolean;
@@ -526,7 +597,7 @@ export interface TankControllerConfig {
     shell?: ProjectileWeaponConfig;
     /** Roquettes non guidées (voiture blindée, etc.). */
     rocket?: ProjectileWeaponConfig;
-    /** Missiles guidés (jet, etc.). */
+    /** Missiles guidés (jet, hélicoptère). */
     missile?: ProjectileWeaponConfig;
     bullet: {
       shotsPerSecond: number;
@@ -534,6 +605,12 @@ export interface TankControllerConfig {
       muzzleVelocity: number;
       gravityMultiplier: number;
     };
+    /**
+     * Hélicoptère : le canon n'est utilisable qu'en vue zoom, et les projectiles
+     * (missiles / roquettes) uniquement en vue normale. Le changement de munition
+     * est verrouillé tant que le zoom est actif.
+     */
+    zoomGunOnly?: boolean;
   };
 }
 
@@ -568,17 +645,20 @@ export interface ProjectileWeaponConfig {
 
 export type PrimaryWeaponKind = "shell" | "rocket" | "missile";
 
+/** Ordre de sélection des armes à projectile déclarées par un véhicule. */
+export const PROJECTILE_WEAPON_KINDS: readonly PrimaryWeaponKind[] = ["shell", "missile", "rocket"];
+
+/** Toutes les armes à projectile du véhicule, dans l'ordre de cycle joueur. */
+export function getProjectileWeaponKinds(config: TankControllerConfig): PrimaryWeaponKind[] {
+  const kinds = PROJECTILE_WEAPON_KINDS.filter((kind) => Boolean(config.weapons[kind]));
+  if (kinds.length === 0) {
+    throw new Error("Vehicle config must define weapons.shell, weapons.rocket, or weapons.missile");
+  }
+  return kinds;
+}
+
 export function getPrimaryWeaponKind(config: TankControllerConfig): PrimaryWeaponKind {
-  if (config.weapons.shell) {
-    return "shell";
-  }
-  if (config.weapons.rocket) {
-    return "rocket";
-  }
-  if (config.weapons.missile) {
-    return "missile";
-  }
-  throw new Error("Vehicle config must define weapons.shell, weapons.rocket, or weapons.missile");
+  return getProjectileWeaponKinds(config)[0];
 }
 
 export function getPrimaryWeaponConfig(config: TankControllerConfig): ProjectileWeaponConfig {

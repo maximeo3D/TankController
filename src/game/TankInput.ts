@@ -1,6 +1,9 @@
 export type WeaponType = "shell" | "rocket" | "missile" | "bullet";
 export type PrimaryWeaponType = "shell" | "rocket" | "missile";
 
+/** Touches de sélection directe, dans l'ordre des emplacements d'armes. */
+const WEAPON_SLOT_KEYS: readonly string[] = ["1", "2", "3", "4"];
+
 export interface TankInputFrame {
   moveAxis: number;
   turnAxis: number;
@@ -30,8 +33,11 @@ export class TankInput {
   // Zoom is implemented as a toggle (RMB click) instead of "hold",
   // because holding RMB can prevent LMB events on some browsers.
   private zoomToggled = false;
-  private readonly primaryWeapon: PrimaryWeaponType;
+  /** Armes sélectionnables, dans l'ordre des touches 1..N et de la molette. */
+  private readonly weaponSlots: readonly WeaponType[];
   private selectedWeapon: WeaponType;
+  /** Verrouille le changement d'arme (hélicoptère en vue zoom). */
+  private weaponSelectionLocked = false;
   private pointerLocked = false;
   private uprightResetRequested = false;
   private hornRequested = false;
@@ -39,12 +45,12 @@ export class TankInput {
   public constructor(
     canvas: HTMLCanvasElement,
     shouldRequestPointerLock: () => boolean = () => true,
-    primaryWeapon: PrimaryWeaponType = "shell"
+    weaponSlots: readonly WeaponType[] = ["shell", "bullet"]
   ) {
     this.canvas = canvas;
     this.shouldRequestPointerLock = shouldRequestPointerLock;
-    this.primaryWeapon = primaryWeapon;
-    this.selectedWeapon = primaryWeapon;
+    this.weaponSlots = weaponSlots.length > 0 ? [...weaponSlots] : ["shell", "bullet"];
+    this.selectedWeapon = this.weaponSlots[0];
     this.pointerLocked = document.pointerLockElement === this.canvas;
     this.canvas.tabIndex = 0;
 
@@ -84,6 +90,11 @@ export class TankInput {
     return frame;
   }
 
+  /** Fige la munition sélectionnée (hélicoptère : interdit en vue zoom). */
+  public setWeaponSelectionLocked(locked: boolean): void {
+    this.weaponSelectionLocked = locked;
+  }
+
   public resetState(): void {
     this.pressedKeys.clear();
     this.lookDeltaX = 0;
@@ -121,13 +132,11 @@ export class TankInput {
     this.pressedKeys.add(key);
     this.trackShiftCode(event.code, true);
 
-    if (key === "1") {
-      this.selectedWeapon = this.primaryWeapon;
-      event.preventDefault();
-    }
-
-    if (key === "2") {
-      this.selectedWeapon = "bullet";
+    const slotIndex = WEAPON_SLOT_KEYS.indexOf(key);
+    if (slotIndex >= 0) {
+      if (!this.weaponSelectionLocked && slotIndex < this.weaponSlots.length) {
+        this.selectedWeapon = this.weaponSlots[slotIndex];
+      }
       event.preventDefault();
     }
 
@@ -148,13 +157,18 @@ export class TankInput {
   };
 
   private readonly handleWheel = (event: WheelEvent): void => {
-    // Simple 2-weapon toggle on wheel up/down.
-    if (event.deltaY === 0) {
+    if (event.deltaY === 0 || this.weaponSlots.length < 2) {
       return;
     }
-    this.selectedWeapon =
-      this.selectedWeapon === this.primaryWeapon ? "bullet" : this.primaryWeapon;
     event.preventDefault();
+    if (this.weaponSelectionLocked) {
+      return;
+    }
+
+    const current = this.weaponSlots.indexOf(this.selectedWeapon);
+    const step = event.deltaY > 0 ? 1 : -1;
+    const next = (current + step + this.weaponSlots.length) % this.weaponSlots.length;
+    this.selectedWeapon = this.weaponSlots[next];
   };
 
   private readonly handleKeyUp = (event: KeyboardEvent): void => {
@@ -260,5 +274,5 @@ function normalizeKey(key: string): string {
 }
 
 function isTrackedKey(key: string): boolean {
-  return ["z", "q", "s", "d", "1", "2", "y", "h", "shift"].includes(key);
+  return ["z", "q", "s", "d", "y", "h", "shift", ...WEAPON_SLOT_KEYS].includes(key);
 }

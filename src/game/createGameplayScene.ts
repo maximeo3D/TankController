@@ -28,16 +28,21 @@ import { CubeTexture } from "@babylonjs/core/Materials/Textures/cubeTexture";
 import { Texture } from "@babylonjs/core/Materials/Textures/texture";
 import type { AssetContainer } from "@babylonjs/core/assetContainer";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
-import type { TankControllerConfig } from "../config/tankController";
-import { getPrimaryWeaponKind, getSuspensionContactOffset } from "../config/tankController";
+import type { TankControllerConfig, PrimaryWeaponKind } from "../config/tankController";
+import {
+  getPrimaryWeaponKind,
+  getProjectileWeaponKinds,
+  getSuspensionContactOffset
+} from "../config/tankController";
 import { getVehicleConfig } from "../config/vehicleRegistry";
-import { tankAssetUrl, armoredCarAssetUrl, fighterJetAssetUrl, skyboxAssetUrl, powerUpsAssetUrl, enemiesAssetUrl, vehicleTankIconUrl, vehicleArmoredCarIconUrl, vehicleFighterJetIconUrl } from "../assets/assetUrls";
+import { tankAssetUrl, armoredCarAssetUrl, fighterJetAssetUrl, helicopterAssetUrl, skyboxAssetUrl, powerUpsAssetUrl, enemiesAssetUrl, vehicleTankIconUrl, vehicleArmoredCarIconUrl, vehicleFighterJetIconUrl, vehicleHelicopterIconUrl } from "../assets/assetUrls";
 import { enemiesConfig } from "../config/enemiesController";
 import { EnemyTurretSystem } from "./EnemyTurretSystem";
 import type { LevelDefinition } from "../app/levels";
 import type { MenuMission, MissionVehicleSpawn } from "../ui/menuData";
 import type { VehicleTypeId } from "./vehicle/VehicleController";
 import { TankGameplayController } from "./TankGameplayController";
+import type { ProjectileWeaponAssets } from "./TankGameplayController";
 import { LevelManager } from "./level/LevelManager";
 import { TankVehicleController } from "./vehicle/TankVehicleController";
 import { PowerUpSystem } from "./PowerUpSystem";
@@ -94,6 +99,9 @@ function vehicleAssetUrl(type: VehicleTypeId): string {
   if (type === "fighterJet") {
     return fighterJetAssetUrl;
   }
+  if (type === "helicopter") {
+    return helicopterAssetUrl;
+  }
   return tankAssetUrl;
 }
 
@@ -106,6 +114,9 @@ function resolveVehicleSelectorIconUrl(type: VehicleTypeId): string | null {
   }
   if (type === "fighterJet") {
     return vehicleFighterJetIconUrl;
+  }
+  if (type === "helicopter") {
+    return vehicleHelicopterIconUrl;
   }
   return null;
 }
@@ -442,31 +453,59 @@ interface SpawnPlayerVehicleOptions {
   sharedPowerUpSystem?: PowerUpSystem | null;
 }
 
+/** Noms GLB d'une arme à projectile : munition, collider et rampes de tir. */
+interface ProjectileWeaponNodeNames {
+  kind: PrimaryWeaponKind;
+  ammoMesh: string;
+  colliderMesh: string;
+  /** Rampes utilisées en alternance ; vide = canon principal. */
+  muzzles: string[];
+  /** Emports visibles consommés au fil des tirs (jet). */
+  hardpoints: string[];
+}
+
+function resolveProjectileWeaponNodeNames(
+  config: TankControllerConfig
+): ProjectileWeaponNodeNames[] {
+  const nodes = config.rig.nodes ?? {};
+
+  return getProjectileWeaponKinds(config).map((kind): ProjectileWeaponNodeNames => {
+    switch (kind) {
+      case "rocket":
+        return {
+          kind,
+          ammoMesh: nodes.ammoRocketMesh ?? "AMMO_rocket",
+          colliderMesh: nodes.ammoRocketColliderMesh ?? "COL_rocket",
+          muzzles: nodes.rocketMuzzles ?? [nodes.muzzleRocket ?? "MUZZLE_rocket"],
+          hardpoints: []
+        };
+      case "missile":
+        return {
+          kind,
+          ammoMesh: nodes.ammoMissileMesh ?? "AMMO_missile",
+          colliderMesh: nodes.ammoMissileColliderMesh ?? "COL_missile",
+          muzzles: nodes.missileMuzzles ?? [nodes.muzzleMissile ?? "MUZZLE_missile"],
+          hardpoints: nodes.missileHardpoints ?? []
+        };
+      default:
+        return {
+          kind,
+          ammoMesh: nodes.ammoShellMesh ?? "AMMO_obus",
+          colliderMesh: nodes.ammoShellColliderMesh ?? "COL_obus",
+          muzzles: [nodes.muzzleShell ?? "MUZZLE_canon_tank"],
+          hardpoints: []
+        };
+    }
+  });
+}
+
 function resolveVehicleNodeNames(config: TankControllerConfig) {
   const nodes = config.rig.nodes ?? {};
   const primaryKind = getPrimaryWeaponKind(config);
-
-  let muzzleShell: string;
-  let ammoShellMesh: string;
-  let ammoShellColliderMesh: string;
-
-  switch (primaryKind) {
-    case "rocket":
-      muzzleShell = nodes.muzzleRocket ?? nodes.muzzleMissile ?? "MUZZLE_rocket";
-      ammoShellMesh = nodes.ammoRocketMesh ?? "AMMO_rocket";
-      ammoShellColliderMesh = nodes.ammoRocketColliderMesh ?? "COL_rocket";
-      break;
-    case "missile":
-      muzzleShell = nodes.muzzleMissile ?? "MUZZLE_missile";
-      ammoShellMesh = nodes.ammoMissileMesh ?? "AMMO_missile";
-      ammoShellColliderMesh = nodes.ammoMissileColliderMesh ?? "COL_missile";
-      break;
-    default:
-      muzzleShell = nodes.muzzleShell ?? "MUZZLE_canon_tank";
-      ammoShellMesh = nodes.ammoShellMesh ?? "AMMO_obus";
-      ammoShellColliderMesh = nodes.ammoShellColliderMesh ?? "COL_obus";
-      break;
-  }
+  const projectileWeapons = resolveProjectileWeaponNodeNames(config);
+  const muzzleGun = nodes.muzzleGun ?? "MUZZLE_gun_tank";
+  // Rampe principale : celle de l'arme sélectionnée par défaut.
+  const muzzleShell = projectileWeapons[0]?.muzzles[0] ?? muzzleGun;
 
   return {
     colliderMesh: nodes.colliderMesh ?? "COL_tank",
@@ -475,10 +514,10 @@ function resolveVehicleNodeNames(config: TankControllerConfig) {
     cameraZoom: nodes.cameraZoom ?? null,
     cameraZoomParentBone: nodes.cameraZoomParentBone ?? null,
     muzzleShell,
-    muzzleGun: nodes.muzzleGun ?? "MUZZLE_gun_tank",
-    ammoShellMesh,
-    ammoShellColliderMesh,
-    missileHardpoints: nodes.missileHardpoints ?? [],
+    muzzleGun,
+    projectileWeapons,
+    /** Rampes solidaires du bone de pitch ; par défaut obus + mitrailleuse. */
+    pitchBoneMuzzles: nodes.pitchBoneMuzzles ?? [muzzleShell, muzzleGun],
     playerTarget: nodes.playerTarget ?? "TARGET_player_tank",
     postCombustion: nodes.postCombustion ?? null,
     missileSmoke: primaryKind === "missile" ? nodes.missileSmoke ?? null : null,
@@ -665,30 +704,12 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
     }
   }
 
-  const ammoShellMesh = findMeshByName(vehicleContainer, nodeNames.ammoShellMesh);
-  if (ammoShellMesh) {
-    ammoShellMesh.isVisible = false;
-    ammoShellMesh.setParent(null);
-    if (nodeNames.missileSmoke) {
-      const missileSmokeNode = findTransformNode(vehicleContainer, nodeNames.missileSmoke);
-      if (missileSmokeNode) {
-        // setParent conserve la transformée monde : les deux matrices doivent être à jour.
-        ammoShellMesh.computeWorldMatrix(true);
-        missileSmokeNode.computeWorldMatrix(true);
-        missileSmokeNode.setParent(ammoShellMesh);
-      } else {
-        console.warn(
-          `[TankController] missile smoke empty "${nodeNames.missileSmoke}" not found on "${vehicleSpawn.id}".`
-        );
-      }
-    }
-  }
-  const ammoShellColliderMesh = findMeshByName(vehicleContainer, nodeNames.ammoShellColliderMesh);
-  if (ammoShellColliderMesh) {
-    ammoShellColliderMesh.isVisible = false;
-    ammoShellColliderMesh.isPickable = false;
-    ammoShellColliderMesh.setParent(null);
-  }
+  const projectileWeapons = resolveProjectileWeaponAssets(
+    vehicleContainer,
+    nodeNames.projectileWeapons,
+    nodeNames.missileSmoke,
+    vehicleSpawn.id
+  );
   const ammoBulletMesh = findMeshByName(vehicleContainer, "AMMO_balle");
   if (ammoBulletMesh) {
     ammoBulletMesh.isVisible = false;
@@ -697,7 +718,11 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
 
   const muzzleShellNode = findTransformNode(vehicleContainer, nodeNames.muzzleShell);
   const muzzleGunNode = findTransformNode(vehicleContainer, nodeNames.muzzleGun);
-  parentMuzzleNodesToPitchBone(vehicleContainer, nodeNames.pitchBone, muzzleShellNode, muzzleGunNode);
+  parentMuzzleNodesToPitchBone(
+    vehicleContainer,
+    nodeNames.pitchBone,
+    nodeNames.pitchBoneMuzzles
+  );
   if (camZoomNode && nodeNames.cameraZoomParentBone) {
     parentNodeToSkeletonBone(
       vehicleContainer,
@@ -706,11 +731,6 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
       nodeNames.cameraZoom ?? "CAM_zoom"
     );
   }
-  const missileHardpoints = createMissileHardpointVisuals(
-    vehicleContainer,
-    nodeNames.missileHardpoints,
-    ammoShellMesh
-  );
   refreshTankRigWorldMatrices(vehicleAnchor, vehicleContainer);
 
   const suspensionNodes = {
@@ -823,10 +843,8 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
     muzzleCannonNode: muzzleShellNode,
     muzzleGunNode,
     tracksSourceMesh,
-    ammoShellMesh,
-    ammoShellColliderMesh,
+    projectileWeapons,
     ammoBulletMesh,
-    missileHardpoints,
     trackTreadParticles,
     trackTreadParticlesReverse,
     tankDamageParticles,
@@ -980,6 +998,68 @@ function parentNodeToSkeletonBone(
   node.setParent(boneTransform, true);
 }
 
+/**
+ * Prépare une arme à projectile par type de munition : template de munition,
+ * collider, rampes de tir et emports visibles.
+ */
+function resolveProjectileWeaponAssets(
+  container: AssetContainer,
+  weaponNames: readonly ProjectileWeaponNodeNames[],
+  missileSmokeName: string | null,
+  vehicleId: string
+): ProjectileWeaponAssets[] {
+  return weaponNames.map((weapon) => {
+    const ammoMesh = findMeshByName(container, weapon.ammoMesh);
+    if (ammoMesh) {
+      ammoMesh.isVisible = false;
+      ammoMesh.setParent(null);
+    } else {
+      console.warn(
+        `[TankController] ammo mesh "${weapon.ammoMesh}" not found on "${vehicleId}"; ${weapon.kind} disabled.`
+      );
+    }
+
+    if (ammoMesh && weapon.kind === "missile" && missileSmokeName) {
+      const missileSmokeNode = findTransformNode(container, missileSmokeName);
+      if (missileSmokeNode) {
+        // setParent conserve la transformée monde : les deux matrices doivent être à jour.
+        ammoMesh.computeWorldMatrix(true);
+        missileSmokeNode.computeWorldMatrix(true);
+        missileSmokeNode.setParent(ammoMesh);
+      } else {
+        console.warn(
+          `[TankController] missile smoke empty "${missileSmokeName}" not found on "${vehicleId}".`
+        );
+      }
+    }
+
+    const colliderMesh = findMeshByName(container, weapon.colliderMesh);
+    if (colliderMesh) {
+      colliderMesh.isVisible = false;
+      colliderMesh.isPickable = false;
+      colliderMesh.setParent(null);
+    }
+
+    const muzzles: (TransformNode | AbstractMesh)[] = [];
+    for (const muzzleName of weapon.muzzles) {
+      const muzzle = findTransformNode(container, muzzleName);
+      if (muzzle) {
+        muzzles.push(muzzle);
+      } else {
+        console.warn(`[TankController] muzzle "${muzzleName}" not found on "${vehicleId}".`);
+      }
+    }
+
+    return {
+      kind: weapon.kind,
+      ammoMesh,
+      colliderMesh,
+      muzzles,
+      hardpoints: createMissileHardpointVisuals(container, weapon.hardpoints, ammoMesh)
+    };
+  });
+}
+
 function createMissileHardpointVisuals(
   container: AssetContainer,
   hardpointNames: readonly string[],
@@ -1017,9 +1097,12 @@ function createMissileHardpointVisuals(
 function parentMuzzleNodesToPitchBone(
   container: AssetContainer,
   pitchBoneName: string,
-  muzzleShellNode: TransformNode | AbstractMesh | null,
-  muzzleGunNode: TransformNode | AbstractMesh | null
+  muzzleNames: readonly string[]
 ): void {
+  if (muzzleNames.length === 0) {
+    return;
+  }
+
   const pitchTransform = findSkeletonBoneTransform(container, pitchBoneName);
   if (!pitchTransform) {
     console.warn(
@@ -1028,11 +1111,9 @@ function parentMuzzleNodesToPitchBone(
     return;
   }
 
-  for (const muzzle of [muzzleShellNode, muzzleGunNode]) {
-    if (!muzzle) {
-      continue;
-    }
-    if (muzzle.parent === pitchTransform) {
+  for (const muzzleName of muzzleNames) {
+    const muzzle = findTransformNode(container, muzzleName);
+    if (!muzzle || muzzle.parent === pitchTransform) {
       continue;
     }
     muzzle.setParent(pitchTransform, true);
