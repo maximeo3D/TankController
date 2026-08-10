@@ -126,7 +126,7 @@
   "cannon": {
     "pitchSpeedDeg": 45.0,
     "mouseSensitivityDegPerPixel": 0.2,
-    "minPitchDeg": -80.0,
+    "minPitchDeg": -60.0,
     "maxPitchDeg": 30.0,
     "recoilKickY": 0.0,
     "recoilReturnSpeed": 0.25,

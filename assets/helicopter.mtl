@@ -1,0 +1,42 @@
+# Blender 5.0.1 MTL File: 'helicopter.blend'
+# www.blender.org
+
+newmtl emissive
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Kd 1.000000 0.993410 0.846861
+Ks 0.500000 0.500000 0.500000
+Ke 1.000000 0.475820 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+
+newmtl glow
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ni 1.500000
+illum 2
+map_Kd C:/bullet_glow.png
+map_Ke C:/bullet_glow.png
+map_d C:/bullet_glow.png
+
+newmtl helicopter
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd textures/helicopter.jpg
+
+newmtl jet
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd textures/jet.jpg

@@ -104,8 +104,12 @@ import { EnemyTurretSystem, type EnemyTurretPlayerTarget } from "./EnemyTurretSy
 import { RadarHud, type RadarWorldBounds } from "./RadarHud";
 import {
   clearSceneGameplayUi,
+  disposeSceneSparkImpact,
   getSceneGameplayUi,
-  setSceneGameplayUi
+  getSceneSparkImpact,
+  setSceneGameplayUi,
+  setSceneSparkImpact,
+  type SceneSparkImpactState
 } from "./sceneGameplayUi";
 import { addHudCornerBrackets } from "./hudChrome";
 
@@ -638,15 +642,9 @@ export class TankGameplayController {
     turretSpawnId: string | null;
   }[] = [];
 
-  private sparkSpriteManager: SpriteManager | null = null;
   private sparkSpritePool: Sprite[] = [];
-  private activeSparkSprites: {
-    sprite: Sprite;
-    age: number;
-    life: number;
-    grow: number;
-    maxSize: number;
-  }[] = [];
+  private activeSparkSprites: SceneSparkImpactState["active"] = [];
+  private ownsSceneSparkImpact = false;
 
   // Coax (hitscan) spread: grows while firing, shrinks when not firing.
   private gunSpreadDeg = 0;
@@ -1865,6 +1863,7 @@ export class TankGameplayController {
       this.hudTexture = sharedUi.hudTexture;
       this.ownsSceneHud = false;
       this.initRadarHud();
+      this.initSparkImpactSprites();
       return;
     }
 
@@ -1876,7 +1875,8 @@ export class TankGameplayController {
       hudLayoutReady: false,
       hudReticlesAttached: false,
       radarHud: null,
-      vehicleSelectorHud: null
+      vehicleSelectorHud: null,
+      sparkImpact: null
     });
 
     void AdvancedDynamicTexture.ParseFromFileAsync(hudLayoutJsonUrl, true, this.hudTexture)
@@ -2159,25 +2159,42 @@ export class TankGameplayController {
   }
 
   private initSparkImpactSprites(): void {
+    const shared = getSceneSparkImpact(this.scene);
+    if (shared) {
+      this.bindSparkImpactState(shared);
+      return;
+    }
+
     const poolSize = 64;
-    this.sparkSpriteManager = new SpriteManager(
+    const manager = new SpriteManager(
       "spark_impact_sprite_mgr",
       sparkImpactAssetUrl,
       poolSize,
       { width: 350, height: 350 },
       this.scene
     );
-    this.sparkSpriteManager.isPickable = false;
-    this.sparkSpriteManager.disableDepthWrite = false;
+    manager.isPickable = false;
+    manager.disableDepthWrite = false;
 
+    const pool: Sprite[] = [];
     for (let i = 0; i < poolSize; i++) {
-      const s = new Sprite(`spark_sprite_${i}`, this.sparkSpriteManager);
+      const s = new Sprite(`spark_sprite_${i}`, manager);
       s.isVisible = false;
       s.size = 0;
       s.angle = 0;
       s.color.a = 1;
-      this.sparkSpritePool.push(s);
+      pool.push(s);
     }
+
+    const state: SceneSparkImpactState = { manager, pool, active: [] };
+    this.bindSparkImpactState(state);
+    this.ownsSceneSparkImpact = true;
+    setSceneSparkImpact(this.scene, state);
+  }
+
+  private bindSparkImpactState(state: SceneSparkImpactState): void {
+    this.sparkSpritePool = state.pool;
+    this.activeSparkSprites = state.active;
   }
 
   private updateGameplayHud(dt: number): void {
@@ -3260,6 +3277,9 @@ export class TankGameplayController {
     if (this.ownsSceneHud) {
       this.hudTexture?.dispose();
       this.radarHud?.dispose();
+      if (this.ownsSceneSparkImpact) {
+        disposeSceneSparkImpact(this.scene);
+      }
       clearSceneGameplayUi(this.scene);
     }
     this.hudTexture = null;
@@ -3771,15 +3791,16 @@ export class TankGameplayController {
     }
 
     if (this.helicopterModel) {
-      // Hélicoptère : la souris pilote l'appareil en vue normale, la tourelle en vue zoom.
+      // Hélicoptère : manche en vue normale ; en zoom la souris pilote la tourelle / le canon.
       if (frame.zoomHeld) {
         if (!this.helicopterZoomLookActive) {
           this.helicopterZoomLookActive = true;
-          this.initOrbitCameraState();
+          this.targetTurretYawDeg = this.currentTurretYawDeg;
+          this.targetCannonPitchDeg = this.currentCannonPitchDeg;
         }
         this.lastLookDeltaX = 0;
         this.lastLookDeltaY = 0;
-        this.applyOrbitCamera(lookX, lookY);
+        this.applyHelicopterTurretLook(lookX, lookY);
       } else {
         this.helicopterZoomLookActive = false;
         this.lastLookDeltaX = frame.lookDeltaX;
@@ -4752,6 +4773,7 @@ export class TankGameplayController {
     // Keeping everything pooled to avoid allocations/drawcall growth.
     const count = 6;
     const radius = 0.06;
+    const maxSize = this.flightModel || this.helicopterModel ? 1.0 : 0.5;
 
     // Small random offsets in world XY plane (good enough visually for now).
     for (let i = 0; i < count; i++) {
@@ -4769,7 +4791,7 @@ export class TankGameplayController {
       sprite.angle = Math.random() * Math.PI * 2;
 
       // Speed up x2.
-      this.activeSparkSprites.push({ sprite, age: 0, life: 0.14, grow: 0.14, maxSize: 0.5 });
+      this.activeSparkSprites.push({ sprite, age: 0, life: 0.14, grow: 0.14, maxSize });
     }
   }
 
@@ -4795,108 +4817,101 @@ export class TankGameplayController {
   }
 
   private applyTurretAndCannon(_pointerX: number, _pointerY: number, dt: number): void {
-    // IMPORTANT: gameplay aiming must not change when switching to the alternative zoom view.
-    // So we always use the orbit camera (tankCamera) as the control camera for raycasts/aim.
-    const controlCamera = this.tankCamera ?? (this.scene.activeCamera as TargetCamera | null);
+    const zoomCam = this.tankZoomCamera;
+    const orbitCam = this.tankCamera ?? null;
+    // En zoom hélico la visée est portée par la caméra du canon (empty parenté au bone).
+    const controlCamera =
+      this.helicopterZoomLookActive && zoomCam
+        ? zoomCam
+        : orbitCam ?? (this.scene.activeCamera as TargetCamera | null);
     if (!controlCamera) {
       return;
     }
 
-    // Ensure the camera world matrix/globalPosition is up to date before we use it for debug + raycasting.
     controlCamera.computeWorldMatrix();
 
-    // In zoom view, the render camera is different from the control camera.
-    // Reticle projection must use the render camera, while aiming uses control camera.
     const renderCamera =
       (this.scene.activeCamera as Camera | null | undefined) ?? (controlCamera as unknown as Camera);
 
-    // "Camera reticle" is a fixed crosshair: raycast from screen center (not pointer position).
-    const cx = this.scene.getEngine().getRenderWidth() * 0.5;
-    const cy = this.scene.getEngine().getRenderHeight() * 0.5;
-    const ray = this.scene.createPickingRay(cx, cy, Matrix.Identity(), controlCamera);
-    let targetPoint: Vector3 | null = null;
-
-    const pickResult = this.scene.pickWithRay(ray, (mesh) => {
-      // Only hit terrain meshes or ground
-      return mesh.name.startsWith("SM_") || mesh.name.startsWith("DM_") || mesh.name.toLowerCase().includes("ground");
-    });
-
-    if (pickResult?.hit && pickResult.pickedPoint) {
-      targetPoint = pickResult.pickedPoint;
-    } else {
-      // Intersect with horizontal plane at tank's height
-      const plane = Plane.FromPositionAndNormal(this.tankAnchor.position, Axis.Y);
-      const distance = ray.intersectsPlane(plane);
-      if (distance !== null && distance > 0) {
-        targetPoint = ray.origin.add(ray.direction.scale(distance));
-      } else {
-        // Looking at the sky or parallel to the ground
-        targetPoint = ray.origin.add(ray.direction.scale(1000));
-      }
-    }
-
-    // Hélicoptère : en vue normale la souris pilote l'appareil, la tourelle reste figée.
     const turretFollowsAim =
       this.config.turret.aimOnlyInZoom !== true || this.helicopterZoomLookActive || this.zoomActive;
 
-    if (targetPoint) {
-      this.lastAimTargetPoint = targetPoint.clone();
+    if (this.helicopterZoomLookActive) {
+      this.updateBarrelReticles(renderCamera);
+    } else {
+      // "Camera reticle" is a fixed crosshair: raycast from screen center (not pointer position).
+      const cx = this.scene.getEngine().getRenderWidth() * 0.5;
+      const cy = this.scene.getEngine().getRenderHeight() * 0.5;
+      const ray = this.scene.createPickingRay(cx, cy, Matrix.Identity(), controlCamera);
+      let targetPoint: Vector3 | null = null;
 
-      // Limit the distance of the target point from the tank to 1 meter
-      // (Note: The game uses a x10 scale, you can increase this value if 1.0 feels too short)
-      const tankPos = this.tankAnchor.getAbsolutePosition();
-      const offset = targetPoint.subtract(tankPos);
-      const maxDistance = this.config.aim.cameraMaxTargetDistance;
-      if (offset.length() > maxDistance) {
-        offset.normalize().scaleInPlace(maxDistance);
-        targetPoint = tankPos.add(offset);
-        this.lastAimTargetPoint.copyFrom(targetPoint);
+      const pickResult = this.scene.pickWithRay(ray, (mesh) => {
+        return mesh.name.startsWith("SM_") || mesh.name.startsWith("DM_") || mesh.name.toLowerCase().includes("ground");
+      });
+
+      if (pickResult?.hit && pickResult.pickedPoint) {
+        targetPoint = pickResult.pickedPoint;
+      } else {
+        const plane = Plane.FromPositionAndNormal(this.tankAnchor.position, Axis.Y);
+        const distance = ray.intersectsPlane(plane);
+        if (distance !== null && distance > 0) {
+          targetPoint = ray.origin.add(ray.direction.scale(distance));
+        } else {
+          targetPoint = ray.origin.add(ray.direction.scale(1000));
+        }
       }
 
-      // For debug visualization, use the actual camera position as ray origin.
-      // Babylon's picking ray origin can be at the near-plane, which is confusing visually.
-      this.updateAimDebug(controlCamera.globalPosition.clone(), ray.direction, targetPoint);
-      // Camera reticle is now screen-space GUI; no world-space update needed.
-      this.updateBarrelReticles(renderCamera);
+      if (targetPoint) {
+        this.lastAimTargetPoint = targetPoint.clone();
+
+        const tankPos = this.tankAnchor.getAbsolutePosition();
+        const offset = targetPoint.subtract(tankPos);
+        const maxDistance = this.config.aim.cameraMaxTargetDistance;
+        if (offset.length() > maxDistance) {
+          offset.normalize().scaleInPlace(maxDistance);
+          targetPoint = tankPos.add(offset);
+          this.lastAimTargetPoint.copyFrom(targetPoint);
+        }
+
+        this.updateAimDebug(controlCamera.globalPosition.clone(), ray.direction, targetPoint);
+        this.updateBarrelReticles(renderCamera);
+      }
+
+      if (targetPoint && turretFollowsAim) {
+        const invHullMatrix = this.tankAnchor.getWorldMatrix().clone().invert();
+        const localTarget = Vector3.TransformCoordinates(targetPoint, invHullMatrix);
+
+        const desiredYawRad = Math.atan2(-localTarget.x, -localTarget.z);
+        this.targetTurretYawDeg = clampTurretYawDeg(
+          ((desiredYawRad * 180) / Math.PI) * this.config.rig.turretYawSign,
+          this.config.turret
+        );
+
+        let cannonLocalPos = Vector3.Zero();
+        if (this.cannonControl.transformNode) {
+          const cannonWorldPos = this.cannonControl.transformNode.getAbsolutePosition();
+          cannonLocalPos = Vector3.TransformCoordinates(cannonWorldPos, invHullMatrix);
+        } else if (this.cannonControl.bone) {
+          const cannonWorldPos = this.cannonControl.bone.getAbsolutePosition(this.tankAnchor);
+          cannonLocalPos = Vector3.TransformCoordinates(cannonWorldPos, invHullMatrix);
+        }
+
+        const dx = localTarget.x - cannonLocalPos.x;
+        const dz = localTarget.z - cannonLocalPos.z;
+        const distHorizFromCannon = Math.sqrt(dx * dx + dz * dz);
+        const heightFromCannon = localTarget.y - cannonLocalPos.y;
+
+        const desiredPitchRad = Math.atan2(heightFromCannon, distHorizFromCannon);
+        this.targetCannonPitchDeg = clamp(
+          ((desiredPitchRad * 180) / Math.PI) * this.config.rig.cannonPitchSign,
+          this.config.cannon.minPitchDeg,
+          this.config.cannon.maxPitchDeg
+        );
+      }
     }
 
-    if (targetPoint && turretFollowsAim) {
-      // Transform target point to tank's local space
-      const invHullMatrix = this.tankAnchor.getWorldMatrix().clone().invert();
-      const localTarget = Vector3.TransformCoordinates(targetPoint, invHullMatrix);
-
-      // Calculate desired yaw in tank space (XZ plane)
-      // Math.atan2(x, z) means 0 is forward (+z), PI/2 is right (+x)
-      // Negating x and z to flip the turret 180 degrees
-      let desiredYawRad = Math.atan2(-localTarget.x, -localTarget.z);
-      this.targetTurretYawDeg = clampTurretYawDeg(
-        ((desiredYawRad * 180) / Math.PI) * this.config.rig.turretYawSign,
-        this.config.turret
-      );
-
-      // For pitch, calculate distance from cannon pivot to target
-      let cannonLocalPos = Vector3.Zero();
-      if (this.cannonControl.transformNode) {
-        const cannonWorldPos = this.cannonControl.transformNode.getAbsolutePosition();
-        cannonLocalPos = Vector3.TransformCoordinates(cannonWorldPos, invHullMatrix);
-      } else if (this.cannonControl.bone) {
-        const cannonWorldPos = this.cannonControl.bone.getAbsolutePosition(this.tankAnchor);
-        cannonLocalPos = Vector3.TransformCoordinates(cannonWorldPos, invHullMatrix);
-      }
-
-      const dx = localTarget.x - cannonLocalPos.x;
-      const dz = localTarget.z - cannonLocalPos.z;
-      const distHorizFromCannon = Math.sqrt(dx * dx + dz * dz);
-      const heightFromCannon = localTarget.y - cannonLocalPos.y;
-
-      let desiredPitchRad = Math.atan2(heightFromCannon, distHorizFromCannon);
-      
-      // Apply sign and clamp
-      this.targetCannonPitchDeg = clamp(
-        ((desiredPitchRad * 180) / Math.PI) * this.config.rig.cannonPitchSign,
-        this.config.cannon.minPitchDeg,
-        this.config.cannon.maxPitchDeg
-      );
+    if (!turretFollowsAim) {
+      return;
     }
 
     const turretPrevYawDeg = this.currentTurretYawDeg;
@@ -5673,6 +5688,28 @@ export class TankGameplayController {
       return;
     }
     setControlAxisAngle(hinge.control, hinge.baseRotation, hinge.axis, angleRad, this.tankAnchor);
+  }
+
+  /**
+   * Vue zoom hélico : la souris commande directement le yaw tourelle et le pitch canon,
+   * dans les butées configurées (±110° / +30°..-80°).
+   */
+  private applyHelicopterTurretLook(lookDeltaX: number, lookDeltaY: number): void {
+    const cam = this.config.camera;
+    const yawSign = -(cam.orbitYawSign ?? -1);
+    const pitchSign = -(cam.orbitPitchSign ?? -1);
+
+    this.targetTurretYawDeg = clampTurretYawDeg(
+      this.targetTurretYawDeg +
+        lookDeltaX * this.config.turret.mouseSensitivityDegPerPixel * yawSign,
+      this.config.turret
+    );
+    this.targetCannonPitchDeg = clamp(
+      this.targetCannonPitchDeg +
+        lookDeltaY * this.config.cannon.mouseSensitivityDegPerPixel * pitchSign,
+      this.config.cannon.minPitchDeg,
+      this.config.cannon.maxPitchDeg
+    );
   }
 
   /**
