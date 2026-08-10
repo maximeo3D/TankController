@@ -1639,6 +1639,57 @@ export class TankGameplayController {
     this.turretStopSound?.play();
   }
 
+  /** Coupe immédiatement les sons de rotation tourelle/canon (ex. sortie du zoom hélico). */
+  private stopTurretArticulationSounds(): void {
+    this.articulationIsRotating = false;
+    if (this.turretSoundState === "stopped") {
+      return;
+    }
+    this.beginTurretSoundStopping();
+  }
+
+  /** Hélico en vue normale : missiles/roquettes visent le nez, pas la tourelle MG. */
+  private usesHelicopterHullWeaponAim(): boolean {
+    return this.helicopterModel !== null && !this.helicopterZoomLookActive;
+  }
+
+  private raycastAimPointFromCameraCenter(camera: Camera): Vector3 | null {
+    const cx = this.scene.getEngine().getRenderWidth() * 0.5;
+    const cy = this.scene.getEngine().getRenderHeight() * 0.5;
+    const ray = this.scene.createPickingRay(cx, cy, Matrix.Identity(), camera);
+    let targetPoint: Vector3 | null = null;
+
+    const pickResult = this.scene.pickWithRay(ray, (mesh) => {
+      return mesh.name.startsWith("SM_") || mesh.name.startsWith("DM_") || mesh.name.toLowerCase().includes("ground");
+    });
+
+    if (pickResult?.hit && pickResult.pickedPoint) {
+      targetPoint = pickResult.pickedPoint;
+    } else {
+      const plane = Plane.FromPositionAndNormal(this.tankAnchor.position, Axis.Y);
+      const distance = ray.intersectsPlane(plane);
+      if (distance !== null && distance > 0) {
+        targetPoint = ray.origin.add(ray.direction.scale(distance));
+      } else {
+        targetPoint = ray.origin.add(ray.direction.scale(1000));
+      }
+    }
+
+    if (!targetPoint) {
+      return null;
+    }
+
+    const tankPos = this.tankAnchor.getAbsolutePosition();
+    const offset = targetPoint.subtract(tankPos);
+    const maxDistance = this.config.aim.cameraMaxTargetDistance;
+    if (offset.length() > maxDistance) {
+      offset.normalize().scaleInPlace(maxDistance);
+      targetPoint = tankPos.add(offset);
+    }
+
+    return targetPoint;
+  }
+
   private syncArticulationSounds(turretStepDeg: number, cannonStepDeg: number): void {
     if (!this.audioUnlocked) {
       return;
@@ -3802,6 +3853,9 @@ export class TankGameplayController {
         this.lastLookDeltaY = 0;
         this.applyHelicopterTurretLook(lookX, lookY);
       } else {
+        if (this.helicopterZoomLookActive) {
+          this.stopTurretArticulationSounds();
+        }
         this.helicopterZoomLookActive = false;
         this.lastLookDeltaX = frame.lookDeltaX;
         this.lastLookDeltaY = frame.lookDeltaY;
@@ -4077,6 +4131,25 @@ export class TankGameplayController {
   }
 
   private resolveJetMissileLockOrigin(): { position: Vector3; forward: Vector3 } | null {
+    if (this.usesHelicopterHullWeaponAim()) {
+      const camera = this.tankCamera;
+      if (!camera) {
+        return null;
+      }
+      camera.computeWorldMatrix();
+      const aimPoint = this.lastAimTargetPoint ?? this.raycastAimPointFromCameraCenter(camera);
+      if (!aimPoint) {
+        return null;
+      }
+      const position = camera.globalPosition.clone();
+      const forward = aimPoint.subtract(position);
+      if (forward.lengthSquared() < 1e-8) {
+        return null;
+      }
+      forward.normalize();
+      return { position, forward };
+    }
+
     if (!this.muzzleGunNode) {
       return null;
     }
@@ -4833,47 +4906,23 @@ export class TankGameplayController {
     const renderCamera =
       (this.scene.activeCamera as Camera | null | undefined) ?? (controlCamera as unknown as Camera);
 
-    const turretFollowsAim =
-      this.config.turret.aimOnlyInZoom !== true || this.helicopterZoomLookActive || this.zoomActive;
+    const turretFollowsAim = this.helicopterModel
+      ? this.helicopterZoomLookActive
+      : this.config.turret.aimOnlyInZoom !== true || this.zoomActive;
 
     if (this.helicopterZoomLookActive) {
       this.updateBarrelReticles(renderCamera);
     } else {
       // "Camera reticle" is a fixed crosshair: raycast from screen center (not pointer position).
-      const cx = this.scene.getEngine().getRenderWidth() * 0.5;
-      const cy = this.scene.getEngine().getRenderHeight() * 0.5;
-      const ray = this.scene.createPickingRay(cx, cy, Matrix.Identity(), controlCamera);
-      let targetPoint: Vector3 | null = null;
-
-      const pickResult = this.scene.pickWithRay(ray, (mesh) => {
-        return mesh.name.startsWith("SM_") || mesh.name.startsWith("DM_") || mesh.name.toLowerCase().includes("ground");
-      });
-
-      if (pickResult?.hit && pickResult.pickedPoint) {
-        targetPoint = pickResult.pickedPoint;
-      } else {
-        const plane = Plane.FromPositionAndNormal(this.tankAnchor.position, Axis.Y);
-        const distance = ray.intersectsPlane(plane);
-        if (distance !== null && distance > 0) {
-          targetPoint = ray.origin.add(ray.direction.scale(distance));
-        } else {
-          targetPoint = ray.origin.add(ray.direction.scale(1000));
-        }
-      }
+      const targetPoint = this.raycastAimPointFromCameraCenter(controlCamera);
 
       if (targetPoint) {
         this.lastAimTargetPoint = targetPoint.clone();
 
-        const tankPos = this.tankAnchor.getAbsolutePosition();
-        const offset = targetPoint.subtract(tankPos);
-        const maxDistance = this.config.aim.cameraMaxTargetDistance;
-        if (offset.length() > maxDistance) {
-          offset.normalize().scaleInPlace(maxDistance);
-          targetPoint = tankPos.add(offset);
-          this.lastAimTargetPoint.copyFrom(targetPoint);
-        }
-
-        this.updateAimDebug(controlCamera.globalPosition.clone(), ray.direction, targetPoint);
+        const cx = this.scene.getEngine().getRenderWidth() * 0.5;
+        const cy = this.scene.getEngine().getRenderHeight() * 0.5;
+        const aimRay = this.scene.createPickingRay(cx, cy, Matrix.Identity(), controlCamera);
+        this.updateAimDebug(controlCamera.globalPosition.clone(), aimRay.direction, targetPoint);
         this.updateBarrelReticles(renderCamera);
       }
 
@@ -4911,6 +4960,9 @@ export class TankGameplayController {
     }
 
     if (!turretFollowsAim) {
+      if (this.turretSoundState !== "stopped") {
+        this.stopTurretArticulationSounds();
+      }
       return;
     }
 
@@ -5178,7 +5230,7 @@ export class TankGameplayController {
 
     // In zoom view, keep barrel reticles locked to screen center (avoid parallax between camera ray and muzzle ray).
     // Also keep shell aim point aligned with the camera aim target so the projectile uses the same target.
-    if (this.zoomActive) {
+    if (this.zoomActive || this.helicopterZoomLookActive) {
       if (this.barrelShellReticle2D) {
         this.barrelShellReticle2D.isVisible = this.isPrimaryWeapon(this.activeWeapon);
         this.barrelShellReticle2D.leftInPixels = 0;
@@ -5241,6 +5293,13 @@ export class TankGameplayController {
 
     // Shell / cannon reticle (only visible when shell is active)
     {
+      if (this.usesHelicopterHullWeaponAim()) {
+        if (this.isPrimaryWeapon(this.activeWeapon) && this.lastAimTargetPoint) {
+          updateUiFromHit(this.lastAimTargetPoint, this.barrelShellReticle2D);
+        } else if (this.barrelShellReticle2D) {
+          this.barrelShellReticle2D.isVisible = false;
+        }
+      } else {
       const primaryMuzzle = this.resolvePrimaryReticleMuzzle();
       if (!primaryMuzzle) {
         if (this.barrelShellReticle2D) {
@@ -5277,6 +5336,7 @@ export class TankGameplayController {
             this.barrelShellReticle2D.isVisible = false;
           }
         }
+      }
       }
     }
 
