@@ -30,6 +30,7 @@ export const mapPlayerIconUrl = new URL("../../assets/ui/map_icon.png", import.m
 export const reticleCameraAssetUrl = new URL("../../assets/ui/reticle_camera.png", import.meta.url).href;
 export const reticleBarrelAssetUrl = new URL("../../assets/ui/reticle_barrel.png", import.meta.url).href;
 export const reticleGunAssetUrl = new URL("../../assets/ui/reticle_gun.png", import.meta.url).href;
+export const reticleRocketAssetUrl = new URL("../../assets/ui/reticle_rocket.png", import.meta.url).href;
 export const reticleMissileJetAssetUrl = new URL(
   "../../assets/ui/reticle_missile_jet.png",
   import.meta.url

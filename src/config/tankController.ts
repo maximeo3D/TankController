@@ -228,6 +228,8 @@ export interface TankControllerConfig {
     showSuspensionSpheres?: boolean;
     showPowerUpBounds?: boolean;
     showMuzzleEmpties?: boolean;
+    /** Vecteurs de visée projectile (réticule moyen + rampes individuelles). */
+    showWeaponAimVectors?: boolean;
   };
   rig: {
     spawnYawOffsetDeg: number;

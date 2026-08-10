@@ -55,6 +55,7 @@ import {
   reticleCameraAssetUrl,
   reticleBarrelAssetUrl,
   reticleGunAssetUrl,
+  reticleRocketAssetUrl,
   reticleMissileJetAssetUrl,
   reticleMissileJetLockedAssetUrl,
   sparkImpactAssetUrl,
@@ -572,7 +573,6 @@ export class TankGameplayController {
   // We distinguish between:
   // - control camera: used for aiming/turret/cannon logic (always the orbit camera)
   // - render camera: the scene.activeCamera (orbit or zoom view)
-  private lastAimTargetPoint: Vector3 | null = null;
 
   private debugCameraRayLine: LinesMesh | null = null;
   private debugBarrelForwardLine: LinesMesh | null = null;
@@ -588,6 +588,15 @@ export class TankGameplayController {
     gunForwardLine: LinesMesh;
     cannonLinkLine: LinesMesh;
     gunLinkLine: LinesMesh;
+  } | null = null;
+  private static readonly WEAPON_AIM_DEBUG_MAX_MUZZLES = 4;
+  private weaponAimDebugVisuals: {
+    reticleLine: LinesMesh;
+    reticleHitMarker: Mesh;
+    avgOriginMarker: Mesh;
+    muzzleLines: LinesMesh[];
+    muzzleMarkers: Mesh[];
+    nextFireMarker: Mesh;
   } | null = null;
   private hudTexture: AdvancedDynamicTexture | null = null;
   /** True once `UI_hud.json` parsed; HUD text/bars update only then. */
@@ -630,6 +639,7 @@ export class TankGameplayController {
   private hudReticlesAttached = false;
   private barrelShellReticle2D: Rectangle | null = null;
   private barrelGunReticle2D: Rectangle | null = null;
+  private cameraReticle2D: Rectangle | null = null;
   private activeGunTracers: {
     mesh: Mesh;
     from: Vector3;
@@ -1014,6 +1024,9 @@ export class TankGameplayController {
     }
     if (this.config.debug?.showMuzzleEmpties) {
       this.initMuzzleDebugVisuals();
+    }
+    if (this.config.debug?.showWeaponAimVectors && this.helicopterModel) {
+      this.initWeaponAimDebugVisuals();
     }
     this.initHud();
     this.initShockwaveFx(options);
@@ -1648,11 +1661,6 @@ export class TankGameplayController {
     this.beginTurretSoundStopping();
   }
 
-  /** Hélico en vue normale : missiles/roquettes visent le nez, pas la tourelle MG. */
-  private usesHelicopterHullWeaponAim(): boolean {
-    return this.helicopterModel !== null && !this.helicopterZoomLookActive;
-  }
-
   private raycastAimPointFromCameraCenter(camera: Camera): Vector3 | null {
     const cx = this.scene.getEngine().getRenderWidth() * 0.5;
     const cy = this.scene.getEngine().getRenderHeight() * 0.5;
@@ -1997,6 +2005,10 @@ export class TankGameplayController {
     this.barrelGunReticle2D = this.hudTexture.getControlByName(
       "reticle_barrel_gun_img"
     ) as Rectangle | null;
+    this.cameraReticle2D = this.hudTexture.getControlByName(
+      "reticle_camera_img"
+    ) as Rectangle | null;
+    this.syncCameraReticleVisibility();
     this.syncPrimaryWeaponReticleAsset();
     this.ensureJetMissileLockController();
   }
@@ -2177,7 +2189,9 @@ export class TankGameplayController {
     cam.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
     cam.isPointerBlocker = false;
     cam.zIndex = z;
+    cam.isVisible = !this.flightModel && !this.helicopterModel;
     this.hudTexture.addControl(cam);
+    this.cameraReticle2D = cam as unknown as Rectangle;
 
     const barrelShell = new Image("reticle_barrel_shell_img", reticleBarrelAssetUrl);
     barrelShell.widthInPixels = 150;
@@ -3065,6 +3079,137 @@ export class TankGameplayController {
     };
   }
 
+  private initWeaponAimDebugVisuals(): void {
+    const makeMarker = (name: string, diameter: number, color: Color3): Mesh => {
+      const mesh = MeshBuilder.CreateSphere(name, { diameter, segments: 10 }, this.scene);
+      const mat = new StandardMaterial(`${name}_mat`, this.scene);
+      mat.diffuseColor = color;
+      mat.emissiveColor = color;
+      mat.disableLighting = true;
+      mesh.material = mat;
+      mesh.isPickable = false;
+      mesh.renderingGroupId = 2;
+      mesh.isVisible = false;
+      return mesh;
+    };
+
+    const makeLine = (name: string, color: Color3): LinesMesh => {
+      const line = MeshBuilder.CreateLines(
+        name,
+        { points: [Vector3.Zero(), Vector3.Zero()], updatable: true },
+        this.scene
+      );
+      line.color = color;
+      line.renderingGroupId = 2;
+      line.isPickable = false;
+      line.isVisible = false;
+      return line;
+    };
+
+    const muzzleColors = [
+      new Color3(0.25, 1, 0.35),
+      new Color3(1, 0.45, 0.2),
+      new Color3(0.85, 0.35, 1),
+      new Color3(1, 0.95, 0.25)
+    ];
+    const muzzleLines: LinesMesh[] = [];
+    const muzzleMarkers: Mesh[] = [];
+    for (let i = 0; i < TankGameplayController.WEAPON_AIM_DEBUG_MAX_MUZZLES; i++) {
+      muzzleLines.push(makeLine(`dbg_weapon_muzzle_line_${i}`, muzzleColors[i % muzzleColors.length]));
+      muzzleMarkers.push(makeMarker(`dbg_weapon_muzzle_origin_${i}`, 0.16, muzzleColors[i % muzzleColors.length]));
+    }
+
+    this.weaponAimDebugVisuals = {
+      reticleLine: makeLine("dbg_weapon_reticle_ray", new Color3(0.2, 0.75, 1)),
+      reticleHitMarker: makeMarker("dbg_weapon_reticle_hit", 0.28, new Color3(0.2, 0.75, 1)),
+      avgOriginMarker: makeMarker("dbg_weapon_reticle_origin", 0.2, new Color3(0.2, 0.75, 1)),
+      muzzleLines,
+      muzzleMarkers,
+      nextFireMarker: makeMarker("dbg_weapon_next_fire_muzzle", 0.24, new Color3(1, 1, 0.2))
+    };
+  }
+
+  private setWeaponAimDebugVisible(visible: boolean): void {
+    const dbg = this.weaponAimDebugVisuals;
+    if (!dbg) {
+      return;
+    }
+    dbg.reticleLine.isVisible = visible;
+    dbg.reticleHitMarker.isVisible = visible;
+    dbg.avgOriginMarker.isVisible = visible;
+    dbg.nextFireMarker.isVisible = visible;
+    for (const line of dbg.muzzleLines) {
+      line.isVisible = visible;
+    }
+    for (const marker of dbg.muzzleMarkers) {
+      marker.isVisible = visible;
+    }
+  }
+
+  private updateWeaponAimDebugVisuals(): void {
+    const dbg = this.weaponAimDebugVisuals;
+    if (!dbg || !this.helicopterModel) {
+      return;
+    }
+
+    const show =
+      this.config.debug?.showWeaponAimVectors === true &&
+      !this.helicopterZoomLookActive &&
+      this.isPrimaryWeapon(this.activeWeapon);
+    if (!show) {
+      this.setWeaponAimDebugVisible(false);
+      return;
+    }
+
+    const muzzles = this.collectActiveWeaponAimMuzzles();
+    const reticleRay = this.resolveActiveWeaponReticleRay();
+    if (!reticleRay || muzzles.length === 0) {
+      this.setWeaponAimDebugVisible(false);
+      return;
+    }
+
+    const reticleHit = this.raycastWeaponReticleHitPoint(reticleRay.from, reticleRay.forward);
+    dbg.avgOriginMarker.isVisible = true;
+    dbg.avgOriginMarker.position.copyFrom(reticleRay.from);
+    dbg.reticleHitMarker.isVisible = true;
+    dbg.reticleHitMarker.position.copyFrom(reticleHit);
+    MeshBuilder.CreateLines(
+      dbg.reticleLine.name,
+      { points: [reticleRay.from, reticleHit], instance: dbg.reticleLine },
+      this.scene
+    );
+    dbg.reticleLine.isVisible = true;
+
+    for (let i = 0; i < dbg.muzzleLines.length; i++) {
+      const line = dbg.muzzleLines[i];
+      const marker = dbg.muzzleMarkers[i];
+      const muzzle = muzzles[i];
+      if (!muzzle) {
+        line.isVisible = false;
+        marker.isVisible = false;
+        continue;
+      }
+
+      this.syncMuzzleNodeWorldMatrix(muzzle);
+      const from = muzzle.getAbsolutePosition();
+      const forward = this.getMuzzleNodeWorldForward(muzzle);
+      const hit = this.raycastWeaponReticleHitPoint(from, forward);
+      marker.isVisible = true;
+      marker.position.copyFrom(from);
+      MeshBuilder.CreateLines(line.name, { points: [from, hit], instance: line }, this.scene);
+      line.isVisible = true;
+    }
+
+    const nextMuzzle = this.peekPrimaryProjectileMuzzle(this.activeSlot);
+    if (nextMuzzle) {
+      this.syncMuzzleNodeWorldMatrix(nextMuzzle);
+      dbg.nextFireMarker.isVisible = true;
+      dbg.nextFireMarker.position.copyFrom(nextMuzzle.getAbsolutePosition());
+    } else {
+      dbg.nextFireMarker.isVisible = false;
+    }
+  }
+
   private syncMuzzleNodeWorldMatrix(node: TransformNode | AbstractMesh): void {
     node.computeWorldMatrix(true);
   }
@@ -3318,6 +3463,19 @@ export class TankGameplayController {
     this.muzzleDebugVisuals?.cannonLinkLine.dispose();
     this.muzzleDebugVisuals?.gunLinkLine.dispose();
     this.muzzleDebugVisuals = null;
+    if (this.weaponAimDebugVisuals) {
+      this.weaponAimDebugVisuals.reticleLine.dispose();
+      this.weaponAimDebugVisuals.reticleHitMarker.dispose();
+      this.weaponAimDebugVisuals.avgOriginMarker.dispose();
+      this.weaponAimDebugVisuals.nextFireMarker.dispose();
+      for (const line of this.weaponAimDebugVisuals.muzzleLines) {
+        line.dispose();
+      }
+      for (const marker of this.weaponAimDebugVisuals.muzzleMarkers) {
+        marker.dispose();
+      }
+      this.weaponAimDebugVisuals = null;
+    }
     for (const slot of this.projectileSlots.values()) {
       for (const hardpoint of slot.hardpoints) {
         hardpoint.visualMesh?.dispose();
@@ -3373,6 +3531,7 @@ export class TankGameplayController {
     this.sessionElapsedSeconds = 0;
     this.barrelShellReticle2D = null;
     this.barrelGunReticle2D = null;
+    this.cameraReticle2D = null;
 
     this.cannonShotSound?.dispose();
     this.cannonShotSound = null;
@@ -3872,7 +4031,6 @@ export class TankGameplayController {
     }
     this.syncShieldHighlight();
     this.applyTurretAndCannon(frame.pointerX, frame.pointerY, dt);
-    this.updateJetMissileLock(dt);
     this.applyMinigunSpin(dt);
     this.updateWeapons(dt);
     this.applyMovement(frame.moveAxis, frame.turnAxis, frame.boostHeld, dt);
@@ -3881,6 +4039,11 @@ export class TankGameplayController {
     }
     this.applyVisualSmoothing(dt);
     this.applyCamera(frame.zoomHeld, dt);
+    const renderCamera = this.scene.activeCamera as Camera | null;
+    if (renderCamera) {
+      this.updateBarrelReticles(renderCamera);
+      this.updateJetMissileLock(dt);
+    }
     this.trackSystem?.update(dt);
     this.powerUpSystem?.update(dt);
     this.enemyTurretSystem?.update(
@@ -3889,6 +4052,7 @@ export class TankGameplayController {
     );
     this.updateSuspensionDebugSpheres();
     this.updateMuzzleDebugVisuals();
+    this.updateWeaponAimDebugVisuals();
     this.updateProjectiles(dt);
     this.updateGunTracers(dt);
     this.updateMuzzleFlashes(dt);
@@ -4069,6 +4233,27 @@ export class TankGameplayController {
     return this.muzzleCannonNode;
   }
 
+  /** Prochaine rampe sans consommer l'alternance (debug visée). */
+  private peekPrimaryProjectileMuzzle(
+    slot: ProjectileWeaponSlot
+  ): TransformNode | AbstractMesh | null {
+    if (slot.hardpoints.length > 0) {
+      for (let index = 0; index < slot.hardpoints.length; index++) {
+        if (!slot.hardpointLoaded[index]) {
+          continue;
+        }
+        return slot.hardpoints[index]?.muzzleNode ?? null;
+      }
+      return null;
+    }
+
+    if (slot.muzzles.length > 0) {
+      return slot.muzzles[slot.nextMuzzleIndex % slot.muzzles.length];
+    }
+
+    return this.muzzleCannonNode;
+  }
+
   /** Réaligne les modèles d'emport sur l'état du chargeur interne. */
   private resetSlotHardpointLoadedState(slot: ProjectileWeaponSlot): void {
     if (slot.hardpoints.length === 0) {
@@ -4106,7 +4291,7 @@ export class TankGameplayController {
   }
 
   private usesJetMissileReticle(): boolean {
-    return Boolean(this.primaryWeaponConfig.missileLock);
+    return this.activeProjectileKind === "missile" && Boolean(this.activeSlot.config.missileLock);
   }
 
   private ensureJetMissileLockController(): void {
@@ -4131,23 +4316,12 @@ export class TankGameplayController {
   }
 
   private resolveJetMissileLockOrigin(): { position: Vector3; forward: Vector3 } | null {
-    if (this.usesHelicopterHullWeaponAim()) {
-      const camera = this.tankCamera;
-      if (!camera) {
+    if (this.helicopterModel && this.activeProjectileKind === "missile") {
+      const ray = this.resolveActiveWeaponReticleRay();
+      if (!ray) {
         return null;
       }
-      camera.computeWorldMatrix();
-      const aimPoint = this.lastAimTargetPoint ?? this.raycastAimPointFromCameraCenter(camera);
-      if (!aimPoint) {
-        return null;
-      }
-      const position = camera.globalPosition.clone();
-      const forward = aimPoint.subtract(position);
-      if (forward.lengthSquared() < 1e-8) {
-        return null;
-      }
-      forward.normalize();
-      return { position, forward };
+      return { position: ray.from, forward: ray.forward };
     }
 
     if (!this.muzzleGunNode) {
@@ -4168,22 +4342,139 @@ export class TankGameplayController {
     };
   }
 
+  private usesCenterCameraReticle(): boolean {
+    return !this.flightModel && !this.helicopterModel;
+  }
+
+  private syncCameraReticleVisibility(): void {
+    if (!this.cameraReticle2D) {
+      return;
+    }
+    this.cameraReticle2D.isVisible = this.usesCenterCameraReticle();
+  }
+
   private syncPrimaryWeaponReticleAsset(): void {
     if (!this.barrelShellReticle2D) {
       return;
     }
 
     const image = this.barrelShellReticle2D as unknown as Image;
-    image.source = this.usesJetMissileReticle()
-      ? reticleMissileJetAssetUrl
-      : reticleBarrelAssetUrl;
+    if (this.activeProjectileKind === "rocket") {
+      image.source = reticleRocketAssetUrl;
+    } else if (this.usesJetMissileReticle()) {
+      image.source = reticleMissileJetAssetUrl;
+    } else {
+      image.source = reticleBarrelAssetUrl;
+    }
   }
 
-  private resolvePrimaryReticleMuzzle(): TransformNode | AbstractMesh | null {
-    if (this.usesJetMissileReticle()) {
-      return this.muzzleGunNode;
+  /** Rampes de tir de l'arme projectile sélectionnée (salve L/R, emports jet, canon…). */
+  private collectActiveWeaponAimMuzzles(): (TransformNode | AbstractMesh)[] {
+    const slot = this.activeSlot;
+    if (slot.muzzles.length > 0) {
+      return slot.muzzles;
     }
-    return this.muzzleCannonNode;
+
+    if (slot.hardpoints.length > 0) {
+      const nodes: (TransformNode | AbstractMesh)[] = [];
+      for (const hardpoint of slot.hardpoints) {
+        if (hardpoint.muzzleNode) {
+          nodes.push(hardpoint.muzzleNode);
+        }
+      }
+      if (nodes.length > 0) {
+        return nodes;
+      }
+    }
+
+    if (this.muzzleCannonNode) {
+      return [this.muzzleCannonNode];
+    }
+
+    return [];
+  }
+
+  /**
+   * Origine + direction moyenne pour le réticule projectile (centre des rampes jumelles).
+   */
+  private resolveActiveWeaponReticleRay(): { from: Vector3; forward: Vector3 } | null {
+    const muzzles = this.collectActiveWeaponAimMuzzles();
+    if (muzzles.length === 0) {
+      return null;
+    }
+
+    const from = Vector3.Zero();
+    const forwardSum = Vector3.Zero();
+    for (const muzzle of muzzles) {
+      this.syncMuzzleNodeWorldMatrix(muzzle);
+      from.addInPlace(muzzle.getAbsolutePosition());
+      forwardSum.addInPlace(this.getMuzzleNodeWorldForward(muzzle));
+    }
+
+    from.scaleInPlace(1 / muzzles.length);
+    if (forwardSum.lengthSquared() < 1e-8) {
+      return null;
+    }
+    forwardSum.normalize();
+    return { from, forward: forwardSum };
+  }
+
+  private raycastWeaponReticleHitPoint(from: Vector3, forward: Vector3): Vector3 {
+    const maxDist = this.config.aim.barrelRayMaxDistance;
+    const to = from.add(forward.scale(maxDist));
+    const physics = this.scene.getPhysicsEngine();
+    if (physics) {
+      const hit = physics.raycast(from, to, {
+        ignoreBody: this.tankBody,
+        shouldHitTriggers: false,
+        collideWith: 0xffffffff
+      });
+      if (hit.hasHit && hit.hitPointWorld) {
+        return hit.hitPointWorld.clone();
+      }
+    }
+    return to;
+  }
+
+  /** Projette un point monde en coordonnées HUD (centre = 0,0). */
+  private projectWorldPointToHud(
+    worldPoint: Vector3,
+    camera: Camera
+  ): { left: number; top: number } | null {
+    const engine = this.scene.getEngine();
+    const renderW = engine.getRenderWidth();
+    const renderH = engine.getRenderHeight();
+    const viewport = camera.viewport.toGlobal(renderW, renderH);
+    const transform = camera.getViewMatrix().multiply(camera.getProjectionMatrix());
+    const projected = Vector3.Project(worldPoint, Matrix.Identity(), transform, viewport);
+
+    if (
+      !Number.isFinite(projected.x) ||
+      !Number.isFinite(projected.y) ||
+      projected.z < 0 ||
+      projected.z > 1
+    ) {
+      return null;
+    }
+
+    const renderX = projected.x - viewport.x;
+    const renderY = projected.y - viewport.y;
+    if (renderX < 0 || renderY < 0 || renderX > viewport.width || renderY > viewport.height) {
+      return null;
+    }
+
+    const hud = this.hudTexture;
+    if (!hud) {
+      return null;
+    }
+
+    const hudSize = hud.getSize();
+    const hudX = (renderX / viewport.width) * hudSize.width;
+    const hudY = (renderY / viewport.height) * hudSize.height;
+    return {
+      left: hudX - hudSize.width / 2,
+      top: hudY - hudSize.height / 2
+    };
   }
 
   private updateJetMissileLock(dt: number): void {
@@ -4903,27 +5194,19 @@ export class TankGameplayController {
 
     controlCamera.computeWorldMatrix();
 
-    const renderCamera =
-      (this.scene.activeCamera as Camera | null | undefined) ?? (controlCamera as unknown as Camera);
-
     const turretFollowsAim = this.helicopterModel
       ? this.helicopterZoomLookActive
       : this.config.turret.aimOnlyInZoom !== true || this.zoomActive;
 
-    if (this.helicopterZoomLookActive) {
-      this.updateBarrelReticles(renderCamera);
-    } else {
+    if (!this.helicopterZoomLookActive) {
       // "Camera reticle" is a fixed crosshair: raycast from screen center (not pointer position).
       const targetPoint = this.raycastAimPointFromCameraCenter(controlCamera);
 
       if (targetPoint) {
-        this.lastAimTargetPoint = targetPoint.clone();
-
         const cx = this.scene.getEngine().getRenderWidth() * 0.5;
         const cy = this.scene.getEngine().getRenderHeight() * 0.5;
         const aimRay = this.scene.createPickingRay(cx, cy, Matrix.Identity(), controlCamera);
         this.updateAimDebug(controlCamera.globalPosition.clone(), aimRay.direction, targetPoint);
-        this.updateBarrelReticles(renderCamera);
       }
 
       if (targetPoint && turretFollowsAim) {
@@ -5194,6 +5477,8 @@ export class TankGameplayController {
       return;
     }
 
+    this.syncCameraReticleVisibility();
+
     const computeGunReticleScale = (): number => {
       const t = clamp(this.gunSpreadDeg / TankGameplayController.GUN_SPREAD_MAX_DEG, 0, 1);
       const base = lerp(
@@ -5254,89 +5539,32 @@ export class TankGameplayController {
       return;
     }
 
-    const engine = this.scene.getEngine();
-    const w = engine.getRenderWidth();
-    const h = engine.getRenderHeight();
-    const viewport = camera.viewport.toGlobal(w, h);
-
     const updateUiFromHit = (hitPoint: Vector3, ui: Rectangle | null): void => {
       if (!ui) return;
 
-      const projected = Vector3.Project(
-        hitPoint,
-        Matrix.Identity(),
-        this.scene.getTransformMatrix(),
-        viewport
-      );
-
-      const onScreen =
-        Number.isFinite(projected.x) &&
-        Number.isFinite(projected.y) &&
-        projected.z >= 0 &&
-        projected.z <= 1 &&
-        projected.x >= viewport.x &&
-        projected.x <= viewport.x + viewport.width &&
-        projected.y >= viewport.y &&
-        projected.y <= viewport.y + viewport.height;
-
-      if (!onScreen) {
+      const hudPos = this.projectWorldPointToHud(hitPoint, camera);
+      if (!hudPos) {
         ui.isVisible = false;
         return;
       }
 
       ui.isVisible = true;
-      ui.leftInPixels = projected.x - (viewport.x + viewport.width / 2);
-      ui.topInPixels = projected.y - (viewport.y + viewport.height / 2);
+      ui.leftInPixels = hudPos.left;
+      ui.topInPixels = hudPos.top;
     };
 
-    const physics = this.scene.getPhysicsEngine();
-
-    // Shell / cannon reticle (only visible when shell is active)
+    // Shell / primary projectile reticle (shell, rocket, missile…)
     {
-      if (this.usesHelicopterHullWeaponAim()) {
-        if (this.isPrimaryWeapon(this.activeWeapon) && this.lastAimTargetPoint) {
-          updateUiFromHit(this.lastAimTargetPoint, this.barrelShellReticle2D);
-        } else if (this.barrelShellReticle2D) {
-          this.barrelShellReticle2D.isVisible = false;
-        }
-      } else {
-      const primaryMuzzle = this.resolvePrimaryReticleMuzzle();
-      if (!primaryMuzzle) {
+      const reticleRay = this.resolveActiveWeaponReticleRay();
+      if (!reticleRay) {
         if (this.barrelShellReticle2D) {
           this.barrelShellReticle2D.isVisible = false;
         }
-      } else {
-        const from = primaryMuzzle.getAbsolutePosition();
-        const forward = primaryMuzzle
-          .getDirection(this.movementForwardAxis)
-          .scale(-this.config.rig.movementForwardSign);
-        if (forward.lengthSquared() > 1e-6) {
-          forward.normalize();
-          const maxDist = this.config.aim.barrelRayMaxDistance;
-          const to = from.add(forward.scale(maxDist));
-
-          let hitPoint: Vector3 | null = null;
-          if (physics) {
-            const hit = physics.raycast(from, to, {
-              ignoreBody: this.tankBody,
-              shouldHitTriggers: false,
-              collideWith: 0xffffffff
-            });
-            if (hit.hasHit) {
-              hitPoint = hit.hitPointWorld.clone();
-            }
-          }
-          if (!hitPoint) {
-            hitPoint = to;
-          }
-
-          if (this.isPrimaryWeapon(this.activeWeapon)) {
-            updateUiFromHit(hitPoint, this.barrelShellReticle2D);
-          } else if (this.barrelShellReticle2D) {
-            this.barrelShellReticle2D.isVisible = false;
-          }
-        }
-      }
+      } else if (this.isPrimaryWeapon(this.activeWeapon)) {
+        const hitPoint = this.raycastWeaponReticleHitPoint(reticleRay.from, reticleRay.forward);
+        updateUiFromHit(hitPoint, this.barrelShellReticle2D);
+      } else if (this.barrelShellReticle2D) {
+        this.barrelShellReticle2D.isVisible = false;
       }
     }
 
@@ -5348,23 +5576,7 @@ export class TankGameplayController {
         .scale(-this.config.rig.movementForwardSign);
       if (baseForward.lengthSquared() > 1e-6) {
         baseForward.normalize();
-        const maxDist = this.config.aim.barrelRayMaxDistance;
-        const to = from.add(baseForward.scale(maxDist));
-
-        let hitPoint: Vector3 | null = null;
-        if (physics) {
-          const hit = physics.raycast(from, to, {
-            ignoreBody: this.tankBody,
-            shouldHitTriggers: false,
-            collideWith: 0xffffffff
-          });
-          if (hit.hasHit) {
-            hitPoint = hit.hitPointWorld.clone();
-          }
-        }
-        if (!hitPoint) {
-          hitPoint = to;
-        }
+        const hitPoint = this.raycastWeaponReticleHitPoint(from, baseForward);
 
         // (Gun impacts/damage can be implemented later if needed.)
         const ui = this.barrelGunReticle2D;

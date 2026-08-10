@@ -2,7 +2,8 @@
   "debug": {
     "showSuspensionSpheres": false,
     "showPowerUpBounds": false,
-    "showMuzzleEmpties": false
+    "showMuzzleEmpties": false,
+    "showWeaponAimVectors": false
   },
   "rig": {
     "spawnYawOffsetDeg": 0.0,
@@ -58,7 +59,7 @@
     "altitudeHoldSharpness": 2.0,
     "verticalDamping": 6.0,
     "groundHoverHeight": 0.5,
-    "yawSpeedDeg": 60.0,
+    "yawSpeedDeg": 120.0,
     "yawSharpness": 4.0,
     "maxBankDeg": 45.0,
     "maxPitchDeg": 35.0,

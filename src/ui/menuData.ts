@@ -80,7 +80,7 @@ export const MENU_MAPS: readonly MenuMapEntry[] = [
           { id: "player_jet", type: "fighterJet", spawnNode: "SPAWN_jet" },
           { id: "player_helicopter", type: "helicopter", spawnNode: "SPAWN_helicopter" }
         ],
-        startVehicleId: "player_tank"
+        startVehicleId: "player_helicopter"
       }
     ]
   },
@@ -108,7 +108,12 @@ export const MENU_MAPS: readonly MenuMapEntry[] = [
         id: "destruction",
         label: "destruction",
         description: "Un salon transforme en champ de bataille. Avance entre les obstacles et detruis les cibles prioritaires.",
-        imageUrl: new URL("../../assets/ui/level-livingroom-destruction.png", import.meta.url).href
+        imageUrl: new URL("../../assets/ui/level-livingroom-destruction.png", import.meta.url).href,
+        vehicles: [
+          { id: "player_tank", type: "tank", spawnNode: "SPAWN_tank" },
+          { id: "player_helicopter", type: "helicopter", spawnNode: "SPAWN_helicopter" }
+        ],
+        startVehicleId: "player_tank"
       }
     ]
   }
