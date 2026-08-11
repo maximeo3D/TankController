@@ -628,6 +628,11 @@ export interface TankControllerConfig {
       damage: number;
       muzzleVelocity: number;
       gravityMultiplier: number;
+      /** Chargeur limité (ex. mitrailleuse hélico). Absent = munitions illimitées. */
+      magazineSize?: number;
+      reloadSeconds?: number;
+      /** Réserve illimitée : le HUD affiche N/∞ sans jamais épuiser la réserve. */
+      unlimitedReserve?: boolean;
     };
     /**
      * Hélicoptère : le canon n'est utilisable qu'en vue zoom, et les projectiles

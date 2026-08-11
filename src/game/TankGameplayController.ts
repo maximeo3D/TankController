@@ -548,6 +548,11 @@ export class TankGameplayController {
   private smoothedTurnAxis = 0;
 
   private bulletCooldownTimer = 0;
+  private readonly bulletMagazineSize: number;
+  private readonly bulletReloadSeconds: number;
+  private readonly bulletUnlimitedReserve: boolean;
+  private bulletLoadedAmmo = 0;
+  private bulletMagazineReloadTimer = 0;
   private activeProjectiles: {
     mesh: Mesh;
     body: PhysicsBody;
@@ -825,6 +830,11 @@ export class TankGameplayController {
     // Babylon `Sound.play()` is gated by `scene.audioEnabled`.
     this.scene.audioEnabled = true;
     this.config = options.config;
+    const bulletConfig = options.config.weapons.bullet;
+    this.bulletMagazineSize = Math.max(0, Math.floor(bulletConfig.magazineSize ?? 0));
+    this.bulletReloadSeconds = bulletConfig.reloadSeconds ?? 3;
+    this.bulletUnlimitedReserve = bulletConfig.unlimitedReserve === true;
+    this.bulletLoadedAmmo = this.bulletMagazineSize;
     this.projectileKinds = getProjectileWeaponKinds(options.config);
     this.projectileSlots = createProjectileWeaponSlots(options.config, options.projectileWeapons);
     this.activeProjectileKind = this.projectileKinds[0];
@@ -2874,7 +2884,7 @@ export class TankGameplayController {
       paddingRight: 20,
       iconWidth: 88,
       iconHeight: 36,
-      ammoWidth: 52
+      ammoWidth: 68
     });
   }
 
@@ -2987,17 +2997,29 @@ export class TankGameplayController {
 
   private updateShellReloadGauge(): void {
     const slot = this.resolveHudProjectileSlot();
-    const isReloading = slot.loadedAmmo <= 0 && slot.reserveAmmo > 0 && slot.reloadTimer > 0;
-    const progress = isReloading
+    const displayed = this.weaponHudDisplayedWeapon;
+    const primaryIsProjectile = this.isPrimaryWeapon(displayed);
+
+    const projectileReloading = slot.loadedAmmo <= 0 && slot.reserveAmmo > 0 && slot.reloadTimer > 0;
+    const projectileProgress = projectileReloading
       ? clamp(1 - slot.reloadTimer / slot.config.reloadSeconds, 0, 1)
       : 0;
-    const primaryIsDisplayed = this.isPrimaryWeapon(this.weaponHudDisplayedWeapon);
 
-    this.applyReloadGauge(this.hudWeaponPrimaryReloadFill, primaryIsDisplayed && isReloading, progress);
+    const bulletReloading =
+      this.bulletMagazineSize > 0 && this.bulletLoadedAmmo <= 0 && this.bulletMagazineReloadTimer > 0;
+    const bulletProgress = bulletReloading
+      ? clamp(1 - this.bulletMagazineReloadTimer / this.bulletReloadSeconds, 0, 1)
+      : 0;
+
+    this.applyReloadGauge(
+      this.hudWeaponPrimaryReloadFill,
+      primaryIsProjectile ? projectileReloading : bulletReloading,
+      primaryIsProjectile ? projectileProgress : bulletProgress
+    );
     this.applyReloadGauge(
       this.hudWeaponSecondaryReloadFill,
-      !primaryIsDisplayed && isReloading,
-      progress
+      primaryIsProjectile ? bulletReloading : projectileReloading,
+      primaryIsProjectile ? bulletProgress : projectileProgress
     );
   }
 
@@ -3149,9 +3171,22 @@ export class TankGameplayController {
     return this.activeSlot;
   }
 
+  private getBulletAmmoHudText(): string {
+    if (this.bulletMagazineSize <= 0) {
+      return "∞";
+    }
+    const reserveText = this.bulletUnlimitedReserve ? "∞" : "0";
+    return `${this.bulletLoadedAmmo}/${reserveText}`;
+  }
+
+  private canFireBullet(): boolean {
+    return this.bulletMagazineSize <= 0 || this.bulletLoadedAmmo > 0;
+  }
+
   private refreshWeaponHudContent(): void {
     const slot = this.resolveHudProjectileSlot();
     const shellAmmoText = `${slot.loadedAmmo}/${slot.reserveAmmo}`;
+    const bulletAmmoText = this.getBulletAmmoHudText();
     const primaryIsDisplayed = this.isPrimaryWeapon(this.weaponHudDisplayedWeapon);
     const primaryProjectileIconUrl =
       slot.kind === "shell" ? shellWeaponIconUrl : missileWeaponIconUrl;
@@ -3164,12 +3199,12 @@ export class TankGameplayController {
       if (this.hudWeaponSecondaryIcon) {
         this.hudWeaponSecondaryIcon.source = machinegunWeaponIconUrl;
       }
-      this.setWeaponAmmoText(this.hudWeaponSecondaryAmmo, "∞", "#d8d8d8");
+      this.setWeaponAmmoText(this.hudWeaponSecondaryAmmo, bulletAmmoText, "#d8d8d8");
     } else {
       if (this.hudWeaponPrimaryIcon) {
         this.hudWeaponPrimaryIcon.source = machinegunWeaponIconUrl;
       }
-      this.setWeaponAmmoText(this.hudWeaponPrimaryAmmo, "∞", "white");
+      this.setWeaponAmmoText(this.hudWeaponPrimaryAmmo, bulletAmmoText, "white");
       if (this.hudWeaponSecondaryIcon) {
         this.hudWeaponSecondaryIcon.source = primaryProjectileIconUrl;
       }
@@ -3219,7 +3254,12 @@ export class TankGameplayController {
     ammo.text = text;
     ammo.color = color;
     ammo.fontStyle = "";
-    ammo.fontSize = text === "∞" ? WEAPON_INFINITY_FONT_SIZE : WEAPON_SHELL_AMMO_FONT_SIZE;
+    ammo.fontSize =
+      text === "∞"
+        ? WEAPON_INFINITY_FONT_SIZE
+        : text.includes("∞")
+          ? WEAPON_SHELL_AMMO_FONT_SIZE - 2
+          : WEAPON_SHELL_AMMO_FONT_SIZE;
   }
 
   private initMuzzleDebugVisuals(): void {
@@ -4295,6 +4335,10 @@ export class TankGameplayController {
       this.updateProjectileSlotReload(slot, dt);
     }
 
+    if (this.bulletMagazineSize > 0) {
+      this.updateBulletMagazineReload(dt);
+    }
+
     // Firing
     const shellFirePressed = this.fireHeld && !this.shellFireWasHeld;
     if (this.fireHeld && this.battery > 0) {
@@ -4304,7 +4348,11 @@ export class TankGameplayController {
         (this.shellMagazineSize === 1 || shellFirePressed);
       if (canFirePrimary) {
         this.firePrimaryProjectile();
-      } else if (this.activeWeapon === "bullet" && this.bulletCooldownTimer <= 0) {
+      } else if (
+        this.activeWeapon === "bullet" &&
+        this.bulletCooldownTimer <= 0 &&
+        this.canFireBullet()
+      ) {
         this.fireBullet();
       }
     }
@@ -4325,6 +4373,24 @@ export class TankGameplayController {
         TankGameplayController.GUN_SPREAD_MAX_DEG
       );
     }
+  }
+
+  private updateBulletMagazineReload(dt: number): void {
+    if (this.bulletLoadedAmmo > 0) {
+      return;
+    }
+
+    if (this.bulletMagazineReloadTimer <= 0) {
+      this.bulletMagazineReloadTimer = this.bulletReloadSeconds;
+    }
+
+    this.bulletMagazineReloadTimer -= dt;
+    if (this.bulletMagazineReloadTimer > 0) {
+      return;
+    }
+
+    this.bulletLoadedAmmo = this.bulletMagazineSize;
+    this.bulletMagazineReloadTimer = 0;
   }
 
   private updateProjectileSlotReload(slot: ProjectileWeaponSlot, dt: number): void {
@@ -4811,6 +4877,12 @@ export class TankGameplayController {
 
   private fireBullet(): void {
     this.bulletCooldownTimer = 1.0 / this.config.weapons.bullet.shotsPerSecond;
+    if (this.bulletMagazineSize > 0) {
+      this.bulletLoadedAmmo = Math.max(0, this.bulletLoadedAmmo - 1);
+      if (this.bulletLoadedAmmo <= 0) {
+        this.bulletMagazineReloadTimer = 0;
+      }
+    }
     this.gunReticleKickTime = 0;
     if (this.gunShotSoundPool.length > 0) {
       // Prefer a free sound so ROF stays perfectly in sync.
@@ -5512,7 +5584,12 @@ export class TankGameplayController {
     }
 
     const isMinigunFiring =
-      this.fireHeld && this.battery > 0 && this.activeWeapon === "bullet" && !this.paused && this.playerActive;
+      this.fireHeld &&
+      this.battery > 0 &&
+      this.activeWeapon === "bullet" &&
+      this.canFireBullet() &&
+      !this.paused &&
+      this.playerActive;
     if (isMinigunFiring) {
       const spinDegPerSec = this.config.rig.minigunSpinDegPerSec ?? 720;
       this.minigunSpinRad += toRadians(spinDegPerSec) * dt;
