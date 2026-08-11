@@ -4310,7 +4310,8 @@ export class TankGameplayController {
       config: lockConfig,
       getLockOrigin: () => this.resolveJetMissileLockOrigin(),
       getTargets: () => this.enemyTurretSystem?.getLockTargets() ?? [],
-      isAudioUnlocked: () => this.audioUnlocked
+      isAudioUnlocked: () => this.audioUnlocked,
+      projectWorldToHud: (worldPoint, camera) => this.projectWorldPointToHud(worldPoint, camera)
     });
     this.jetMissileLock.setLockedReticleSource(reticleMissileJetLockedAssetUrl);
   }

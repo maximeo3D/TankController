@@ -1,4 +1,4 @@
-import { Matrix, Vector3 } from "@babylonjs/core/Maths/math.vector";
+import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import type { Camera } from "@babylonjs/core/Cameras/camera";
 import type { Scene } from "@babylonjs/core/scene";
 import { Control } from "@babylonjs/gui/2D/controls/control";
@@ -21,6 +21,7 @@ export interface JetMissileLockControllerOptions {
   getLockOrigin: () => JetMissileLockOrigin | null;
   getTargets: () => EnemyLockTarget[];
   isAudioUnlocked: () => boolean;
+  projectWorldToHud: (worldPoint: Vector3, camera: Camera) => { left: number; top: number } | null;
   reticleBaseSizePx?: number;
 }
 
@@ -81,6 +82,10 @@ export class JetMissileLockController {
   private readonly getLockOrigin: () => JetMissileLockOrigin | null;
   private readonly getTargets: () => EnemyLockTarget[];
   private readonly isAudioUnlocked: () => boolean;
+  private readonly projectWorldToHud: (
+    worldPoint: Vector3,
+    camera: Camera
+  ) => { left: number; top: number } | null;
   private readonly reticleBaseSizePx: number;
   private readonly lockReticle: Image;
   private readonly lockSound: Sound | null;
@@ -96,6 +101,7 @@ export class JetMissileLockController {
     this.getLockOrigin = options.getLockOrigin;
     this.getTargets = options.getTargets;
     this.isAudioUnlocked = options.isAudioUnlocked;
+    this.projectWorldToHud = options.projectWorldToHud;
     this.reticleBaseSizePx = options.reticleBaseSizePx ?? 150;
 
     this.lockReticle = new Image("reticle_missile_jet_locked_img", "");
@@ -199,26 +205,8 @@ export class JetMissileLockController {
       return;
     }
 
-    const engine = this.scene.getEngine();
-    const viewport = camera.viewport.toGlobal(engine.getRenderWidth(), engine.getRenderHeight());
-    const projected = Vector3.Project(
-      this.targetAimPoint,
-      Matrix.Identity(),
-      this.scene.getTransformMatrix(),
-      viewport
-    );
-
-    const onScreen =
-      Number.isFinite(projected.x) &&
-      Number.isFinite(projected.y) &&
-      projected.z >= 0 &&
-      projected.z <= 1 &&
-      projected.x >= viewport.x &&
-      projected.x <= viewport.x + viewport.width &&
-      projected.y >= viewport.y &&
-      projected.y <= viewport.y + viewport.height;
-
-    if (!onScreen) {
+    const hudPos = this.projectWorldToHud(this.targetAimPoint, camera);
+    if (!hudPos) {
       this.lockReticle.isVisible = false;
       return;
     }
@@ -227,8 +215,8 @@ export class JetMissileLockController {
     const scale = lerp(1.5, 1, strength);
     this.lockReticle.isVisible = true;
     this.lockReticle.alpha = strength;
-    this.lockReticle.leftInPixels = projected.x - (viewport.x + viewport.width / 2);
-    this.lockReticle.topInPixels = projected.y - (viewport.y + viewport.height / 2);
+    this.lockReticle.leftInPixels = hudPos.left;
+    this.lockReticle.topInPixels = hudPos.top;
     this.lockReticle.scaleX = scale;
     this.lockReticle.scaleY = scale;
   }
