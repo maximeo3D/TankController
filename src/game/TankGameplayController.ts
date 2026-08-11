@@ -113,6 +113,7 @@ import {
   type SceneSparkImpactState
 } from "./sceneGameplayUi";
 import { addHudCornerBrackets } from "./hudChrome";
+import { HelicopterTurretAimHud } from "./HelicopterTurretAimHud";
 
 const WEAPON_SHELL_AMMO_FONT_SIZE = 26;
 const WEAPON_INFINITY_FONT_SIZE = 40;
@@ -161,6 +162,12 @@ function getJetThrottleBarHeightPx(): number {
 
 function getJetThrottleBarTopOffsetPx(): number {
   return JET_THROTTLE_BAR_GAP_PX + getJetThrottleBarHeightPx() + JET_THROTTLE_BAR_EXTRA_LIFT_PX;
+}
+
+function getHelicopterTurretAimHudBottomOffsetPx(): number {
+  const statusPanelBottomPx = 16;
+  const gapAboveStatusPx = 30;
+  return statusPanelBottomPx + getStatusPanelHeightPx() + gapAboveStatusPx;
 }
 
 function getStatusPanelHeightPx(): number {
@@ -643,6 +650,7 @@ export class TankGameplayController {
   private hudBoostIcon: Image | null = null;
   private hudJetThrottleBarBg: Rectangle | null = null;
   private hudJetThrottleBarFill: Rectangle | null = null;
+  private helicopterTurretAimHud: HelicopterTurretAimHud | null = null;
   private statusHudChromeReady = false;
   private statusHudSpacingReady = false;
   private hudWeaponPrimary: Rectangle | null = null;
@@ -2096,6 +2104,7 @@ export class TankGameplayController {
       this.rebindStatusBarSegmentRefs();
     }
     this.setupJetThrottleBar();
+    this.setupHelicopterTurretAimHud();
 
     this.hudPanelTimer = t.getControlByName("hud_panel_timer") as Rectangle | null;
     this.hudTimerLabel = t.getControlByName("hud_timer_label") as TextBlock | null;
@@ -2309,6 +2318,7 @@ export class TankGameplayController {
     this.updateBoostBarFill(ocPct, dt);
 
     this.updateJetThrottleBar();
+    this.updateHelicopterTurretAimHud();
     this.updateWeaponHud(dt);
     this.sessionElapsedSeconds += dt;
     if (this.hudTimerLabel) {
@@ -2589,6 +2599,7 @@ export class TankGameplayController {
     const panelHeight = getStatusPanelHeightPx();
     this.hudPanelStatus.height = `${panelHeight}px`;
     this.syncJetThrottleBarLayout();
+    this.syncHelicopterTurretAimHudLayout();
   }
 
   private setupJetThrottleBar(): void {
@@ -2662,6 +2673,52 @@ export class TankGameplayController {
     this.hudJetThrottleBarBg.width = `${getJetThrottleBarWidthPx()}px`;
     this.hudJetThrottleBarBg.height = `${getJetThrottleBarHeightPx()}px`;
     this.hudJetThrottleBarBg.top = `-${getJetThrottleBarTopOffsetPx()}px`;
+  }
+
+  private setupHelicopterTurretAimHud(): void {
+    if (!this.hudTexture) {
+      return;
+    }
+
+    this.helicopterTurretAimHud = HelicopterTurretAimHud.getOrCreate(this.hudTexture, {
+      minYawDeg: this.config.turret.minYawDeg ?? -180,
+      maxYawDeg: this.config.turret.maxYawDeg ?? 180,
+      minPitchDeg: this.config.cannon.minPitchDeg,
+      maxPitchDeg: this.config.cannon.maxPitchDeg
+    });
+    this.syncHelicopterTurretAimHudLayout();
+  }
+
+  private syncHelicopterTurretAimHudLayout(): void {
+    this.helicopterTurretAimHud?.syncLayout(getHelicopterTurretAimHudBottomOffsetPx());
+  }
+
+  private updateHelicopterTurretAimHud(): void {
+    if (!this.hudJsonLoaded) {
+      return;
+    }
+
+    if (!this.helicopterTurretAimHud) {
+      this.setupHelicopterTurretAimHud();
+    }
+    if (!this.helicopterTurretAimHud) {
+      return;
+    }
+
+    const show =
+      Boolean(this.helicopterModel) &&
+      this.playerActive &&
+      (this.zoomActive || this.helicopterZoomLookActive);
+
+    this.helicopterTurretAimHud.update({
+      visible: show,
+      yawDeg: this.currentTurretYawDeg,
+      pitchDeg: this.currentCannonPitchDeg,
+      minYawDeg: this.config.turret.minYawDeg ?? -180,
+      maxYawDeg: this.config.turret.maxYawDeg ?? 180,
+      minPitchDeg: this.config.cannon.minPitchDeg,
+      maxPitchDeg: this.config.cannon.maxPitchDeg
+    });
   }
 
   private updateJetThrottleBar(): void {
