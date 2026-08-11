@@ -146,6 +146,30 @@ const VEHICLE_SWITCH_MAX_ANGULAR_SPEED = 0.25;
 const VEHICLE_STATUS_ROW_HEIGHT = 36;
 const VEHICLE_STATUS_ROW_GAP = 20;
 const VEHICLE_STATUS_STACK_PADDING_V = 12;
+const STATUS_BAR_HEIGHT_PX = 14;
+const JET_THROTTLE_BAR_GAP_PX = 10;
+const JET_THROTTLE_BAR_SCALE = 0.75;
+const JET_THROTTLE_BAR_EXTRA_LIFT_PX = 24;
+
+function getJetThrottleBarWidthPx(): number {
+  return HEALTH_BAR_WIDTH_PX * JET_THROTTLE_BAR_SCALE;
+}
+
+function getJetThrottleBarHeightPx(): number {
+  return STATUS_BAR_HEIGHT_PX * JET_THROTTLE_BAR_SCALE;
+}
+
+function getJetThrottleBarTopOffsetPx(): number {
+  return JET_THROTTLE_BAR_GAP_PX + getJetThrottleBarHeightPx() + JET_THROTTLE_BAR_EXTRA_LIFT_PX;
+}
+
+function getStatusPanelHeightPx(): number {
+  return (
+    VEHICLE_STATUS_STACK_PADDING_V * 2 +
+    VEHICLE_STATUS_ROW_HEIGHT * 3 +
+    VEHICLE_STATUS_ROW_GAP * 2
+  );
+}
 
 function formatSessionTimer(elapsedSeconds: number): string {
   const totalMs = Math.floor(Math.max(0, elapsedSeconds) * 1000);
@@ -617,6 +641,8 @@ export class TankGameplayController {
   private sessionElapsedSeconds = 0;
   private hudBoostFill: Rectangle | null = null;
   private hudBoostIcon: Image | null = null;
+  private hudJetThrottleBarBg: Rectangle | null = null;
+  private hudJetThrottleBarFill: Rectangle | null = null;
   private statusHudChromeReady = false;
   private statusHudSpacingReady = false;
   private hudWeaponPrimary: Rectangle | null = null;
@@ -2066,7 +2092,10 @@ export class TankGameplayController {
       this.setupStatusHudSpacing();
       this.setupStatusHudIcons();
       this.initStatusHudChrome();
+    } else {
+      this.rebindStatusBarSegmentRefs();
     }
+    this.setupJetThrottleBar();
 
     this.hudPanelTimer = t.getControlByName("hud_panel_timer") as Rectangle | null;
     this.hudTimerLabel = t.getControlByName("hud_timer_label") as TextBlock | null;
@@ -2165,6 +2194,7 @@ export class TankGameplayController {
     this.updateFuelBarSegments(batPct, 0);
     this.updateBoostBarFill(ocPct, 0);
 
+    this.updateJetThrottleBar();
     this.tankDamageParticles?.syncHealthPercent(hpPct);
   }
 
@@ -2278,6 +2308,7 @@ export class TankGameplayController {
     this.updateFuelBarSegments(batPct, dt);
     this.updateBoostBarFill(ocPct, dt);
 
+    this.updateJetThrottleBar();
     this.updateWeaponHud(dt);
     this.sessionElapsedSeconds += dt;
     if (this.hudTimerLabel) {
@@ -2555,11 +2586,107 @@ export class TankGameplayController {
     this.hudPanelStatus.verticalAlignment = Control.VERTICAL_ALIGNMENT_BOTTOM;
     this.hudPanelStatus.top = "-16px";
     this.hudPanelStatus.left = "0px";
-    const panelHeight =
-      VEHICLE_STATUS_STACK_PADDING_V * 2 +
-      VEHICLE_STATUS_ROW_HEIGHT * 3 +
-      VEHICLE_STATUS_ROW_GAP * 2;
+    const panelHeight = getStatusPanelHeightPx();
     this.hudPanelStatus.height = `${panelHeight}px`;
+    this.syncJetThrottleBarLayout();
+  }
+
+  private setupJetThrottleBar(): void {
+    if (!this.hudTexture) {
+      return;
+    }
+
+    if (this.hudTexture.getControlByName("hud_jet_throttle_bar_bg")) {
+      this.rebindJetThrottleBarRefs();
+      this.syncJetThrottleBarLayout();
+      return;
+    }
+
+    if (!this.hudPanelStatus) {
+      this.hudPanelStatus = this.hudTexture.getControlByName(
+        "hud_panel_status"
+      ) as Rectangle | null;
+    }
+    if (!this.hudPanelStatus) {
+      return;
+    }
+
+    const bg = new Rectangle("hud_jet_throttle_bar_bg");
+    bg.width = `${getJetThrottleBarWidthPx()}px`;
+    bg.height = `${getJetThrottleBarHeightPx()}px`;
+    bg.thickness = 0;
+    bg.background = VEHICLE_STATUS_BAR_EMPTY;
+    bg.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
+    bg.verticalAlignment = Control.VERTICAL_ALIGNMENT_TOP;
+    bg.isPointerBlocker = false;
+    bg.isVisible = false;
+    bg.clipChildren = true;
+    bg.zIndex = 2;
+
+    const fill = new Rectangle("hud_jet_throttle_bar_fill");
+    fill.width = "0%";
+    fill.height = "100%";
+    fill.thickness = 0;
+    fill.background = VEHICLE_STATUS_BAR_FILL;
+    fill.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_LEFT;
+    fill.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
+    fill.isPointerBlocker = false;
+
+    bg.addControl(fill);
+    this.hudPanelStatus.addControl(bg);
+    this.hudJetThrottleBarBg = bg;
+    this.hudJetThrottleBarFill = fill;
+    this.syncJetThrottleBarLayout();
+  }
+
+  private rebindJetThrottleBarRefs(): void {
+    if (!this.hudTexture) {
+      return;
+    }
+
+    this.hudJetThrottleBarBg = this.hudTexture.getControlByName(
+      "hud_jet_throttle_bar_bg"
+    ) as Rectangle | null;
+    this.hudJetThrottleBarFill =
+      (this.hudJetThrottleBarBg?.getChildByName(
+        "hud_jet_throttle_bar_fill"
+      ) as Rectangle | null) ?? null;
+  }
+
+  private syncJetThrottleBarLayout(): void {
+    if (!this.hudJetThrottleBarBg) {
+      return;
+    }
+
+    this.hudJetThrottleBarBg.left = "0px";
+    this.hudJetThrottleBarBg.width = `${getJetThrottleBarWidthPx()}px`;
+    this.hudJetThrottleBarBg.height = `${getJetThrottleBarHeightPx()}px`;
+    this.hudJetThrottleBarBg.top = `-${getJetThrottleBarTopOffsetPx()}px`;
+  }
+
+  private updateJetThrottleBar(): void {
+    if (!this.hudJsonLoaded) {
+      return;
+    }
+
+    if (!this.hudJetThrottleBarBg || !this.hudJetThrottleBarFill) {
+      this.setupJetThrottleBar();
+    }
+    if (!this.hudJetThrottleBarBg || !this.hudJetThrottleBarFill) {
+      return;
+    }
+
+    const show = Boolean(this.flightModel) && this.playerActive;
+    this.hudJetThrottleBarBg.isVisible = show;
+    if (!show || !this.flightModel) {
+      return;
+    }
+
+    const throttlePct = clamp(this.flightModel.getState().throttle * 100, 0, 100);
+    this.hudJetThrottleBarFill.width = `${Math.round(throttlePct)}%`;
+    this.hudJetThrottleBarFill.background = VEHICLE_STATUS_BAR_FILL;
+    this.hudJetThrottleBarFill.alpha = 1;
+    this.hudJetThrottleBarBg.alpha = 1;
   }
 
   private setupStatusHudSpacing(): void {
@@ -3507,6 +3634,8 @@ export class TankGameplayController {
     this.hudFuelIcon = null;
     this.hudBoostFill = null;
     this.hudBoostIcon = null;
+    this.hudJetThrottleBarBg = null;
+    this.hudJetThrottleBarFill = null;
     this.statusHudChromeReady = false;
     this.statusHudSpacingReady = false;
     this.hudWeaponPrimary = null;
