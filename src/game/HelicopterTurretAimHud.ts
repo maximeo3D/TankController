@@ -1,7 +1,7 @@
 import { AdvancedDynamicTexture, Control, Rectangle } from "@babylonjs/gui";
 
-const FRAME_W_PX = 270;
-const FRAME_H_PX = 77;
+const FRAME_W_PX = 240;
+const FRAME_H_PX = 80;
 const FRAME_LINE_PX = 2;
 const TICK_LEN_PX = 9;
 const TICK_THICK_PX = 3;
