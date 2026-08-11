@@ -4317,7 +4317,10 @@ export class TankGameplayController {
   }
 
   private resolveJetMissileLockOrigin(): { position: Vector3; forward: Vector3 } | null {
-    if (this.helicopterModel && this.activeProjectileKind === "missile") {
+    if (
+      (this.helicopterModel || this.flightModel) &&
+      this.activeProjectileKind === "missile"
+    ) {
       const ray = this.resolveActiveWeaponReticleRay();
       if (!ray) {
         return null;
@@ -4372,10 +4375,8 @@ export class TankGameplayController {
   /** Rampes de tir de l'arme projectile sélectionnée (salve L/R, emports jet, canon…). */
   private collectActiveWeaponAimMuzzles(): (TransformNode | AbstractMesh)[] {
     const slot = this.activeSlot;
-    if (slot.muzzles.length > 0) {
-      return slot.muzzles;
-    }
 
+    // Emports jumelles (jet) : moyenne L/R pour le réticule, pas seulement muzzleMissile.
     if (slot.hardpoints.length > 0) {
       const nodes: (TransformNode | AbstractMesh)[] = [];
       for (const hardpoint of slot.hardpoints) {
@@ -4386,6 +4387,10 @@ export class TankGameplayController {
       if (nodes.length > 0) {
         return nodes;
       }
+    }
+
+    if (slot.muzzles.length > 0) {
+      return slot.muzzles;
     }
 
     if (this.muzzleCannonNode) {

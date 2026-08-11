@@ -42,6 +42,7 @@
       "cameraStart": "CAM_jet",
       "cameraZoom": "CAM_jet_zoom",
       "muzzleMissile": "MUZZLE_missile_jet_L",
+      "missileMuzzles": ["MUZZLE_missile_jet_L", "MUZZLE_missile_jet_R"],
       "muzzleGun": "MUZZLE_mg_jet",
       "ammoMissileMesh": "AMMO_missile",
       "ammoMissileColliderMesh": "COL_missile",
