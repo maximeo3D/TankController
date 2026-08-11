@@ -3608,18 +3608,27 @@ export class TankGameplayController {
   }
 
   public setPaused(paused: boolean): void {
-    if (this.paused === paused) {
+    if (paused) {
+      if (!this.paused) {
+        this.input.resetState();
+      }
+      this.paused = true;
+      this.applyPauseSideEffects();
       return;
     }
 
-    this.paused = paused;
+    if (!this.paused) {
+      return;
+    }
+
+    this.paused = false;
     this.input.resetState();
+  }
 
-    if (!paused) {
-      return;
-    }
-
-    this.applyPauseSideEffects();
+  /** Gèle le rigidbody (menu pause niveau). */
+  public freezePhysicsState(): void {
+    this.tankBody.setLinearVelocity(Vector3.Zero());
+    this.tankBody.setAngularVelocity(Vector3.Zero());
   }
 
   /** Remet le véhicule à plat au même XZ, légèrement au-dessus du sol, puis le laisse retomber. Touche Y. */
@@ -3910,8 +3919,7 @@ export class TankGameplayController {
     this.boostActive = false;
     this.articulationIsRotating = false;
 
-    this.tankBody.setLinearVelocity(Vector3.Zero());
-    this.tankBody.setAngularVelocity(Vector3.Zero());
+    this.freezePhysicsState();
 
     this.stopEngineSounds();
     this.hornSound?.stop();

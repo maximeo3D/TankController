@@ -44,6 +44,7 @@ import type { VehicleTypeId } from "./vehicle/VehicleController";
 import { TankGameplayController } from "./TankGameplayController";
 import type { ProjectileWeaponAssets } from "./TankGameplayController";
 import { LevelManager } from "./level/LevelManager";
+import { WorldPauseController } from "./WorldPauseController";
 import { TankVehicleController } from "./vehicle/TankVehicleController";
 import { PowerUpSystem } from "./PowerUpSystem";
 import type { VehicleDebugState } from "./vehicle/VehicleController";
@@ -171,6 +172,7 @@ export async function createGameplayScene(
   const levelManager = new LevelManager(level, mission);
   const missionContext = levelManager.missionContext;
   const scene = new Scene(engine);
+  const worldPause = new WorldPauseController(scene, levelManager);
   scene.useRightHandedSystem = true;
   applyLevelEnvironment(scene, level.environment);
   if (!level.environment?.clearColor) {
@@ -415,7 +417,7 @@ export async function createGameplayScene(
       enemyTurretsSpawned: enemyTurretSystem?.instanceCount ?? 0
     },
     getDebugState: () => levelManager.getDebugState(),
-    setPaused: (paused) => levelManager.setPaused(paused),
+    setPaused: (paused) => worldPause.setPaused(paused),
     notifyVehicleSwitchBlocked: () => {
       getSceneGameplayUi(scene)?.vehicleSelectorHud?.playSwitchBlockedFeedback();
     },

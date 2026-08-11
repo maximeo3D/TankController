@@ -27,10 +27,11 @@ export interface VehicleController {
   activate(): void;
   deactivate(): void;
   setPaused(paused: boolean): void;
+  /** Met vitesses linéaire/angulaire à zéro (menu pause). */
+  freezePhysicsState(): void;
   /** Vrai si le véhicule est suffisamment à l'arrêt pour autoriser un switch joueur. */
   canSwitchVehicle(): boolean;
   getDebugState(): VehicleDebugState;
-  /** Caméra gameplay à activer quand ce véhicule devient actif. */
   focusCamera(): void;
   /** Cible de visée pour les tourelles ennemies. */
   getEnemyPlayerTarget(): EnemyTurretPlayerTarget | null;
