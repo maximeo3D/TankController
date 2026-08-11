@@ -173,7 +173,7 @@ export class FlightModel {
     const stalling = airspeed > 1 && Math.abs(angleOfAttack) > stallAngle;
 
     const center = this.body.getObjectCenterWorld();
-    this.applyThrust(nose, center, input.boostHeld, powered);
+    this.applyThrust(nose, center, input.boostHeld, powered, grounded);
     this.applyAerodynamics(
       velocity,
       nose,
@@ -241,8 +241,12 @@ export class FlightModel {
       const canSlowBelowMin = landingBlend > 0.35;
 
       if (!canSlowBelowMin && cruiseMin > 0 && maxAirspeed > 0) {
-        const minThrottle = cruiseMin / maxAirspeed;
-        this.throttle = Math.max(this.throttle, minThrottle);
+        const attackThreshold = cfg.attackThrottleThreshold ?? 0.38;
+        const cruiseIntent = this.throttle >= attackThreshold;
+        if (cruiseIntent) {
+          const minThrottle = cruiseMin / maxAirspeed;
+          this.throttle = Math.max(this.throttle, minThrottle);
+        }
       }
     }
 
@@ -261,13 +265,36 @@ export class FlightModel {
     this.yawInput = clamp(input.yawAxis, -1, 1);
   }
 
-  private applyThrust(nose: Vector3, center: Vector3, boostHeld: boolean, powered: boolean): void {
+  private applyThrust(
+    nose: Vector3,
+    center: Vector3,
+    boostHeld: boolean,
+    powered: boolean,
+    grounded: boolean
+  ): void {
     if (!powered || this.throttle <= 0) {
       return;
     }
     const cfg = this.config;
     const multiplier = boostHeld && this.throttle > 0.6 ? cfg.afterburnerMultiplier : 1;
-    this.body.applyForce(nose.scale(this.throttle * cfg.maxThrustForce * multiplier), center);
+    const thrustMag = this.throttle * cfg.maxThrustForce * multiplier;
+    this.body.applyForce(nose.scale(thrustMag), center);
+
+    if (!grounded) {
+      const climbing = this.stickPitch > 0.05 || nose.y > 0.04;
+      const horizontalNose = new Vector3(nose.x, 0, nose.z);
+      const horizLenSq = horizontalNose.lengthSquared();
+      if (climbing && horizLenSq > 1e-4) {
+        const horizLen = Math.sqrt(horizLenSq);
+        const pitchLoss = 1 - horizLen;
+        if (pitchLoss > 0.02) {
+          horizontalNose.scaleInPlace(1 / horizLen);
+          const pitchManeuver = clamp(this.stickPitch, 0, 1);
+          const pitchBoost = 1 + (this.config.arcadePitchThrustBoost ?? 0.35) * pitchManeuver;
+          this.body.applyForce(horizontalNose.scale(thrustMag * pitchLoss * pitchBoost), center);
+        }
+      }
+    }
   }
 
   /**
@@ -287,14 +314,22 @@ export class FlightModel {
   ): void {
     const cfg = this.config;
     if (!grounded) {
-      // En vol arcade la portance « physique » est remplacée par l'assistance verticale.
+      const climbing = this.stickPitch > 0.08 || nose.y > 0.05;
+      const diving = this.stickPitch < -0.08 || nose.y < -0.05;
+      const maneuverFactor = clamp(Math.abs(this.stickPitch) + Math.abs(this.stickRoll) * 0.5, 0, 1);
+      const crossDragScale = climbing
+        ? 1 - maneuverFactor * 0.9
+        : diving
+          ? 0.35
+          : 1 - maneuverFactor * 0.45;
       const drag = cfg.dragPerSpeedSquared * forwardSpeed * Math.abs(forwardSpeed);
       const lateralSpeed = Vector3.Dot(velocity, right);
       const verticalSpeed = Vector3.Dot(velocity, up);
+      const verticalDragScale = diving && verticalSpeed < 0 ? 0.08 : 0.35;
       const resistance = nose
         .scale(-drag)
-        .add(right.scale(-lateralSpeed * cfg.lateralDragPerSpeed))
-        .add(up.scale(-verticalSpeed * cfg.verticalDragPerSpeed * 0.35));
+        .add(right.scale(-lateralSpeed * cfg.lateralDragPerSpeed * crossDragScale))
+        .add(up.scale(-verticalSpeed * cfg.verticalDragPerSpeed * verticalDragScale * crossDragScale));
       this.body.applyForce(resistance, center);
       return;
     }
@@ -346,6 +381,9 @@ export class FlightModel {
 
     const minRatio = cfg.minAirspeedRatio ?? 0.2;
     const cruiseMin = cfg.minAirspeed ?? maxAirspeed * minRatio;
+    const maneuverMin = cfg.maneuverMinAirspeed ?? maxAirspeed * 0.58;
+    const attackThreshold = cfg.attackThrottleThreshold ?? 0.38;
+    const attackMode = this.throttle < attackThreshold;
     const deployHeight = cfg.gear.deployHeight;
     const airspeed = velocity.length();
     const { landingBlend, cruiseAssistBlend } = resolveLowAltitudeFlightBlends(
@@ -364,31 +402,101 @@ export class FlightModel {
 
     const vertDamp = cfg.arcadeVerticalDamping ?? 14;
     const stickMag = clamp(Math.abs(this.stickPitch), 0, 1);
-    const levelAssist = 0.95 * arcadeBlend * (1 - stickMag * 0.92);
-    const dampScale = 0.25 + 0.75 * arcadeBlend;
-    const vertForce = weight * levelAssist - velocity.y * this.mass * vertDamp * dampScale;
+    const climbing = this.stickPitch > 0.08 || nose.y > 0.06;
+    const diving = this.stickPitch < -0.08 || nose.y < -0.06;
+    const pitchManeuver = stickMag;
+    const rollManeuver = clamp(Math.abs(this.stickRoll) * 0.5, 0, 1);
+    const maneuverFactor = clamp(pitchManeuver + rollManeuver, 0, 1);
+
+    let levelAssist = climbing ? 0.95 * arcadeBlend * (1 - stickMag * 0.92) : 0;
+    if (!climbing && !diving) {
+      levelAssist = 0.45 * arcadeBlend * (1 - stickMag * 0.75);
+    }
+
+    const dampScale = (0.25 + 0.75 * arcadeBlend) * (climbing ? 1 - pitchManeuver * 0.75 : diving ? 0.15 : 0.55);
+    let vertDampForce = -velocity.y * this.mass * vertDamp * dampScale;
+    if (diving && velocity.y < 0) {
+      vertDampForce = 0;
+    }
+    const vertForce = weight * levelAssist + vertDampForce;
     this.body.applyForce(Axis.Y.scale(vertForce), center);
 
     const pitchLiftGain = cfg.arcadePitchLift ?? 20;
-    if (arcadeBlend > 0.1 && forwardSpeed > 0.5 && pitchLiftGain > 0) {
+    if (climbing && arcadeBlend > 0.1 && forwardSpeed > 0.5 && pitchLiftGain > 0) {
       const noseClimb = Math.max(Vector3.Dot(nose, Axis.Y), 0);
       const stickClimb = Math.max(this.stickPitch, 0);
+      const maneuverLiftScale = attackMode ? 0.35 : 1 + this.stickPitch * 0.65;
       const liftAlongUp =
-        (noseClimb * 0.7 + stickClimb * 0.3) * forwardSpeed * pitchLiftGain * arcadeBlend;
+        (noseClimb * 0.7 + stickClimb * 0.3) *
+        Math.max(forwardSpeed, airspeed * 0.45) *
+        pitchLiftGain *
+        arcadeBlend *
+        maneuverLiftScale;
       if (liftAlongUp > 0) {
         this.body.applyForce(up.scale(liftAlongUp), center);
       }
     }
 
-    const slipDrag = cfg.arcadeSlipDrag ?? 24;
-    if (slipDrag > 0 && arcadeBlend > 0.05 && airspeed > 0.5) {
-      const alongNose = nose.scale(forwardSpeed);
-      const slip = velocity.subtract(alongNose);
-      this.body.applyForce(slip.scale(-this.mass * slipDrag * arcadeBlend), center);
+    if (diving && this.throttle > 0.35 && arcadeBlend > 0.05) {
+      const diveBoost = cfg.arcadePitchDiveBoost ?? 0.75;
+      const diveIntent = Math.max(clamp(-this.stickPitch, 0, 1), clamp(-nose.y * 1.4, 0, 1));
+      const extraThrust = this.throttle * cfg.maxThrustForce * diveBoost * diveIntent * arcadeBlend;
+      if (extraThrust > 0) {
+        this.body.applyForce(nose.scale(extraThrust), center);
+      }
     }
 
-    if (arcadeBlend > 0 && !canSlowBelowMin && forwardSpeed < cruiseMin) {
-      const deficit = cruiseMin - forwardSpeed;
+    const slipScale = climbing ? 1 - this.stickPitch * 0.92 : diving ? 0.12 : 1 - pitchManeuver * 0.55;
+
+    const slipDrag = cfg.arcadeSlipDrag ?? 24;
+    if (slipDrag > 0 && slipScale > 0.05 && arcadeBlend > 0.05 && airspeed > 0.5) {
+      const alongNose = nose.scale(forwardSpeed);
+      const slip = velocity.subtract(alongNose);
+      this.body.applyForce(slip.scale(-this.mass * slipDrag * arcadeBlend * slipScale), center);
+    }
+
+    const climbManeuver = this.stickPitch > 0.12 && !attackMode && !canSlowBelowMin;
+    if (climbManeuver && arcadeBlend > 0.05) {
+      const horizontalHeading = new Vector3(nose.x, 0, nose.z);
+      if (horizontalHeading.lengthSquared() > 1e-6) {
+        horizontalHeading.normalize();
+        const horizontalVel = new Vector3(velocity.x, 0, velocity.z);
+        const horizAlongHeading = Vector3.Dot(horizontalVel, horizontalHeading);
+        const targetHoriz = Math.max(horizAlongHeading, maneuverMin, airspeed * 0.82);
+        const horizDeficit = targetHoriz - horizAlongHeading;
+        if (horizDeficit > 0.1) {
+          const hold = cfg.arcadeManeuverHorizHold ?? cfg.minAirspeedHold ?? 16;
+          this.body.applyForce(
+            horizontalHeading.scale(horizDeficit * hold * this.stickPitch * arcadeBlend),
+            center
+          );
+        }
+      }
+
+      const energyHold = cfg.arcadeManeuverEnergyHold ?? 26;
+      const targetAlongNose = Math.max(Math.abs(forwardSpeed), airspeed * 0.88, maneuverMin * 0.85);
+      const alongDeficit = targetAlongNose - Math.abs(forwardSpeed);
+      if (alongDeficit > 0.15 && forwardSpeed >= 0) {
+        this.body.applyForce(
+          nose.scale(alongDeficit * energyHold * this.stickPitch * arcadeBlend),
+          center
+        );
+      }
+    }
+
+    const diveManeuver = this.stickPitch < -0.1 && !canSlowBelowMin;
+    if (diveManeuver && arcadeBlend > 0.05 && airspeed > 0.5) {
+      const diveAlign = cfg.arcadeDiveAlign ?? 4.5;
+      const diveIntent = Math.max(clamp(-this.stickPitch, 0, 1), clamp(-nose.y * 1.2, 0, 1));
+      const targetSpeed = Math.max(airspeed, Math.abs(forwardSpeed), maneuverMin * 0.7);
+      const targetVelocity = nose.scale(forwardSpeed >= 0 ? targetSpeed : -targetSpeed);
+      const delta = targetVelocity.subtract(velocity);
+      this.body.applyForce(delta.scale(this.mass * diveAlign * diveIntent * arcadeBlend), center);
+    }
+
+    const cruiseIntent = !attackMode && stickMag < 0.12;
+    if (arcadeBlend > 0 && !canSlowBelowMin && cruiseIntent && airspeed < cruiseMin) {
+      const deficit = cruiseMin - airspeed;
       const hold = cfg.minAirspeedHold ?? 16;
       this.body.applyForce(nose.scale(deficit * hold), center);
     }
@@ -405,13 +513,14 @@ export class FlightModel {
       );
     }
 
-    const stickBoost = 1 + stickMag * 2.5 + Math.abs(this.stickRoll) * 0.6;
-    const alignRate = (cfg.arcadeVelocityAlign ?? 1.4) * arcadeBlend * stickBoost;
-    if (alignRate > 0 && airspeed > 0.5) {
-      const targetSpeed = canSlowBelowMin
+    // Alignement trajectoire → nez : vol palier / croisière uniquement.
+    const alignBlend = (1 - maneuverFactor) * (1 - maneuverFactor) * (attackMode ? 0.35 : 1);
+    const alignRate = (cfg.arcadeVelocityAlign ?? 1.4) * arcadeBlend * alignBlend;
+    if (alignRate > 0.05 && airspeed > 0.5 && cruiseIntent) {
+      const preservedSpeed = canSlowBelowMin
         ? Math.max(forwardSpeed, 0)
-        : Math.max(forwardSpeed, cruiseMin);
-      const targetVelocity = nose.scale(targetSpeed);
+        : Math.max(airspeed, cruiseMin);
+      const targetVelocity = nose.scale(preservedSpeed);
       const delta = targetVelocity.subtract(velocity);
       this.body.applyForce(delta.scale(this.mass * alignRate), center);
     }

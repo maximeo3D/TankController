@@ -125,6 +125,20 @@ export interface FlightConfig {
   minAirspeed?: number;
   /** Couple de rattrapage (N) quand la vitesse avant descend sous le plancher. */
   minAirspeedHold?: number;
+  /** Sous ce gaz (0–1), vol lent d'attaque sans plancher de vitesse forcé. */
+  attackThrottleThreshold?: number;
+  /** Vitesse horizontale min (m/s) en cabré/piqué actif (hors vol d'attaque). */
+  maneuverMinAirspeed?: number;
+  /** Renfort de poussée horizontale en cabré/piqué (fraction supplémentaire). */
+  arcadePitchThrustBoost?: number;
+  /** Poussée supplémentaire le long du nez en piqué (fraction de maxThrustForce). */
+  arcadePitchDiveBoost?: number;
+  /** Alignement trajectoire → nez en piqué actif (1/s). */
+  arcadeDiveAlign?: number;
+  /** Gain de maintien horizontal en manœuvre (N par m/s de déficit). */
+  arcadeManeuverHorizHold?: number;
+  /** Gain de conservation d'énergie le long du nez en manœuvre (N par m/s). */
+  arcadeManeuverEnergyHold?: number;
   /** Résistance (N par m/s) au-delà de `maxAirspeed`. */
   maxAirspeedDrag?: number;
   /** Portance (N) à pleine manette en vol, même à basse vitesse. */
