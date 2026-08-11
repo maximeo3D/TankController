@@ -72,10 +72,7 @@ export class HelicopterTurretAimHud {
     this.marker = marker;
   }
 
-  public static getOrCreate(
-    hudTexture: AdvancedDynamicTexture,
-    limits: HelicopterTurretAimHudLimits
-  ): HelicopterTurretAimHud {
+  public static getOrCreate(hudTexture: AdvancedDynamicTexture): HelicopterTurretAimHud {
     const existingRoot = hudTexture.getControlByName("hud_heli_turret_aim_root") as Rectangle | null;
     if (existingRoot) {
       const frame = existingRoot.getChildByName("hud_heli_turret_aim_frame") as Rectangle;

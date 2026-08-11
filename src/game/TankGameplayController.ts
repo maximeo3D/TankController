@@ -2680,12 +2680,7 @@ export class TankGameplayController {
       return;
     }
 
-    this.helicopterTurretAimHud = HelicopterTurretAimHud.getOrCreate(this.hudTexture, {
-      minYawDeg: this.config.turret.minYawDeg ?? -180,
-      maxYawDeg: this.config.turret.maxYawDeg ?? 180,
-      minPitchDeg: this.config.cannon.minPitchDeg,
-      maxPitchDeg: this.config.cannon.maxPitchDeg
-    });
+    this.helicopterTurretAimHud = HelicopterTurretAimHud.getOrCreate(this.hudTexture);
     this.syncHelicopterTurretAimHudLayout();
   }
 
