@@ -98,8 +98,8 @@ export const MENU_MAPS: readonly MenuMapEntry[] = [
         sunIntensity: 0.35,
         fog: {
           mode: "exp2",
-          color: [0.89, 0.824, 0.765],
-          density: 0.005
+          color: [0.85, 0.85, 0.9],
+          density: 0.002
         }
       }
     },
@@ -111,7 +111,9 @@ export const MENU_MAPS: readonly MenuMapEntry[] = [
         imageUrl: new URL("../../assets/ui/level-livingroom-destruction.png", import.meta.url).href,
         vehicles: [
           { id: "player_tank", type: "tank", spawnNode: "SPAWN_tank" },
-          { id: "player_helicopter", type: "helicopter", spawnNode: "SPAWN_helicopter" }
+          { id: "player_helicopter", type: "helicopter", spawnNode: "SPAWN_helicopter" },
+          { id: "player_jet", type: "fighterJet", spawnNode: "SPAWN_jet" },
+          { id: "player_armoredcar", type: "armoredCar", spawnNode: "SPAWN_armoredcar" }
         ],
         startVehicleId: "player_tank"
       }
