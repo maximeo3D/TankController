@@ -61,8 +61,8 @@
     "groundHoverHeight": 0.5,
     "yawSpeedDeg": 120.0,
     "yawSharpness": 4.0,
-    "maxBankDeg": 45.0,
-    "maxPitchDeg": 35.0,
+    "maxBankDeg": 60.0,
+    "maxPitchDeg": 40.0,
     "attitudeSharpness": 4.5,
     "stickRollPerPixel": 0.0022,
     "stickPitchPerPixel": 0.0035,
@@ -283,11 +283,11 @@
       }
     },
     "rocket": {
-      "startingReserveAmmo": 24,
+      "startingReserveAmmo": 16,
       "startsChambered": true,
-      "magazineSize": 12,
-      "reloadSeconds": 8.0,
-      "damage": 45.0,
+      "magazineSize": 8,
+      "reloadSeconds": 6.0,
+      "damage": 50.0,
       "muzzleVelocity": 70.0,
       "gravityMultiplier": 0.05
     },

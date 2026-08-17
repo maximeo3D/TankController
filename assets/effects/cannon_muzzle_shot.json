@@ -1,0 +1,99 @@
+{
+  "name": "cannon_muzzle_shot",
+  "timing": {
+    "flashLifeSeconds": 0.1,
+    "smokeDelayAfterFlashSeconds": 0.525,
+    "smokeDurationSeconds": 1.0,
+    "flashBurstCount": 56
+  },
+  "generators": [
+    {
+      "id": "flash",
+      "capacity": 512,
+      "emitter": [0, 0, -0.02],
+      "particleTexture": "smoke.png",
+      "minEmitBox": [-0.003, -0.003, -0.002],
+      "maxEmitBox": [0.003, 0.003, 0.002],
+      "color1": [1, 0.96, 0.78, 1],
+      "color2": [1, 0.62, 0.18, 0.92],
+      "colorDead": [0.45, 0.05, 0.05, 0],
+      "colorGradients": [
+        { "gradient": 0, "color": [1, 0.96, 0.78, 1] },
+        { "gradient": 0.35, "color": [1, 0.72, 0.28, 0.65] },
+        { "gradient": 0.7, "color": [0.85, 0.35, 0.05, 0.2] },
+        { "gradient": 1, "color": [0.45, 0.18, 0.02, 0] }
+      ],
+      "minSize": 0.22,
+      "maxSize": 0.48,
+      "sizeGradients": [
+        { "gradient": 0, "factor1": 0.35 },
+        { "gradient": 0.2, "factor1": 1.6 },
+        { "gradient": 0.55, "factor1": 2.8 },
+        { "gradient": 0.85, "factor1": 2.2 },
+        { "gradient": 1, "factor1": 0.05 }
+      ],
+      "minLifeTime": 0.04,
+      "maxLifeTime": 0.06,
+      "emitRate": 0,
+      "gravity": [0, 0, 0],
+      "direction1": [-0.04, 0.02, -0.998],
+      "direction2": [0.04, 0.06, -1],
+      "minEmitPower": 8.5,
+      "maxEmitPower": 15.5,
+      "updateSpeed": 0.006,
+      "minAngularSpeed": -1.2,
+      "maxAngularSpeed": 1.2,
+      "blendMode": 0,
+      "isBillboardBased": true,
+      "billboardMode": 7,
+      "isLocal": false
+    },
+    {
+      "id": "smoke",
+      "capacity": 720,
+      "emitter": [0, 0, -0.02],
+      "particleTexture": "smoke2.png",
+      "minEmitBox": [-0.002, -0.002, -0.001],
+      "maxEmitBox": [0.002, 0.002, 0.001],
+      "color1": [0.99, 0.99, 1, 0.8],
+      "color2": [0.94, 0.94, 0.97, 0.65],
+      "colorDead": [0.85, 0.85, 0.88, 0],
+      "colorGradients": [
+        { "gradient": 0, "color": [0.99, 0.99, 1, 0.82] },
+        { "gradient": 0.08, "color": [0.97, 0.97, 0.99, 0.58] },
+        { "gradient": 0.35, "color": [0.94, 0.94, 0.96, 0.28] },
+        { "gradient": 0.65, "color": [0.9, 0.9, 0.93, 0.1] },
+        { "gradient": 1, "color": [0.85, 0.85, 0.88, 0] }
+      ],
+      "minSize": 0.004,
+      "maxSize": 0.016,
+      "minScaleX": 0.45,
+      "maxScaleX": 1.05,
+      "minScaleY": 0.35,
+      "maxScaleY": 0.95,
+      "minInitialRotation": 0,
+      "maxInitialRotation": 6.283,
+      "sizeGradients": [
+        { "gradient": 0, "factor1": 0.15 },
+        { "gradient": 0.4, "factor1": 0.5 },
+        { "gradient": 0.75, "factor1": 1.2 },
+        { "gradient": 1, "factor1": 1.5 }
+      ],
+      "minLifeTime": 0.3,
+      "maxLifeTime": 0.6,
+      "emitRate": 60,
+      "gravity": [0, 0.0981, 0],
+      "direction1": [-0.008, 0.035, -0.998],
+      "direction2": [0.008, 0.07, -1],
+      "minEmitPower": 2.8,
+      "maxEmitPower": 4.6,
+      "updateSpeed": 0.008,
+      "minAngularSpeed": -0.6,
+      "maxAngularSpeed": 0.6,
+      "blendMode": 1,
+      "isBillboardBased": true,
+      "billboardMode": 7,
+      "isLocal": false
+    }
+  ]
+}

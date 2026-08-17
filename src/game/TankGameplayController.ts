@@ -94,6 +94,7 @@ import "@babylonjs/core/Layers/effectLayerSceneComponent";
 import { HighlightLayer } from "@babylonjs/core/Layers/highlightLayer";
 import type { TrackTreadParticleBundle } from "./trackTreadParticles";
 import type { TankDamageParticleBundle } from "./tankDamageParticles";
+import type { CannonMuzzleParticleBundle } from "./vehicle/cannonMuzzleParticles";
 import type { PostCombustionParticleBundle } from "./vehicle/postCombustionParticles";
 import type {
   MissileJetSmokeFactory,
@@ -393,6 +394,8 @@ export interface TankGameplayControllerOptions {
   trackTreadParticlesReverse?: TrackTreadParticleBundle | null;
   /** Fumée / étincelles de dégâts sur les empties `tank_damage_*` (si chargés). */
   tankDamageParticles?: TankDamageParticleBundle | null;
+  /** Flash + fumée de bouche de canon (tank, `MUZZLE_canon_tank`). */
+  cannonMuzzleParticles?: CannonMuzzleParticleBundle | null;
   /** Flamme de tuyère sur l'empty `jet_post_combustion` (mode `plane`). */
   postCombustionParticles?: PostCombustionParticleBundle | null;
   /** Factory fumée / turbine sur les missiles en vol (jet). */
@@ -575,6 +578,7 @@ export class TankGameplayController {
   private readonly trackTreadParticles: TrackTreadParticleBundle | null;
   private readonly trackTreadParticlesReverse: TrackTreadParticleBundle | null;
   private readonly tankDamageParticles: TankDamageParticleBundle | null;
+  private readonly cannonMuzzleParticles: CannonMuzzleParticleBundle | null;
   private readonly postCombustionParticles: PostCombustionParticleBundle | null;
   private readonly missileJetSmokeFactory: MissileJetSmokeFactory | null;
   private readonly missileSmokeNodeName: string | null;
@@ -891,6 +895,7 @@ export class TankGameplayController {
     this.trackTreadParticles = options.trackTreadParticles ?? null;
     this.trackTreadParticlesReverse = options.trackTreadParticlesReverse ?? null;
     this.tankDamageParticles = options.tankDamageParticles ?? null;
+    this.cannonMuzzleParticles = options.cannonMuzzleParticles ?? null;
     this.postCombustionParticles = options.postCombustionParticles ?? null;
     this.missileJetSmokeFactory = options.missileJetSmokeFactory ?? null;
     this.missileSmokeNodeName = options.missileSmokeNodeName ?? null;
@@ -3815,6 +3820,7 @@ export class TankGameplayController {
     this.trackTreadParticles?.dispose();
     this.trackTreadParticlesReverse?.dispose();
     this.tankDamageParticles?.dispose();
+    this.cannonMuzzleParticles?.dispose();
     this.postCombustionParticles?.dispose();
     this.deathBlackMaterial?.dispose();
     this.deathBlackMaterial = null;
@@ -4171,6 +4177,7 @@ export class TankGameplayController {
       this.updateProjectiles(dt);
       this.updateGunTracers(dt);
       this.updateMuzzleFlashes(dt);
+      this.cannonMuzzleParticles?.update(dt);
       this.updateSparks(dt);
       this.updateShockwaves(dt);
       if (!this.deathNotified) {
@@ -4285,6 +4292,7 @@ export class TankGameplayController {
     this.updateProjectiles(dt);
     this.updateGunTracers(dt);
     this.updateMuzzleFlashes(dt);
+    this.cannonMuzzleParticles?.update(dt);
     this.updateSparks(dt);
     this.updateShockwaves(dt);
     this.updateGameplayHud(dt);
@@ -4452,6 +4460,9 @@ export class TankGameplayController {
       TankGameplayController.CANNON_MUZZLE_FLASH_PEAK_INTENSITY,
       TankGameplayController.CANNON_MUZZLE_FLASH_LIFE_S
     );
+    if (this.primaryWeaponKind === "shell") {
+      this.cannonMuzzleParticles?.playShot();
+    }
     this.spawnProjectile(
       slot,
       0.4,
@@ -6267,22 +6278,23 @@ export class TankGameplayController {
     rigNode.computeWorldMatrix(true);
     camera.position.copyFrom(rigNode.getAbsolutePosition());
 
+    const forward = rigNode
+      .getDirection(this.movementForwardAxis)
+      .scale(this.config.rig.movementForwardSign);
+    if (forward.lengthSquared() > 1e-8) {
+      forward.normalize();
+      camera.upVector.copyFrom(Axis.Y);
+      camera.rotationQuaternion = null;
+      camera.setTarget(camera.position.add(forward.scale(1000)));
+      return;
+    }
+
     const rotation =
       rigNode.absoluteRotationQuaternion ??
       rigNode.rotationQuaternion ??
       null;
     if (rotation) {
       camera.rotationQuaternion = rotation.clone();
-      return;
-    }
-
-    const forward = rigNode
-      .getDirection(this.movementForwardAxis)
-      .scale(this.movementInputSign * this.config.rig.movementForwardSign);
-    if (forward.lengthSquared() > 1e-8) {
-      forward.normalize();
-      camera.rotationQuaternion = null;
-      camera.setTarget(camera.position.add(forward.scale(1000)));
     }
   }
 

@@ -55,6 +55,7 @@ import { TARGET_FRAME_SEC } from "./frameTiming";
 import { StackPanel } from "@babylonjs/gui";
 import { createTankDamageParticleBundle } from "./tankDamageParticles";
 import { createPostCombustionParticleBundle } from "./vehicle/postCombustionParticles";
+import { createCannonMuzzleParticleBundle } from "./vehicle/cannonMuzzleParticles";
 import {
   createMissileJetSmokeFactory,
   type MissileJetSmokeFactory
@@ -820,6 +821,15 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
     console.warn("[TankController] Vehicle damage particles could not be created:", err);
   }
 
+  let cannonMuzzleParticles = null;
+  if (vehicleSpawn.type === "tank") {
+    try {
+      cannonMuzzleParticles = await createCannonMuzzleParticleBundle(scene, muzzleShellNode);
+    } catch (err) {
+      console.warn("[TankController] Cannon muzzle particles could not be created:", err);
+    }
+  }
+
   const controller = new TankGameplayController({
     scene,
     canvas,
@@ -850,6 +860,7 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
     trackTreadParticles,
     trackTreadParticlesReverse,
     tankDamageParticles,
+    cannonMuzzleParticles,
     postCombustionParticles,
     missileJetSmokeFactory,
     missileSmokeNodeName: nodeNames.missileSmoke,
