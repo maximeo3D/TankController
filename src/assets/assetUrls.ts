@@ -74,14 +74,23 @@ export const armoredCarHornSoundAssetUrl = new URL(
   "../../assets/sounds/armoredcar_horn.wav",
   import.meta.url
 ).href;
+export const armoredCarGunSoundAssetUrl = new URL(
+  "../../assets/sounds/armoredcar_gun.wav",
+  import.meta.url
+).href;
 export const jetIdleSoundAssetUrl = new URL("../../assets/sounds/jet_idle.wav", import.meta.url).href;
 export const jetMoveSoundAssetUrl = new URL("../../assets/sounds/jet_move.wav", import.meta.url).href;
 export const jetTurboSoundAssetUrl = new URL(
   "../../assets/sounds/jet_turbo.wav",
   import.meta.url
 ).href;
+export const jetGunSoundAssetUrl = new URL("../../assets/sounds/jet_gun.wav", import.meta.url).href;
 export const helicopterBladesSoundAssetUrl = new URL(
   "../../assets/sounds/helicopter_blades.wav",
+  import.meta.url
+).href;
+export const helicopterGunSoundAssetUrl = new URL(
+  "../../assets/sounds/helicopter_gun.wav",
   import.meta.url
 ).href;
 export const suspensionImpactSoundAssetUrl = new URL(

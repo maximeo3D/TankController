@@ -43,7 +43,8 @@
       "cameraZoom": "CAM_jet_zoom",
       "muzzleMissile": "MUZZLE_missile_jet_L",
       "missileMuzzles": ["MUZZLE_missile_jet_L", "MUZZLE_missile_jet_R"],
-      "muzzleGun": "MUZZLE_mg_jet",
+      "muzzleGun": "MUZZLE_mg_jet_L",
+      "gunMuzzles": ["MUZZLE_mg_jet_L", "MUZZLE_mg_jet_R"],
       "gunMuzzleFlashMesh": "FX_muzzle_flash",
       "ammoMissileMesh": "AMMO_missile",
       "ammoMissileColliderMesh": "COL_missile",
@@ -228,6 +229,9 @@
     "engineMove": "jet_move",
     "engineTurbo": "jet_turbo",
     "horn": null,
+    "gun": "jet_gun",
+    "gunLoop": true,
+    "gunVolume": 0.7,
     "suspensionImpact": "suspension",
     "engineIdleVolume": 0.25,
     "engineMoveVolumeMin": 0.18,
@@ -338,7 +342,7 @@
       }
     },
     "bullet": {
-      "shotsPerSecond": 30.0,
+      "shotsPerSecond": 15.0,
       "damage": 5,
       "muzzleVelocity": 140.0,
       "gravityMultiplier": 0.5

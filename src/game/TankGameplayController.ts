@@ -384,6 +384,8 @@ export interface TankGameplayControllerOptions {
   reticleBarrelMesh: AbstractMesh | null;
   muzzleCannonNode: TransformNode | AbstractMesh | null;
   muzzleGunNode: TransformNode | AbstractMesh | null;
+  /** Rampes mitrailleuse en alternance (jet L/R). Défaut : `[muzzleGunNode]`. */
+  muzzleGunNodes?: Array<TransformNode | AbstractMesh>;
   tracksSourceMesh?: AbstractMesh | null;
   /** Une entrée par arme à projectile déclarée dans `weapons` (obus, roquette, missile). */
   projectileWeapons: ProjectileWeaponAssets[];
@@ -506,6 +508,8 @@ export class TankGameplayController {
   private readonly cannonBaseLocalPosition: Vector3;
   private readonly muzzleCannonNode: TransformNode | AbstractMesh | null;
   private readonly muzzleGunNode: TransformNode | AbstractMesh | null;
+  private readonly muzzleGunNodes: Array<TransformNode | AbstractMesh>;
+  private nextGunMuzzleIndex = 0;
   private readonly trackMaterial: BabylonMaterial | null;
   private trackSystem: TrackSegmentSystem | null = null;
   private readonly trackUvScrollers: TrackUvScroller[] = [];
@@ -752,6 +756,7 @@ export class TankGameplayController {
   private gunShotSoundPoolCursor = 0;
   private audioUnlocked = false;
   private gunShotAudioBuffer: AudioBuffer | null = null;
+  private gunLoopSound: Sound | null = null;
   private readonly powerUpSounds = new Map<PowerUpTypeId, Sound>();
   private tankIdleSound: Sound | null = null;
   private tankMoveSound: Sound | null = null;
@@ -882,6 +887,12 @@ export class TankGameplayController {
     this.cameraZoomNode = options.cameraZoomNode ?? null;
     this.muzzleCannonNode = options.muzzleCannonNode;
     this.muzzleGunNode = options.muzzleGunNode;
+    this.muzzleGunNodes =
+      options.muzzleGunNodes && options.muzzleGunNodes.length > 0
+        ? options.muzzleGunNodes
+        : options.muzzleGunNode
+          ? [options.muzzleGunNode]
+          : [];
     this.trackMaterial = (options.tracksSourceMesh?.material as Material | null | undefined) ?? null;
     for (const m of options.tankContainer.meshes) {
       this.tankMeshIdsToIgnore.add(m.uniqueId);
@@ -1198,6 +1209,7 @@ export class TankGameplayController {
     this.deathScreenDelaySeconds = 1;
     this.input.resetState();
     this.health = 0;
+    this.stopGunLoopSound();
 
     const deathPos = this.playerTargetNode?.getAbsolutePosition().clone() ?? this.tankAnchor.getAbsolutePosition().clone();
     void this.spawnExplosionAt(deathPos);
@@ -1883,36 +1895,47 @@ export class TankGameplayController {
         console.warn("[TankController][audio] shell_insert load failed:", err)
       );
 
-      const baseGun = new Sound(
-        "tank_gun_shot_base",
-        tankGunSoundAssetUrl,
-        this.scene,
-        () => {
-          // Build pool from decoded AudioBuffer (reliable replay at high ROF).
-          this.gunShotAudioBuffer = baseGun.getAudioBuffer();
-          this.gunShotSoundPool = [];
-          const poolSize = 10;
-          for (let i = 0; i < poolSize; i++) {
-            const s =
-              i === 0
-                ? baseGun
-                : new Sound(
-                    `tank_gun_shot_${i}`,
-                    this.gunShotAudioBuffer,
-                    this.scene,
-                    null,
-                    { autoplay: false, loop: false, volume: 0.7 }
-                  );
-            this.gunShotSoundPool.push(s);
-          }
-        },
-        { autoplay: false, loop: false, volume: 0.7 }
-      );
-      (baseGun as any).onErrorObservable?.add((err: unknown) =>
-        console.warn("[TankController][audio] gun sound load failed:", err)
-      );
-      // If audio buffer isn't ready yet, keep at least the base sound to allow early play.
-      this.gunShotSoundPool = [baseGun];
+      const gunKey = this.config.audio?.gun;
+      const gunVolume = this.config.audio?.gunVolume ?? 0.7;
+      if (this.config.audio?.gunLoop === true) {
+        this.gunLoopSound = this.createConfigSound("gun_loop", gunKey, {
+          loop: true,
+          volume: gunVolume
+        });
+        this.gunShotSoundPool = [];
+      } else {
+        const gunUrl = resolveVehicleSoundUrl(gunKey) ?? tankGunSoundAssetUrl;
+        const baseGun = new Sound(
+          "tank_gun_shot_base",
+          gunUrl,
+          this.scene,
+          () => {
+            // Build pool from decoded AudioBuffer (reliable replay at high ROF).
+            this.gunShotAudioBuffer = baseGun.getAudioBuffer();
+            this.gunShotSoundPool = [];
+            const poolSize = 10;
+            for (let i = 0; i < poolSize; i++) {
+              const s =
+                i === 0
+                  ? baseGun
+                  : new Sound(
+                      `tank_gun_shot_${i}`,
+                      this.gunShotAudioBuffer,
+                      this.scene,
+                      null,
+                      { autoplay: false, loop: false, volume: gunVolume }
+                    );
+              this.gunShotSoundPool.push(s);
+            }
+          },
+          { autoplay: false, loop: false, volume: gunVolume }
+        );
+        (baseGun as any).onErrorObservable?.add((err: unknown) =>
+          console.warn("[TankController][audio] gun sound load failed:", err)
+        );
+        // If audio buffer isn't ready yet, keep at least the base sound to allow early play.
+        this.gunShotSoundPool = [baseGun];
+      }
     } catch {
       // Audio is optional; ignore initialization failures (e.g., autoplay restrictions).
     }
@@ -3200,6 +3223,25 @@ export class TankGameplayController {
     return this.bulletMagazineSize <= 0 || this.bulletLoadedAmmo > 0;
   }
 
+  private stopGunLoopSound(): void {
+    if (this.gunLoopSound?.isPlaying) {
+      this.gunLoopSound.stop();
+    }
+  }
+
+  private syncGunLoopSound(isFiringHeld: boolean): void {
+    if (!this.gunLoopSound || !this.audioUnlocked) {
+      return;
+    }
+    if (isFiringHeld) {
+      if (!this.gunLoopSound.isPlaying) {
+        this.gunLoopSound.play();
+      }
+      return;
+    }
+    this.stopGunLoopSound();
+  }
+
   private refreshWeaponHudContent(): void {
     const slot = this.resolveHudProjectileSlot();
     const shellAmmoText = `${slot.loadedAmmo}/${slot.reserveAmmo}`;
@@ -3784,6 +3826,9 @@ export class TankGameplayController {
       s.dispose();
     }
     this.gunShotSoundPool = [];
+    this.gunLoopSound?.stop();
+    this.gunLoopSound?.dispose();
+    this.gunLoopSound = null;
     for (const light of this.gunMuzzleFlashPool) {
       light.dispose();
     }
@@ -4163,6 +4208,7 @@ export class TankGameplayController {
     this.freezePhysicsState();
 
     this.stopEngineSounds();
+    this.stopGunLoopSound();
     this.hornSound?.stop();
     this.turretStartSound?.stop();
     this.turretLoopSound?.stop();
@@ -4382,6 +4428,13 @@ export class TankGameplayController {
     }
     this.shellFireWasHeld = this.fireHeld;
 
+    this.syncGunLoopSound(
+      this.fireHeld &&
+        this.battery > 0 &&
+        this.activeWeapon === "bullet" &&
+        this.canFireBullet()
+    );
+
     // Coax spread model (0 -> max while firing; relax back when not firing).
     const isGunTriggerHeld = this.fireHeld && this.battery > 0 && this.activeWeapon === "bullet";
     if (isGunTriggerHeld) {
@@ -4513,6 +4566,22 @@ export class TankGameplayController {
     }
 
     return this.muzzleCannonNode;
+  }
+
+  private resolveGunMuzzleNode(): TransformNode | AbstractMesh | null {
+    if (this.muzzleGunNodes.length === 0) {
+      return this.muzzleGunNode;
+    }
+    const muzzle = this.muzzleGunNodes[this.nextGunMuzzleIndex % this.muzzleGunNodes.length];
+    this.nextGunMuzzleIndex = (this.nextGunMuzzleIndex + 1) % this.muzzleGunNodes.length;
+    return muzzle;
+  }
+
+  private peekGunMuzzleNode(): TransformNode | AbstractMesh | null {
+    if (this.muzzleGunNodes.length === 0) {
+      return this.muzzleGunNode;
+    }
+    return this.muzzleGunNodes[this.nextGunMuzzleIndex % this.muzzleGunNodes.length];
   }
 
   /** Prochaine rampe sans consommer l'alternance (debug visée). */
@@ -4911,7 +4980,7 @@ export class TankGameplayController {
       }
     }
     this.gunReticleKickTime = 0;
-    if (this.gunShotSoundPool.length > 0) {
+    if (!this.gunLoopSound && this.gunShotSoundPool.length > 0) {
       // Prefer a free sound so ROF stays perfectly in sync.
       // If all are busy, reuse the next one (stop it first).
       let s: Sound | null = null;
@@ -4935,25 +5004,26 @@ export class TankGameplayController {
       }
     }
 
-    if (!this.muzzleGunNode || !this.ammoBulletMesh) {
+    const muzzleGunNode = this.resolveGunMuzzleNode();
+    if (!muzzleGunNode || !this.ammoBulletMesh) {
       return;
     }
 
-    this.syncMuzzleNodeWorldMatrix(this.muzzleGunNode);
-    const origin = this.muzzleGunNode.getAbsolutePosition().clone();
+    this.syncMuzzleNodeWorldMatrix(muzzleGunNode);
+    const origin = muzzleGunNode.getAbsolutePosition().clone();
     this.spawnMuzzleFlash(
       this.gunMuzzleFlashPool,
       origin,
       TankGameplayController.GUN_MUZZLE_FLASH_PEAK_INTENSITY,
       TankGameplayController.GUN_MUZZLE_FLASH_LIFE_S
     );
-    const baseForward = this.getMuzzleNodeWorldForward(this.muzzleGunNode);
-    const muzzleRotation = this.getMuzzleNodeWorldRotation(this.muzzleGunNode);
+    const baseForward = this.getMuzzleNodeWorldForward(muzzleGunNode);
+    const muzzleRotation = this.getMuzzleNodeWorldRotation(muzzleGunNode);
     this.gunMuzzleFlashFx?.spawnAt(origin, muzzleRotation, baseForward);
 
     // Dynamic bloom cone: grows with sustained firing (0° -> 9°).
     const maxAngleRad = (Math.PI / 180) * this.gunSpreadDeg;
-    const spreadBasis = this.getMuzzleSpreadBasis(this.muzzleGunNode, baseForward);
+    const spreadBasis = this.getMuzzleSpreadBasis(muzzleGunNode, baseForward);
     const right = spreadBasis.right;
     const up = spreadBasis.up;
     const r = Math.random();
@@ -5773,7 +5843,7 @@ export class TankGameplayController {
   }
 
   private updateBarrelReticles(camera: Camera): void {
-    if (!this.muzzleCannonNode || !this.muzzleGunNode) {
+    if (!this.muzzleCannonNode || !this.peekGunMuzzleNode()) {
       return;
     }
 
@@ -5870,8 +5940,15 @@ export class TankGameplayController {
 
     // Gun / coaxial reticle (only visible when bullet weapon is active)
     {
-      const from = this.muzzleGunNode.getAbsolutePosition();
-      const baseForward = this.muzzleGunNode
+      const gunMuzzle = this.peekGunMuzzleNode();
+      if (!gunMuzzle) {
+        if (this.barrelGunReticle2D) {
+          this.barrelGunReticle2D.isVisible = false;
+        }
+      } else {
+      this.syncMuzzleNodeWorldMatrix(gunMuzzle);
+      const from = gunMuzzle.getAbsolutePosition();
+      const baseForward = gunMuzzle
         .getDirection(this.movementForwardAxis)
         .scale(-this.config.rig.movementForwardSign);
       if (baseForward.lengthSquared() > 1e-6) {
@@ -5924,6 +6001,7 @@ export class TankGameplayController {
           (ui as unknown as Control).scaleX = TankGameplayController.GUN_RETICLE_SCALE_MIN;
           (ui as unknown as Control).scaleY = TankGameplayController.GUN_RETICLE_SCALE_MIN;
         }
+      }
       }
     }
   }

@@ -301,6 +301,8 @@ export interface TankControllerConfig {
       /** Muzzle des roquettes non guidées (ex. `MUZZLE_rocket`). */
       muzzleRocket?: string;
       muzzleGun?: string;
+      /** Points de tir mitrailleuse en alternance (ex. `MUZZLE_mg_jet_L`, `_R`). */
+      gunMuzzles?: string[];
       /** Mesh flash mitrailleuse (ex. `FX_muzzle_flash`). */
       gunMuzzleFlashMesh?: string;
       ammoShellMesh?: string;
@@ -543,6 +545,15 @@ export interface TankControllerConfig {
     engineTurbo?: string | null;
     /** Klaxon (touche H). */
     horn?: string | null;
+    /** Son de mitrailleuse. */
+    gun?: string | null;
+    /**
+     * Si vrai, le son mitrailleuse boucle tant que le tir est maintenu et que
+     * l'arme tire réellement (pas pendant une recharge à chargeur vide).
+     */
+    gunLoop?: boolean;
+    /** Volume de `gun`. */
+    gunVolume?: number;
     /** Impact des suspensions à la réception d'un saut. */
     suspensionImpact?: string | null;
     engineIdleVolume?: number;

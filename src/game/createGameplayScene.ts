@@ -507,6 +507,7 @@ function resolveVehicleNodeNames(config: TankControllerConfig) {
   const primaryKind = getPrimaryWeaponKind(config);
   const projectileWeapons = resolveProjectileWeaponNodeNames(config);
   const muzzleGun = nodes.muzzleGun ?? "MUZZLE_gun_tank";
+  const gunMuzzles = nodes.gunMuzzles ?? [muzzleGun];
   // Rampe principale : celle de l'arme sélectionnée par défaut.
   const muzzleShell = projectileWeapons[0]?.muzzles[0] ?? muzzleGun;
 
@@ -518,9 +519,10 @@ function resolveVehicleNodeNames(config: TankControllerConfig) {
     cameraZoomParentBone: nodes.cameraZoomParentBone ?? null,
     muzzleShell,
     muzzleGun,
+    gunMuzzles,
     projectileWeapons,
     /** Rampes solidaires du bone de pitch ; par défaut obus + mitrailleuse. */
-    pitchBoneMuzzles: nodes.pitchBoneMuzzles ?? [muzzleShell, muzzleGun],
+    pitchBoneMuzzles: nodes.pitchBoneMuzzles ?? [muzzleShell, ...gunMuzzles],
     gunMuzzleFlashMesh: nodes.gunMuzzleFlashMesh ?? "FX_muzzle_flash",
     playerTarget: nodes.playerTarget ?? "TARGET_player_tank",
     postCombustion: nodes.postCombustion ?? null,
@@ -732,7 +734,18 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
   }
 
   const muzzleShellNode = findTransformNode(vehicleContainer, nodeNames.muzzleShell);
-  const muzzleGunNode = findTransformNode(vehicleContainer, nodeNames.muzzleGun);
+  const muzzleGunNodes: Array<TransformNode | AbstractMesh> = [];
+  for (const muzzleName of nodeNames.gunMuzzles) {
+    const muzzle = findTransformNode(vehicleContainer, muzzleName);
+    if (muzzle) {
+      muzzleGunNodes.push(muzzle);
+    } else {
+      console.warn(
+        `[TankController] gun muzzle "${muzzleName}" not found in "${vehicleSpawn.id}" GLB.`
+      );
+    }
+  }
+  const muzzleGunNode = muzzleGunNodes[0] ?? findTransformNode(vehicleContainer, nodeNames.muzzleGun);
   parentMuzzleNodesToPitchBone(
     vehicleContainer,
     nodeNames.pitchBone,
@@ -866,6 +879,7 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
     reticleBarrelMesh,
     muzzleCannonNode: muzzleShellNode,
     muzzleGunNode,
+    muzzleGunNodes,
     tracksSourceMesh,
     projectileWeapons,
     ammoBulletMesh,

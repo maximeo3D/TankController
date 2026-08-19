@@ -3,16 +3,20 @@ import {
   armoredCarIdleSoundAssetUrl,
   armoredCarMoveSoundAssetUrl,
   armoredCarTurboSoundAssetUrl,
+  armoredCarGunSoundAssetUrl,
   jetIdleSoundAssetUrl,
   jetMoveSoundAssetUrl,
   jetTurboSoundAssetUrl,
+  jetGunSoundAssetUrl,
   helicopterBladesSoundAssetUrl,
+  helicopterGunSoundAssetUrl,
   missileLockSoundAssetUrl,
   suspensionImpactSoundAssetUrl,
   tankHornSoundAssetUrl,
   tankIdleSoundAssetUrl,
   tankMoveSoundAssetUrl,
-  tankTurboSoundAssetUrl
+  tankTurboSoundAssetUrl,
+  tankGunSoundAssetUrl
 } from "./assetUrls";
 
 /**
@@ -25,14 +29,18 @@ export const vehicleSoundUrls: Record<string, string> = {
   tank_move: tankMoveSoundAssetUrl,
   tank_turbo: tankTurboSoundAssetUrl,
   tank_horn: tankHornSoundAssetUrl,
+  tank_gun: tankGunSoundAssetUrl,
   armoredcar_idle: armoredCarIdleSoundAssetUrl,
   armoredcar_move: armoredCarMoveSoundAssetUrl,
   armoredcar_turbo: armoredCarTurboSoundAssetUrl,
   armoredcar_horn: armoredCarHornSoundAssetUrl,
+  armoredcar_gun: armoredCarGunSoundAssetUrl,
   jet_idle: jetIdleSoundAssetUrl,
   jet_move: jetMoveSoundAssetUrl,
   jet_turbo: jetTurboSoundAssetUrl,
+  jet_gun: jetGunSoundAssetUrl,
   helicopter_blades: helicopterBladesSoundAssetUrl,
+  helicopter_gun: helicopterGunSoundAssetUrl,
   missile_lock: missileLockSoundAssetUrl,
   suspension: suspensionImpactSoundAssetUrl
 };
