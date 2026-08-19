@@ -115,7 +115,7 @@ import {
 } from "./sceneGameplayUi";
 import { addHudCornerBrackets } from "./hudChrome";
 import { HelicopterTurretAimHud } from "./HelicopterTurretAimHud";
-import { createGunMuzzleFlashFx, type GunMuzzleFlashFx } from "./gunMuzzleFlashFx";
+import { createGunMuzzleFlashFx, GUN_MUZZLE_FLASH_MESH_NAME, type GunMuzzleFlashFx } from "./gunMuzzleFlashFx";
 
 const WEAPON_SHELL_AMMO_FONT_SIZE = 26;
 const WEAPON_INFINITY_FONT_SIZE = 40;
@@ -1969,11 +1969,7 @@ export class TankGameplayController {
   }
 
   private initGunMuzzleFlashFx(options: TankGameplayControllerOptions): void {
-    const meshName = options.config.rig.nodes?.gunMuzzleFlashMesh;
-    if (!meshName) {
-      return;
-    }
-
+    const meshName = options.config.rig.nodes?.gunMuzzleFlashMesh ?? GUN_MUZZLE_FLASH_MESH_NAME;
     this.gunMuzzleFlashFx = createGunMuzzleFlashFx(
       this.scene,
       options.tankContainer.meshes,

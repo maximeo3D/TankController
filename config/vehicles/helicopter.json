@@ -23,6 +23,7 @@
       "cameraZoom": "CAM_helicopter_zoom",
       "cameraZoomParentBone": "canon",
       "muzzleGun": "MUZZLE_mg_helicopter",
+      "gunMuzzleFlashMesh": "FX_muzzle_flash",
       "muzzleMissile": "MUZZLE_missile_helicopter_L",
       "missileMuzzles": ["MUZZLE_missile_helicopter_L", "MUZZLE_missile_helicopter_R"],
       "ammoMissileMesh": "AMMO_missile",

@@ -11,6 +11,9 @@ import type { Scene } from "@babylonjs/core/scene";
 
 const POOL_SIZE = 16;
 const LIFE_S = 0.1;
+export const GUN_MUZZLE_FLASH_MESH_NAME = "FX_muzzle_flash";
+
+let flashCloneSeq = 0;
 
 export interface GunMuzzleFlashFx {
   spawnAt(worldPosition: Vector3, worldRotation: Quaternion, worldForward: Vector3): void;
@@ -153,11 +156,10 @@ function setFlashEnabled(root: TransformNode, enabled: boolean): void {
 export function createGunMuzzleFlashFx(
   scene: Scene,
   meshes: AbstractMesh[],
-  meshName: string
+  meshName: string = GUN_MUZZLE_FLASH_MESH_NAME
 ): GunMuzzleFlashFx | null {
   const sources = collectSourceMeshes(meshes, meshName);
   if (sources.length === 0) {
-    console.warn(`[TankController] gun muzzle flash mesh "${meshName}" not found.`);
     return null;
   }
 
@@ -168,8 +170,9 @@ export function createGunMuzzleFlashFx(
   }
 
   const pool: TransformNode[] = [];
+  const cloneId = flashCloneSeq++;
   for (let i = 0; i < POOL_SIZE; i++) {
-    const clone = template.clone(`fx_gun_muzzle_flash_${i}`, null);
+    const clone = template.clone(`fx_gun_muzzle_flash_${cloneId}_${i}`, null);
     if (!clone) {
       continue;
     }

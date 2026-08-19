@@ -521,7 +521,7 @@ function resolveVehicleNodeNames(config: TankControllerConfig) {
     projectileWeapons,
     /** Rampes solidaires du bone de pitch ; par défaut obus + mitrailleuse. */
     pitchBoneMuzzles: nodes.pitchBoneMuzzles ?? [muzzleShell, muzzleGun],
-    gunMuzzleFlashMesh: nodes.gunMuzzleFlashMesh ?? null,
+    gunMuzzleFlashMesh: nodes.gunMuzzleFlashMesh ?? "FX_muzzle_flash",
     playerTarget: nodes.playerTarget ?? "TARGET_player_tank",
     postCombustion: nodes.postCombustion ?? null,
     missileSmoke: primaryKind === "missile" ? nodes.missileSmoke ?? null : null,
