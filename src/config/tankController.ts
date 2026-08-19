@@ -301,6 +301,8 @@ export interface TankControllerConfig {
       /** Muzzle des roquettes non guidées (ex. `MUZZLE_rocket`). */
       muzzleRocket?: string;
       muzzleGun?: string;
+      /** Mesh flash mitrailleuse (ex. `FX_muzzle_flash`). */
+      gunMuzzleFlashMesh?: string;
       ammoShellMesh?: string;
       ammoShellColliderMesh?: string;
       ammoMissileMesh?: string;

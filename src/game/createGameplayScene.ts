@@ -521,6 +521,7 @@ function resolveVehicleNodeNames(config: TankControllerConfig) {
     projectileWeapons,
     /** Rampes solidaires du bone de pitch ; par défaut obus + mitrailleuse. */
     pitchBoneMuzzles: nodes.pitchBoneMuzzles ?? [muzzleShell, muzzleGun],
+    gunMuzzleFlashMesh: nodes.gunMuzzleFlashMesh ?? null,
     playerTarget: nodes.playerTarget ?? "TARGET_player_tank",
     postCombustion: nodes.postCombustion ?? null,
     missileSmoke: primaryKind === "missile" ? nodes.missileSmoke ?? null : null,
@@ -717,6 +718,17 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
   if (ammoBulletMesh) {
     ammoBulletMesh.isVisible = false;
     ammoBulletMesh.setParent(null);
+  }
+
+  if (nodeNames.gunMuzzleFlashMesh) {
+    const wanted = nodeNames.gunMuzzleFlashMesh.trim().toLowerCase();
+    for (const mesh of vehicleContainer.meshes) {
+      const n = mesh.name.trim().toLowerCase();
+      if (n === wanted || n.startsWith(`${wanted}.`) || n.startsWith(`${wanted}_`)) {
+        mesh.isVisible = false;
+        mesh.setEnabled(false);
+      }
+    }
   }
 
   const muzzleShellNode = findTransformNode(vehicleContainer, nodeNames.muzzleShell);

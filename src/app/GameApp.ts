@@ -140,7 +140,6 @@ export class GameApp {
         ogg: ae.isOGGsupported,
         ctx: ae.audioContext?.state ?? null
       };
-      console.log("[TankController][audio] state:", state);
 
       // If still suspended, show a one-time explicit button (some browser policies require it).
       if (state.ctx === "suspended" || state.unlocked === false) {

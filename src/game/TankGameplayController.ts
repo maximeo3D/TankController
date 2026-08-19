@@ -115,6 +115,7 @@ import {
 } from "./sceneGameplayUi";
 import { addHudCornerBrackets } from "./hudChrome";
 import { HelicopterTurretAimHud } from "./HelicopterTurretAimHud";
+import { createGunMuzzleFlashFx, type GunMuzzleFlashFx } from "./gunMuzzleFlashFx";
 
 const WEAPON_SHELL_AMMO_FONT_SIZE = 26;
 const WEAPON_INFINITY_FONT_SIZE = 40;
@@ -721,9 +722,9 @@ export class TankGameplayController {
   private static readonly GUN_MUZZLE_FLASH_PEAK_INTENSITY = 5;
   private static readonly GUN_MUZZLE_FLASH_RANGE = 0.1;
   private static readonly CANNON_MUZZLE_FLASH_POOL_SIZE = 2;
-  private static readonly CANNON_MUZZLE_FLASH_LIFE_S = 0.08;
-  private static readonly CANNON_MUZZLE_FLASH_PEAK_INTENSITY = 10;
-  private static readonly CANNON_MUZZLE_FLASH_RANGE = 5;
+  private static readonly CANNON_MUZZLE_FLASH_LIFE_S = 0.1;
+  private static readonly CANNON_MUZZLE_FLASH_PEAK_INTENSITY = 200;
+  private static readonly CANNON_MUZZLE_FLASH_RANGE = 15;
   private gunMuzzleFlashPool: PointLight[] = [];
   private cannonMuzzleFlashPool: PointLight[] = [];
   private activeMuzzleFlashes: { light: PointLight; age: number; life: number; peak: number }[] = [];
@@ -732,6 +733,7 @@ export class TankGameplayController {
   private shockwaveTemplate: BabylonMesh | null = null;
   private shockwavePool: BabylonMesh[] = [];
   private activeShockwaves: { mesh: BabylonMesh; age: number }[] = [];
+  private gunMuzzleFlashFx: GunMuzzleFlashFx | null = null;
   private static readonly SHOCKWAVE_POOL_SIZE = 24;
   // 8 "frames" worth of animation at 60fps, expressed in seconds.
   private static readonly SHOCKWAVE_SCALE_END_S = 5 / 60;
@@ -1079,6 +1081,7 @@ export class TankGameplayController {
     }
     this.initHud();
     this.initShockwaveFx(options);
+    this.initGunMuzzleFlashFx(options);
     this.initWeaponSounds();
     this.initMuzzleFlashLights();
     this.initPowerUpSounds();
@@ -1963,6 +1966,19 @@ export class TankGameplayController {
       clone.visibility = 0;
       this.shockwavePool.push(clone);
     }
+  }
+
+  private initGunMuzzleFlashFx(options: TankGameplayControllerOptions): void {
+    const meshName = options.config.rig.nodes?.gunMuzzleFlashMesh;
+    if (!meshName) {
+      return;
+    }
+
+    this.gunMuzzleFlashFx = createGunMuzzleFlashFx(
+      this.scene,
+      options.tankContainer.meshes,
+      meshName
+    );
   }
 
   private initHud(): void {
@@ -3781,6 +3797,8 @@ export class TankGameplayController {
     }
     this.cannonMuzzleFlashPool = [];
     this.activeMuzzleFlashes = [];
+    this.gunMuzzleFlashFx?.dispose();
+    this.gunMuzzleFlashFx = null;
     for (const sound of this.powerUpSounds.values()) {
       sound.dispose();
     }
@@ -4180,6 +4198,7 @@ export class TankGameplayController {
       this.cannonMuzzleParticles?.update(dt);
       this.updateSparks(dt);
       this.updateShockwaves(dt);
+      this.gunMuzzleFlashFx?.update(dt);
       if (!this.deathNotified) {
         this.deathScreenDelaySeconds = Math.max(0, this.deathScreenDelaySeconds - dt);
         if (this.deathScreenDelaySeconds <= 0) {
@@ -4295,6 +4314,7 @@ export class TankGameplayController {
     this.cannonMuzzleParticles?.update(dt);
     this.updateSparks(dt);
     this.updateShockwaves(dt);
+    this.gunMuzzleFlashFx?.update(dt);
     this.updateGameplayHud(dt);
     const tankForward = this.tankAnchor.getDirection(this.movementForwardAxis);
     this.radarHud?.update(
@@ -4933,6 +4953,7 @@ export class TankGameplayController {
     );
     const baseForward = this.getMuzzleNodeWorldForward(this.muzzleGunNode);
     const muzzleRotation = this.getMuzzleNodeWorldRotation(this.muzzleGunNode);
+    this.gunMuzzleFlashFx?.spawnAt(origin, muzzleRotation, baseForward);
 
     // Dynamic bloom cone: grows with sustained firing (0° -> 9°).
     const maxAngleRad = (Math.PI / 180) * this.gunSpreadDeg;
@@ -6274,28 +6295,13 @@ export class TankGameplayController {
     camera: TargetCamera,
     rigNode: TransformNode | AbstractMesh
   ): void {
-    this.tankAnchor.computeWorldMatrix(true);
     rigNode.computeWorldMatrix(true);
     camera.position.copyFrom(rigNode.getAbsolutePosition());
 
-    const forward = rigNode
-      .getDirection(this.movementForwardAxis)
-      .scale(this.config.rig.movementForwardSign);
-    if (forward.lengthSquared() > 1e-8) {
-      forward.normalize();
-      camera.upVector.copyFrom(Axis.Y);
-      camera.rotationQuaternion = null;
-      camera.setTarget(camera.position.add(forward.scale(1000)));
-      return;
-    }
-
-    const rotation =
-      rigNode.absoluteRotationQuaternion ??
-      rigNode.rotationQuaternion ??
-      null;
-    if (rotation) {
-      camera.rotationQuaternion = rotation.clone();
-    }
+    const forward = this.getMuzzleNodeWorldForward(rigNode);
+    camera.upVector.copyFrom(Axis.Y);
+    camera.rotationQuaternion = null;
+    camera.setTarget(camera.position.add(forward.scale(1000)));
   }
 
   /**

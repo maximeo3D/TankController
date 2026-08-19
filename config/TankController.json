@@ -22,6 +22,7 @@
       "cameraZoomParentBone": "canon",
       "muzzleShell": "MUZZLE_canon_tank",
       "muzzleGun": "MUZZLE_gun_tank",
+      "gunMuzzleFlashMesh": "FX_muzzle_flash",
       "pitchBoneMuzzles": ["MUZZLE_canon_tank", "MUZZLE_gun_tank", "CAM_tank_zoom"],
       "playerTarget": "TARGET_player_tank",
       "damageSmoke": [
