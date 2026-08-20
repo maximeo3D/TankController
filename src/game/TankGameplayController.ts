@@ -58,6 +58,7 @@ import {
   reticleRocketAssetUrl,
   reticleMissileJetAssetUrl,
   reticleMissileJetLockedAssetUrl,
+  helicopterGunnerOverlayUrl,
   sparkImpactAssetUrl,
   explosionFlashJsonUrl,
   explosionShockwaveJsonUrl,
@@ -666,6 +667,7 @@ export class TankGameplayController {
   private hudJetThrottleBarBg: Rectangle | null = null;
   private hudJetThrottleBarFill: Rectangle | null = null;
   private helicopterTurretAimHud: HelicopterTurretAimHud | null = null;
+  private helicopterGunnerOverlay: Image | null = null;
   private statusHudChromeReady = false;
   private statusHudSpacingReady = false;
   private hudWeaponPrimary: Rectangle | null = null;
@@ -2157,6 +2159,7 @@ export class TankGameplayController {
     }
     this.setupJetThrottleBar();
     this.setupHelicopterTurretAimHud();
+    this.setupHelicopterGunnerOverlay();
 
     this.hudPanelTimer = t.getControlByName("hud_panel_timer") as Rectangle | null;
     this.hudTimerLabel = t.getControlByName("hud_timer_label") as TextBlock | null;
@@ -2371,6 +2374,7 @@ export class TankGameplayController {
 
     this.updateJetThrottleBar();
     this.updateHelicopterTurretAimHud();
+    this.updateHelicopterGunnerOverlay();
     this.updateWeaponHud(dt);
     this.sessionElapsedSeconds += dt;
     if (this.hudTimerLabel) {
@@ -2725,6 +2729,67 @@ export class TankGameplayController {
     this.hudJetThrottleBarBg.width = `${getJetThrottleBarWidthPx()}px`;
     this.hudJetThrottleBarBg.height = `${getJetThrottleBarHeightPx()}px`;
     this.hudJetThrottleBarBg.top = `-${getJetThrottleBarTopOffsetPx()}px`;
+  }
+
+  private setupHelicopterGunnerOverlay(): void {
+    if (!this.hudTexture) {
+      return;
+    }
+
+    const existing = this.hudTexture.getControlByName("hud_heli_gunner_overlay") as Image | null;
+    if (existing) {
+      this.helicopterGunnerOverlay = existing;
+      this.helicopterGunnerOverlay.zIndex = 0;
+      this.ensureHudAboveGunnerOverlay();
+      return;
+    }
+
+    const overlay = new Image("hud_heli_gunner_overlay", helicopterGunnerOverlayUrl);
+    overlay.width = "100%";
+    overlay.height = "100%";
+    overlay.stretch = Image.STRETCH_FILL;
+    overlay.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
+    overlay.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
+    overlay.isPointerBlocker = false;
+    overlay.isVisible = false;
+    overlay.zIndex = 0;
+    this.hudTexture.addControl(overlay);
+    this.helicopterGunnerOverlay = overlay;
+    this.ensureHudAboveGunnerOverlay();
+  }
+
+  private ensureHudAboveGunnerOverlay(): void {
+    if (!this.hudTexture) {
+      return;
+    }
+
+    const hudZ = 20;
+    for (const name of [
+      "hud_panel_status",
+      "hud_panel_bottom",
+      "hud_panel_timer",
+      "hud_panel_vehicles"
+    ]) {
+      const panel = this.hudTexture.getControlByName(name);
+      if (panel) {
+        panel.zIndex = Math.max(panel.zIndex, hudZ);
+      }
+    }
+  }
+
+  private updateHelicopterGunnerOverlay(): void {
+    if (!this.hudJsonLoaded) {
+      return;
+    }
+    if (!this.helicopterGunnerOverlay) {
+      this.setupHelicopterGunnerOverlay();
+    }
+    if (!this.helicopterGunnerOverlay) {
+      return;
+    }
+
+    this.helicopterGunnerOverlay.isVisible =
+      Boolean(this.helicopterModel) && this.playerActive && this.zoomActive;
   }
 
   private setupHelicopterTurretAimHud(): void {

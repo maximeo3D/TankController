@@ -26,6 +26,10 @@ export const vehicleHelicopterIconUrl = new URL(
   "../../assets/ui/vehicle_helicopter.png",
   import.meta.url
 ).href;
+export const helicopterGunnerOverlayUrl = new URL(
+  "../../assets/ui/helicopter_gunner_overlay.png",
+  import.meta.url
+).href;
 export const mapPlayerIconUrl = new URL("../../assets/ui/map_icon.png", import.meta.url).href;
 export const reticleCameraAssetUrl = new URL("../../assets/ui/reticle_camera.png", import.meta.url).href;
 export const reticleBarrelAssetUrl = new URL("../../assets/ui/reticle_barrel.png", import.meta.url).href;
