@@ -435,6 +435,7 @@ export class TankGameplayController {
   private readonly cameraPivotNode: TransformNode | AbstractMesh | null;
   private readonly cameraStartNode: TransformNode | AbstractMesh | null;
   private readonly cameraZoomNode: TransformNode | AbstractMesh | null;
+  private jetZoomCameraAttached = false;
   private readonly input: TankInput;
   private readonly turretControl: BoneControl;
   private readonly cannonControl: BoneControl;
@@ -6364,6 +6365,7 @@ export class TankGameplayController {
 
   /**
    * Calage caméra sur un empty GLB : position + rotation complète du rig (vue zoom).
+   * Horizon verrouillé (même compensation de roll que la caméra chase).
    */
   private applyFlightRigCamera(
     camera: TargetCamera,
@@ -6376,6 +6378,28 @@ export class TankGameplayController {
     camera.upVector.copyFrom(Axis.Y);
     camera.rotationQuaternion = null;
     camera.setTarget(camera.position.add(forward.scale(1000)));
+  }
+
+  /** Vue zoom jet : collée à `CAM_jet_zoom`, y compris le roll. */
+  private usesJetFixedZoomCamera(): boolean {
+    return this.flightModel !== null && this.helicopterModel === null && this.cameraZoomNode !== null;
+  }
+
+  private attachJetZoomCamera(camera: TargetCamera, rigNode: TransformNode | AbstractMesh): void {
+    if (camera.parent !== rigNode) {
+      camera.parent = rigNode;
+    }
+    camera.position.setAll(0);
+    camera.rotation.setAll(0);
+    const localForward = this.movementForwardAxis.scale(this.config.rig.movementForwardSign);
+    if (localForward.lengthSquared() > 1e-8) {
+      localForward.normalize();
+    } else {
+      localForward.copyFrom(Axis.Z);
+    }
+    camera.rotationQuaternion = Quaternion.FromLookDirectionRH(localForward, Axis.Y);
+    camera.upVector.copyFrom(Axis.Y);
+    this.jetZoomCameraAttached = true;
   }
 
   /**
@@ -6992,10 +7016,18 @@ export class TankGameplayController {
     // This keeps the view consistent while preserving gameplay aiming based on orbit camera.
     if (zoomHeld && zoomCam && orbitCam) {
       if (this.cameraZoomNode) {
-        if (this.zoomCamFreezeSeconds <= 0) {
+        if (this.usesJetFixedZoomCamera()) {
+          this.attachJetZoomCamera(zoomCam, this.cameraZoomNode);
+        } else if (this.zoomCamFreezeSeconds <= 0) {
+          if (this.jetZoomCameraAttached) {
+            zoomCam.parent = null;
+            this.jetZoomCameraAttached = false;
+          }
           this.applyFlightRigCamera(zoomCam, this.cameraZoomNode);
         }
-        this.applyCameraShake(zoomCam, null);
+        if (!this.usesJetFixedZoomCamera()) {
+          this.applyCameraShake(zoomCam, null);
+        }
       } else if (this.muzzleCannonNode) {
         orbitCam.computeWorldMatrix();
 
