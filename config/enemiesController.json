@@ -68,7 +68,7 @@
     "gunMuzzleFlashMesh": "FX_muzzle_flash",
     "fireSound": "soldier_rifle_ak_gun",
     "fireSoundVolume": 0.7,
-    "detectionRange": 22,
+    "detectionRange": 12,
     "debug": {
       "showAimVectors": false,
       "showBulletVectors": false
@@ -101,14 +101,14 @@
     "combat": {
       "healthMax": 50,
       "contactDamage": 0,
-      "shotsPerSecondPerBarrel": 1,
+      "shotsPerSecondPerBarrel": 0.5,
       "bulletDamage": 5,
       "muzzleVelocity": 50,
       "muzzleSpawnOffset": 0.08,
       "gravityMultiplier": 0.5,
       "projectileRadius": 0.08,
-      "projectileMaxLifeSeconds": 5,
-      "fireAlignmentMaxAngleDeg": 8
+      "projectileMaxLifeSeconds": 1,
+      "fireAlignmentMaxAngleDeg": 10
     }
   }
 }
