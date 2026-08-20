@@ -16,7 +16,8 @@ import {
   tankIdleSoundAssetUrl,
   tankMoveSoundAssetUrl,
   tankTurboSoundAssetUrl,
-  tankGunSoundAssetUrl
+  tankGunSoundAssetUrl,
+  soldierRifleGunSoundAssetUrl
 } from "./assetUrls";
 
 /**
@@ -59,6 +60,23 @@ export function resolveVehicleSoundUrl(key: string | null | undefined): string |
   const url = vehicleSoundUrls[key];
   if (!url) {
     console.warn(`[TankController][audio] unknown sound key "${key}"`);
+    return null;
+  }
+  return url;
+}
+
+export const enemySoundUrls: Record<string, string> = {
+  soldier_rifle_ak_gun: soldierRifleGunSoundAssetUrl
+};
+
+export function resolveEnemySoundUrl(key: string | null | undefined): string | null {
+  if (!key) {
+    return null;
+  }
+
+  const url = enemySoundUrls[key];
+  if (!url) {
+    console.warn(`[TankController][audio] unknown enemy sound key "${key}"`);
     return null;
   }
   return url;

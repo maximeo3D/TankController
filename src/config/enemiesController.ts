@@ -14,6 +14,10 @@ export interface EnemyTurretRigConfig {
   yawAimXSign: 1 | -1;
   /** Signe appliqué à la composante Z locale lors du calcul du yaw (visée). */
   yawAimZSign: 1 | -1;
+  /** Axe local de l'empty muzzle pour la direction de tir. Défaut : z. */
+  muzzleForwardAxis?: "x" | "y" | "z";
+  /** Signe de l'axe muzzle (Blender -Z → -1). Défaut : 1. */
+  muzzleForwardSign?: 1 | -1;
 }
 
 export interface EnemyTurretTrackingConfig {
@@ -21,6 +25,8 @@ export interface EnemyTurretTrackingConfig {
   pitchSpeedDeg: number;
   minPitchDeg: number;
   maxPitchDeg: number;
+  /** Offset ajouté au yaw de visée (deg). 180 = face Blender Y+ / glTF -Z. */
+  yawOffsetDeg?: number;
 }
 
 export interface EnemyTurretCombatConfig {
@@ -56,6 +62,28 @@ export interface EnemyTurretConfig {
   meshName: string;
   /** Préfixe des empties terrain, ex. `SPAWN_enemy_turret_` → `_1`, `_2`, … */
   spawnNodePrefix: string;
+  /** Nom du nœud armature à cloner dans `enemies.glb`. Défaut : `turret_armature`. */
+  armatureRoot?: string;
+  colliderMesh?: string;
+  ammoMesh?: string;
+  muzzleNodes?: string[];
+  /**
+   * Bone auquel rattacher un muzzle qui n'est pas enfant de l'armature
+   * (ex. empty scène `soldier_rifle_muzzle` → `buste`).
+   */
+  muzzleAttachBone?: string | null;
+  /** Empty fumée de dégâts. `null` = pas d'indicateur visuel. */
+  damageSmokeNode?: string | null;
+  /** Empty de lock missile. `null` = non verrouillable. */
+  lockTargetNode?: string | null;
+  missileLockable?: boolean;
+  /** Explosion à la mort. Défaut : true. */
+  playDeathExplosion?: boolean;
+  gunMuzzleFlashMesh?: string | null;
+  fireSound?: string | null;
+  fireSoundVolume?: number;
+  /** Offset yaw appliqué à l'instance au spawn (deg), ex. 180 si le mesh fait face à -Z. */
+  spawnYawOffsetDeg?: number;
   detectionRange: number;
   debug?: EnemyTurretDebugConfig;
   damageFlash?: EnemyTurretDamageFlashConfig;
@@ -66,6 +94,7 @@ export interface EnemyTurretConfig {
 
 export interface EnemiesControllerConfig {
   turret: EnemyTurretConfig;
+  soldierRifle?: EnemyTurretConfig;
 }
 
 export const enemiesConfig = enemiesControllerConfig as EnemiesControllerConfig;

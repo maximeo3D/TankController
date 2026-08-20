@@ -102,7 +102,7 @@ import type {
 } from "./vehicle/missileJetSmokeParticles";
 import { findDescendantByName } from "./vehicle/missileJetSmokeParticles";
 import { PowerUpSystem, type PowerUpTypeId } from "./PowerUpSystem";
-import { EnemyTurretSystem, type EnemyTurretPlayerTarget } from "./EnemyTurretSystem";
+import { type EnemyCombatSystem, type EnemyTurretPlayerTarget } from "./EnemyTurretSystem";
 import { RadarHud, type RadarWorldBounds } from "./RadarHud";
 import {
   clearSceneGameplayUi,
@@ -407,7 +407,7 @@ export interface TankGameplayControllerOptions {
   missileSmokeNodeName?: string | null;
   /** Empty `TARGET_player_tank` — world aim point for enemy turrets. Falls back to `tankAnchor`. */
   playerTargetNode?: TransformNode | AbstractMesh | null;
-  enemyTurretSystem?: EnemyTurretSystem | null;
+  enemyTurretSystem?: EnemyCombatSystem | null;
   /** Power-ups partagés au niveau scène (évite les doublons multi-véhicules). */
   sharedPowerUpSystem?: PowerUpSystem | null;
   /** Ne disposer le système ennemi que si ce contrôleur en est propriétaire. */
@@ -590,7 +590,7 @@ export class TankGameplayController {
   private readonly missileSmokeNodeName: string | null;
   private readonly powerUpSystem: PowerUpSystem | null;
   private readonly playerTargetNode: TransformNode | AbstractMesh | null;
-  private readonly enemyTurretSystem: EnemyTurretSystem | null;
+  private readonly enemyTurretSystem: EnemyCombatSystem | null;
   private readonly ownsEnemyTurretSystem: boolean;
   private ownsSceneHud = false;
   private readonly radarMapUrl: string | null;
@@ -1998,8 +1998,7 @@ export class TankGameplayController {
       this.scene,
       options.tankContainer.meshes,
       meshName,
-      this.movementForwardAxis,
-      options.config.rig.movementForwardSign
+      this.movementForwardAxis.scale(-options.config.rig.movementForwardSign)
     );
   }
 

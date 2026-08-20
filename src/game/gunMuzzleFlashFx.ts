@@ -134,11 +134,8 @@ function randomQuarterTurnRollRad(): number {
   return Math.floor(Math.random() * 4) * (Math.PI / 2);
 }
 
-function localRollAroundForward(
-  movementForwardAxis: Vector3,
-  movementForwardSign: number
-): Quaternion {
-  const forward = movementForwardAxis.scale(-movementForwardSign);
+function localRollAroundForward(rollForwardLocal: Vector3): Quaternion {
+  const forward = rollForwardLocal.clone();
   if (forward.lengthSquared() > 1e-6) {
     forward.normalize();
   } else {
@@ -160,8 +157,7 @@ export function createGunMuzzleFlashFx(
   scene: Scene,
   meshes: AbstractMesh[],
   meshName: string = GUN_MUZZLE_FLASH_MESH_NAME,
-  movementForwardAxis: Vector3 = new Vector3(0, 0, 1),
-  movementForwardSign: number = 1
+  rollForwardLocal: Vector3 = new Vector3(0, 0, -1)
 ): GunMuzzleFlashFx | null {
   const sources = collectSourceMeshes(meshes, meshName);
   if (sources.length === 0) {
@@ -204,7 +200,7 @@ export function createGunMuzzleFlashFx(
       muzzleNode.computeWorldMatrix(true);
       root.parent = muzzleNode;
       root.position.setAll(0);
-      root.rotationQuaternion = localRollAroundForward(movementForwardAxis, movementForwardSign);
+      root.rotationQuaternion = localRollAroundForward(rollForwardLocal);
       root.scaling.setAll(0.75 + Math.random() * 0.25);
       setFlashEnabled(root, true);
       root.computeWorldMatrix(true);

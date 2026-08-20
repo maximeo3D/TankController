@@ -37,7 +37,8 @@ import {
 import { getVehicleConfig } from "../config/vehicleRegistry";
 import { tankAssetUrl, armoredCarAssetUrl, fighterJetAssetUrl, helicopterAssetUrl, skyboxAssetUrl, powerUpsAssetUrl, enemiesAssetUrl, vehicleTankIconUrl, vehicleArmoredCarIconUrl, vehicleFighterJetIconUrl, vehicleHelicopterIconUrl } from "../assets/assetUrls";
 import { enemiesConfig } from "../config/enemiesController";
-import { EnemyTurretSystem } from "./EnemyTurretSystem";
+import { EnemyCombatManager } from "./EnemyCombatManager";
+import type { EnemyCombatSystem } from "./EnemyTurretSystem";
 import type { LevelDefinition } from "../app/levels";
 import type { MenuMission, MissionVehicleSpawn } from "../ui/menuData";
 import type { VehicleTypeId } from "./vehicle/VehicleController";
@@ -231,17 +232,19 @@ export async function createGameplayScene(
   const enemiesContainer = await SceneLoader.LoadAssetContainerAsync("", enemiesAssetUrl, scene);
   onProgress(0.52);
 
-  let enemyTurretSystem: EnemyTurretSystem | null = null;
-  if (enemiesConfig.turret.enabled) {
+  let enemyTurretSystem: EnemyCombatSystem | null = null;
+  const anyEnemyEnabled =
+    enemiesConfig.turret.enabled || (enemiesConfig.soldierRifle?.enabled ?? false);
+  if (anyEnemyEnabled) {
     try {
-      enemyTurretSystem = new EnemyTurretSystem({
+      enemyTurretSystem = new EnemyCombatManager({
         scene,
         terrainContainer,
         enemiesContainer,
-        config: enemiesConfig.turret
+        config: enemiesConfig
       });
     } catch (err) {
-      console.warn("[TankController] Enemy turret system could not be created:", err);
+      console.warn("[TankController] Enemy combat manager could not be created:", err);
     }
   }
   onProgress(0.58);
@@ -445,7 +448,7 @@ interface SpawnPlayerVehicleOptions {
   canvas: HTMLCanvasElement;
   terrainContainer: AssetContainer;
   powerUpsContainer: AssetContainer;
-  enemyTurretSystem: EnemyTurretSystem | null;
+  enemyTurretSystem: EnemyCombatSystem | null;
   vehicleSpawn: MissionVehicleSpawn;
   vehicleConfig: TankControllerConfig;
   assetUrl: string;

@@ -93,6 +93,10 @@ export const helicopterGunSoundAssetUrl = new URL(
   "../../assets/sounds/helicopter_gun.wav",
   import.meta.url
 ).href;
+export const soldierRifleGunSoundAssetUrl = new URL(
+  "../../assets/sounds/soldier_rifle_ak_gun.wav",
+  import.meta.url
+).href;
 export const suspensionImpactSoundAssetUrl = new URL(
   "../../assets/sounds/suspension.wav",
   import.meta.url

@@ -1,8 +1,8 @@
 import type { AssetContainer } from "@babylonjs/core/assetContainer";
 import { Material } from "@babylonjs/core/Materials/material";
-import { Axis } from "@babylonjs/core/Maths/math.axis";
+import { Axis, Space } from "@babylonjs/core/Maths/math.axis";
 import { Color3 } from "@babylonjs/core/Maths/math.color";
-import { Quaternion, Vector3 } from "@babylonjs/core/Maths/math.vector";
+import { Matrix, Quaternion, Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import type { LinesMesh } from "@babylonjs/core/Meshes/linesMesh";
 import { Mesh } from "@babylonjs/core/Meshes/mesh";
@@ -13,11 +13,14 @@ import { PhysicsMotionType } from "@babylonjs/core/Physics/v2/IPhysicsEnginePlug
 import { PhysicsShapeMesh, type PhysicsShape } from "@babylonjs/core/Physics/v2/physicsShape";
 import type { Scene } from "@babylonjs/core/scene";
 import type { Node } from "@babylonjs/core/node";
+import { Sound } from "@babylonjs/core/Audio/sound";
 import type { EnemyTurretConfig } from "../config/enemiesController";
+import { resolveEnemySoundUrl } from "../assets/soundLibrary";
 import {
   createSingleDamageParticleBundle,
   type TankDamageParticleBundle
 } from "./tankDamageParticles";
+import { createGunMuzzleFlashFx, type GunMuzzleFlashFx } from "./gunMuzzleFlashFx";
 import {
   applyBoneLocalDirection,
   applyBoneLocalOffset,
@@ -68,6 +71,50 @@ export interface EnemyTurretRadarTarget {
 export interface EnemyLockTarget {
   id: string;
   aimPoint: Vector3;
+}
+
+/** Contrat commun tourelle / soldat / futurs ennemis, consommé par le gameplay joueur. */
+export interface EnemyCombatSystem {
+  readonly instanceCount: number;
+  bindPlayerTarget(target: EnemyTurretPlayerTarget): void;
+  update(dt: number, aimTarget: TransformNode | AbstractMesh): void;
+  getRadarTargets(): EnemyTurretRadarTarget[];
+  getLockTargets(): EnemyLockTarget[];
+  getLockTargetAimPoint(spawnId: string): Vector3 | null;
+  resolveTurretIdFromWeaponHit(hit: unknown): string | null;
+  isTurretColliderMesh(mesh: AbstractMesh | null | undefined): boolean;
+  applyDamageToTurret(spawnId: string, amount: number): boolean;
+  applyExplosionDamageAt(worldPos: Vector3, amount: number, radius: number): void;
+  dispose(): void;
+}
+
+interface ResolvedEnemyNodes {
+  armatureRoot: string;
+  colliderMesh: string;
+  ammoMesh: string;
+  muzzleNodes: string[];
+  muzzleAttachBone: string | null;
+  damageSmokeNode: string | null;
+  lockTargetNode: string | null;
+  missileLockable: boolean;
+  gunMuzzleFlashMesh: string | null;
+}
+
+function resolveEnemyNodes(config: EnemyTurretConfig): ResolvedEnemyNodes {
+  const muzzleNodes = (config.muzzleNodes ?? ["turret_muzzle_1", "turret_muzzle_2"]).filter(
+    (name) => name.trim().length > 0
+  );
+  return {
+    armatureRoot: config.armatureRoot ?? "turret_armature",
+    colliderMesh: config.colliderMesh ?? "COL_enemy_turret",
+    ammoMesh: config.ammoMesh ?? "AMMO_turret",
+    muzzleNodes: muzzleNodes.length > 0 ? muzzleNodes : ["turret_muzzle_1"],
+    muzzleAttachBone: config.muzzleAttachBone ?? null,
+    damageSmokeNode: config.damageSmokeNode === undefined ? "turret_damage_smoke" : config.damageSmokeNode,
+    lockTargetNode: config.lockTargetNode === undefined ? "target_turret" : config.lockTargetNode,
+    missileLockable: config.missileLockable ?? true,
+    gunMuzzleFlashMesh: config.gunMuzzleFlashMesh ?? null
+  };
 }
 
 interface EnemyTurretInstance {
@@ -130,7 +177,9 @@ const PEAK_EMISSIVE_INTENSITY = 2.4;
 function collectTurretVisualMeshes(
   root: TransformNode,
   skinnedMesh: AbstractMesh | null,
-  meshName: string
+  meshName: string,
+  colliderName: string,
+  ammoName: string
 ): AbstractMesh[] {
   if (skinnedMesh && skinnedMesh.getTotalVertices() > 0) {
     return [skinnedMesh];
@@ -140,7 +189,7 @@ function collectTurretVisualMeshes(
     if (mesh.getTotalVertices() <= 0) {
       return false;
     }
-    if (matchNodeName(mesh.name, "COL_enemy_turret") || matchNodeName(mesh.name, "AMMO_turret")) {
+    if (matchNodeName(mesh.name, colliderName) || matchNodeName(mesh.name, ammoName)) {
       return false;
     }
     return matchNodeName(mesh.name, meshName);
@@ -154,7 +203,7 @@ function collectTurretVisualMeshes(
     if (mesh.getTotalVertices() <= 0) {
       return false;
     }
-    return !matchNodeName(mesh.name, "COL_enemy_turret") && !matchNodeName(mesh.name, "AMMO_turret");
+    return !matchNodeName(mesh.name, colliderName) && !matchNodeName(mesh.name, ammoName);
   });
 }
 
@@ -173,9 +222,11 @@ function setupTurretFlashMaterials(
   root: TransformNode,
   skinnedMesh: AbstractMesh | null,
   meshName: string,
+  colliderName: string,
+  ammoName: string,
   instanceLabel: string
 ): DamageFlashMaterialState[] {
-  const targetMeshes = collectTurretVisualMeshes(root, skinnedMesh, meshName);
+  const targetMeshes = collectTurretVisualMeshes(root, skinnedMesh, meshName, colliderName, ammoName);
   const states: DamageFlashMaterialState[] = [];
   const clonedBySource = new Map<Material, Material>();
 
@@ -287,14 +338,39 @@ function matchNodeName(candidateName: string, wanted: string): boolean {
   return n.split(".").pop() === w;
 }
 
-function findArmatureRoot(container: AssetContainer): TransformNode | null {
+function findNodeInContainer(
+  container: AssetContainer,
+  name: string
+): TransformNode | AbstractMesh | null {
   return (
-    container.transformNodes.find((node) => matchNodeName(node.name, "turret_armature")) ?? null
+    container.transformNodes.find((node) => matchNodeName(node.name, name)) ??
+    container.meshes.find((mesh) => matchNodeName(mesh.name, name)) ??
+    null
   );
 }
 
-function findColliderMeshOnRoot(root: TransformNode, scene: Scene): Mesh | null {
-  const fromTree = findNodeOnRoot(root, "COL_enemy_turret");
+function captureLocalTransform(
+  node: TransformNode,
+  parent: TransformNode
+): { position: Vector3; rotation: Quaternion; scaling: Vector3 } {
+  node.computeWorldMatrix(true);
+  parent.computeWorldMatrix(true);
+  const local = Matrix.Invert(parent.getWorldMatrix()).multiply(node.getWorldMatrix());
+  const position = new Vector3();
+  const rotation = new Quaternion();
+  const scaling = new Vector3();
+  local.decompose(scaling, rotation, position);
+  return { position, rotation, scaling };
+}
+
+function findArmatureRoot(container: AssetContainer, armatureName: string): TransformNode | null {
+  return (
+    container.transformNodes.find((node) => matchNodeName(node.name, armatureName)) ?? null
+  );
+}
+
+function findColliderMeshOnRoot(root: TransformNode, scene: Scene, colliderName: string): Mesh | null {
+  const fromTree = findNodeOnRoot(root, colliderName);
   if (fromTree instanceof Mesh) {
     return fromTree;
   }
@@ -303,7 +379,7 @@ function findColliderMeshOnRoot(root: TransformNode, scene: Scene): Mesh | null 
   }
 
   for (const mesh of scene.meshes) {
-    if (!matchNodeName(mesh.name, "COL_enemy_turret")) {
+    if (!matchNodeName(mesh.name, colliderName)) {
       continue;
     }
     let parent: Node | null = mesh;
@@ -344,10 +420,17 @@ function findNodeOnRoot(root: TransformNode, name: string): TransformNode | Abst
 }
 
 /** Empty de lock-on missile (`target_turret`, ou premier nœud `target_*`). */
-function findLockTargetNode(root: TransformNode): TransformNode | AbstractMesh | null {
-  const explicit = findNodeOnRoot(root, "target_turret");
-  if (explicit) {
-    return explicit;
+function findLockTargetNode(
+  root: TransformNode,
+  explicitName: string | null
+): TransformNode | AbstractMesh | null {
+  if (explicitName) {
+    const explicit = findNodeOnRoot(root, explicitName);
+    if (explicit) {
+      return explicit;
+    }
+  } else {
+    return null;
   }
 
   const stack: TransformNode[] = [root];
@@ -507,13 +590,17 @@ function refreshClonedRigMatrices(
   }
 }
 
-export class EnemyTurretSystem {
+export class EnemyTurretSystem implements EnemyCombatSystem {
   private readonly scene: Scene;
   private readonly config: EnemyTurretConfig;
+  private readonly nodes: ResolvedEnemyNodes;
+  private readonly enemiesContainer: AssetContainer;
+  private readonly logTag: string;
   private readonly showAimDebug: boolean;
   private readonly showBulletDebug: boolean;
   private readonly yawAxis: Vector3;
   private readonly pitchAxis: Vector3;
+  private readonly muzzleForwardLocal: Vector3;
   private readonly ammoTemplateMesh: Mesh | null;
   private readonly colliderTemplateMesh: Mesh | null;
   private readonly instances: EnemyTurretInstance[] = [];
@@ -531,6 +618,9 @@ export class EnemyTurretSystem {
   private readonly damageFlashColor: Color3;
   private readonly damageFlashDuration: number;
   private readonly damageFlashMaxAlpha: number;
+  private gunMuzzleFlashFx: GunMuzzleFlashFx | null = null;
+  private readonly fireSoundPool: Sound[] = [];
+  private fireSoundCursor = 0;
   private disposed = false;
   private readonly syncColliderMatricesBeforePhysics = (): void => {
     for (const instance of this.instances) {
@@ -543,12 +633,19 @@ export class EnemyTurretSystem {
   public constructor(options: EnemyTurretSystemOptions) {
     this.scene = options.scene;
     this.config = options.config;
+    this.nodes = resolveEnemyNodes(options.config);
+    this.enemiesContainer = options.enemiesContainer;
+    this.logTag = `[${options.config.spawnNodePrefix.replace(/^SPAWN_/i, "Enemy").replace(/_+$/, "")}]`;
     this.showAimDebug = options.config.debug?.showAimVectors ?? false;
     this.showBulletDebug = options.config.debug?.showBulletVectors ?? false;
     this.yawAxis = axisFromConfig(options.config.rig.yawAxis, options.config.rig.yawSign);
     this.pitchAxis = axisFromConfig(options.config.rig.pitchAxis, options.config.rig.pitchSign);
-    this.ammoTemplateMesh = findMeshInContainer(options.enemiesContainer, "AMMO_turret");
-    this.colliderTemplateMesh = findMeshInContainer(options.enemiesContainer, "COL_enemy_turret");
+    this.muzzleForwardLocal = axisFromConfig(
+      options.config.rig.muzzleForwardAxis ?? "z",
+      options.config.rig.muzzleForwardSign ?? 1
+    );
+    this.ammoTemplateMesh = findMeshInContainer(options.enemiesContainer, this.nodes.ammoMesh);
+    this.colliderTemplateMesh = findMeshInContainer(options.enemiesContainer, this.nodes.colliderMesh);
     const flashConfig = options.config.damageFlash;
     const flashRgb = flashConfig?.color ?? [
       DEFAULT_DAMAGE_FLASH.color.r,
@@ -559,16 +656,18 @@ export class EnemyTurretSystem {
     this.damageFlashDuration = Math.max(0.01, flashConfig?.durationSeconds ?? DEFAULT_DAMAGE_FLASH.durationSeconds);
     this.damageFlashMaxAlpha = clamp(flashConfig?.maxAlpha ?? DEFAULT_DAMAGE_FLASH.maxAlpha, 0, 1);
     if (!this.ammoTemplateMesh) {
-      console.warn("[EnemyTurretSystem] Missing AMMO_turret template mesh in enemies.glb.");
+      console.warn(`${this.logTag} Missing ${this.nodes.ammoMesh} template mesh in enemies.glb.`);
     } else {
       this.prepareAmmoTemplateMesh(this.ammoTemplateMesh);
     }
     if (!this.colliderTemplateMesh) {
-      console.warn("[EnemyTurretSystem] Missing COL_enemy_turret template mesh in enemies.glb.");
+      console.warn(`${this.logTag} Missing ${this.nodes.colliderMesh} template mesh in enemies.glb.`);
     }
 
     this.hideTemplateAssets(options.enemiesContainer);
     this.spawnTurrets(options.terrainContainer, options.enemiesContainer);
+    this.initMuzzleFlashFx(options.enemiesContainer);
+    this.initFireSounds();
     void this.initializeDamageParticles();
     this.scene.onBeforePhysicsObservable.add(this.syncColliderMatricesBeforePhysics);
   }
@@ -632,6 +731,9 @@ export class EnemyTurretSystem {
 
   /** Points de visée des tourelles vivantes pour le lock-on missiles. */
   public getLockTargets(): EnemyLockTarget[] {
+    if (!this.nodes.missileLockable) {
+      return [];
+    }
     return this.instances
       .filter((instance) => instance.alive)
       .map((instance) => ({
@@ -641,6 +743,9 @@ export class EnemyTurretSystem {
   }
 
   public getLockTargetAimPoint(spawnId: string): Vector3 | null {
+    if (!this.nodes.missileLockable) {
+      return null;
+    }
     const instance = this.instances.find((candidate) => candidate.alive && candidate.spawnId === spawnId);
     if (!instance) {
       return null;
@@ -691,6 +796,7 @@ export class EnemyTurretSystem {
 
     this.updateBulletTracers(dt);
     this.updatePersistedBulletDebug(dt);
+    this.gunMuzzleFlashFx?.update(dt);
   }
 
   public dispose(): void {
@@ -718,17 +824,26 @@ export class EnemyTurretSystem {
     }
     this.instances.length = 0;
     this.turretColliderMeshIds.clear();
+    this.gunMuzzleFlashFx?.dispose();
+    this.gunMuzzleFlashFx = null;
+    for (const sound of this.fireSoundPool) {
+      sound.dispose();
+    }
+    this.fireSoundPool.length = 0;
   }
 
   private async initializeDamageParticles(): Promise<void> {
+    if (!this.nodes.damageSmokeNode) {
+      return;
+    }
     const healthMax = Math.max(1, this.config.combat.healthMax);
     await Promise.all(
       this.instances.map(async (instance) => {
         const bundle = await createSingleDamageParticleBundle(
           this.scene,
           instance.damageSmoke,
-          `enemy_turret_${instance.spawnId}`,
-          `[EnemyTurretSystem] Missing turret_damage_smoke emitter for spawn "${instance.spawnId}".`
+          `enemy_${sanitizeNodeName(instance.spawnId)}`,
+          `${this.logTag} Missing ${this.nodes.damageSmokeNode} emitter for spawn "${instance.spawnId}".`
         );
         if (!bundle) {
           return;
@@ -745,7 +860,7 @@ export class EnemyTurretSystem {
 
   private hideTemplateAssets(enemiesContainer: AssetContainer): void {
     for (const mesh of enemiesContainer.meshes) {
-      if (matchNodeName(mesh.name, "AMMO_turret")) {
+      if (mesh.name.trim().toUpperCase().startsWith("AMMO_")) {
         continue;
       }
       mesh.setEnabled(false);
@@ -763,31 +878,36 @@ export class EnemyTurretSystem {
     );
 
     if (spawnNodes.length === 0) {
-      console.warn(`[EnemyTurretSystem] No ${prefix}* spawn nodes found in terrain.`);
+      console.warn(`${this.logTag} No ${prefix}* spawn nodes found in terrain.`);
       return;
     }
 
-    const armatureRoot = findArmatureRoot(enemiesContainer);
+    const armatureRoot = findArmatureRoot(enemiesContainer, this.nodes.armatureRoot);
     if (!armatureRoot) {
-      console.warn("[EnemyTurretSystem] Missing turret_armature template in enemies.glb.");
+      console.warn(`${this.logTag} Missing ${this.nodes.armatureRoot} template in enemies.glb.`);
       return;
     }
 
     for (const spawnNode of spawnNodes) {
-      const spawnId = parseSpawnId(spawnNode.name, prefix);
-      if (!spawnId) {
+      const suffix = parseSpawnId(spawnNode.name, prefix);
+      if (!suffix) {
         continue;
       }
 
-      const instanceLabel = sanitizeNodeName(`${prefix}${spawnId}`);
-      const anchor = new TransformNode(`enemy_turret_anchor_${instanceLabel}`, this.scene);
+      const spawnId = spawnNode.name.trim();
+      const instanceLabel = sanitizeNodeName(spawnId);
+      const anchor = new TransformNode(`enemy_anchor_${instanceLabel}`, this.scene);
       applySpawnTransform(spawnNode, anchor);
+      const spawnYawOffsetDeg = this.config.spawnYawOffsetDeg ?? 0;
+      if (Math.abs(spawnYawOffsetDeg) > 1e-6) {
+        anchor.rotate(Axis.Y, toRadians(spawnYawOffsetDeg), Space.LOCAL);
+      }
 
       anchor.computeWorldMatrix(true);
-      const root = armatureRoot.clone(`enemy_turret_armature_${instanceLabel}`, anchor, false);
+      const root = armatureRoot.clone(`enemy_armature_${instanceLabel}`, anchor, false);
       if (!root) {
         console.warn(
-          `[EnemyTurretSystem] Failed to clone turret_armature for spawn "${spawnNode.name}".`
+          `${this.logTag} Failed to clone ${this.nodes.armatureRoot} for spawn "${spawnNode.name}".`
         );
         anchor.dispose();
         continue;
@@ -804,29 +924,39 @@ export class EnemyTurretSystem {
 
       const yawControl = resolveBoneControlOnRoot(root, this.config.rig.yawBone);
       const pitchControl = resolveBoneControlOnRoot(root, this.config.rig.pitchBone);
-      const muzzle1 = findNodeOnRoot(root, "turret_muzzle_1");
-      const muzzle2 = findNodeOnRoot(root, "turret_muzzle_2");
-      const damageSmoke = findNodeOnRoot(root, "turret_damage_smoke");
-      const lockTargetNode = findLockTargetNode(root);
-      if (!lockTargetNode) {
+      const [muzzle1, muzzle2] = this.resolveSpawnMuzzles(root, instanceLabel, pitchControl);
+      const damageSmoke = this.nodes.damageSmokeNode
+        ? findNodeOnRoot(root, this.nodes.damageSmokeNode)
+        : null;
+      const lockTargetNode = this.nodes.missileLockable
+        ? findLockTargetNode(root, this.nodes.lockTargetNode)
+        : null;
+      if (this.nodes.missileLockable && !lockTargetNode) {
         console.warn(
-          `[EnemyTurretSystem] Missing target_* lock node for spawn "${spawnNode.name}" (expected target_turret).`
+          `${this.logTag} Missing lock node for spawn "${spawnNode.name}" (expected ${this.nodes.lockTargetNode ?? "target_*"}).`
         );
       }
 
-      const skinnedMesh = root.getChildMeshes(true).find((mesh) => mesh.skeleton) ?? null;
+      const skinnedMesh =
+        root.getChildMeshes(true).find(
+          (mesh) => mesh.skeleton && matchNodeName(mesh.name, this.config.meshName)
+        ) ??
+        root.getChildMeshes(true).find(
+          (mesh) => mesh.skeleton && !matchNodeName(mesh.name, this.nodes.colliderMesh)
+        ) ??
+        null;
       if (skinnedMesh) {
         refreshSkinnedMeshRig(skinnedMesh, anchor);
       }
 
       if (!yawControl.bone && !yawControl.transformNode) {
         console.warn(
-          `[EnemyTurretSystem] Missing yaw bone "${this.config.rig.yawBone}" for spawn "${spawnNode.name}".`
+          `${this.logTag} Missing yaw bone "${this.config.rig.yawBone}" for spawn "${spawnNode.name}".`
         );
       }
       if (!pitchControl.bone && !pitchControl.transformNode) {
         console.warn(
-          `[EnemyTurretSystem] Missing pitch bone "${this.config.rig.pitchBone}" for spawn "${spawnNode.name}".`
+          `${this.logTag} Missing pitch bone "${this.config.rig.pitchBone}" for spawn "${spawnNode.name}".`
         );
       }
 
@@ -861,11 +991,11 @@ export class EnemyTurretSystem {
         muzzle1 && pitchControl.bone
           ? (() => {
               muzzle1.computeWorldMatrix(true);
-              const forward = muzzle1.getDirection(Axis.Z);
+              const forward = muzzle1.getDirection(this.muzzleForwardLocal);
               if (forward.lengthSquared() > 1e-6) {
                 forward.normalize();
               } else {
-                forward.copyFrom(Axis.Z);
+                forward.copyFrom(this.muzzleForwardLocal);
               }
               return captureBoneLocalDirection(forward, pitchControl, skinnedMesh, root);
             })()
@@ -919,12 +1049,12 @@ export class EnemyTurretSystem {
         this.turretColliderMeshIds.add(colliderMesh.uniqueId);
       } else {
         console.warn(
-          `[EnemyTurretSystem] Missing COL_enemy_turret collider for spawn "${spawnNode.name}".`
+          `${this.logTag} Missing ${this.nodes.colliderMesh} collider for spawn "${spawnNode.name}".`
         );
       }
 
       console.info(
-        `[EnemyTurretSystem] ${instanceLabel}: spawn=${spawnNode.getAbsolutePosition().asArray()} anchor=${anchor.getAbsolutePosition().asArray()} root=${root.getAbsolutePosition().asArray()} yawBone=${Boolean(yawControl.bone)} pitchBone=${Boolean(pitchControl.bone)} muzzle1=${Boolean(muzzle1)} muzzle2=${Boolean(muzzle2)} pitchPivotLocal=${pitchPivotLocalInAnchor.asArray()}`
+        `${this.logTag} ${instanceLabel}: spawn=${spawnNode.getAbsolutePosition().asArray()} anchor=${anchor.getAbsolutePosition().asArray()} root=${root.getAbsolutePosition().asArray()} yawBone=${Boolean(yawControl.bone)} pitchBone=${Boolean(pitchControl.bone)} muzzle1=${Boolean(muzzle1)} muzzle2=${Boolean(muzzle2)} pitchPivotLocal=${pitchPivotLocalInAnchor.asArray()}`
       );
 
       this.instances.push({
@@ -962,6 +1092,8 @@ export class EnemyTurretSystem {
           root,
           skinnedMesh,
           this.config.meshName,
+          this.nodes.colliderMesh,
+          this.nodes.ammoMesh,
           instanceLabel
         ),
         damageFlashRemaining: 0,
@@ -970,11 +1102,11 @@ export class EnemyTurretSystem {
     }
 
     if (this.instances.length > 0) {
-      console.info(`[EnemyTurretSystem] Spawned ${this.instances.length} turret(s).`);
+      console.info(`${this.logTag} Spawned ${this.instances.length} instance(s).`);
       for (const instance of this.instances) {
         if (instance.flashMaterials.length === 0) {
           console.warn(
-            `[EnemyTurretSystem] No visual damage-flash material for turret "${instance.spawnId}" (expected ${this.config.meshName}).`
+            `${this.logTag} No visual damage-flash material for "${instance.spawnId}" (expected ${this.config.meshName}).`
           );
         }
       }
@@ -1003,8 +1135,11 @@ export class EnemyTurretSystem {
     yawControl: BoneControl,
     pitchReference: TransformNode
   ): Mesh | null {
-    const existing = findColliderMeshOnRoot(root, this.scene);
+    const existing = findColliderMeshOnRoot(root, this.scene, this.nodes.colliderMesh);
     if (existing) {
+      if (existing.parent === root && yawControl.transformNode) {
+        existing.setParent(yawControl.transformNode);
+      }
       return existing;
     }
 
@@ -1017,7 +1152,7 @@ export class EnemyTurretSystem {
       yawControl.bone?.getTransformNode() ??
       pitchReference;
     const cloned = this.colliderTemplateMesh.clone(
-      `COL_enemy_turret_${instanceLabel}`,
+      `${this.nodes.colliderMesh}_${instanceLabel}`,
       parentNode,
       false
     );
@@ -1123,7 +1258,9 @@ export class EnemyTurretSystem {
     instance.alive = false;
     instance.tracking = false;
 
-    this.onTurretDestroyed?.(this.getTurretDeathExplosionPosition(instance));
+    if (this.config.playDeathExplosion !== false) {
+      this.onTurretDestroyed?.(this.getTurretDeathExplosionPosition(instance));
+    }
 
     if (instance.colliderMesh) {
       this.turretColliderMeshIds.delete(instance.colliderMesh.uniqueId);
@@ -1166,7 +1303,9 @@ export class EnemyTurretSystem {
     const aimX = localTarget.x * this.config.rig.yawAimXSign;
     const aimZ = localTarget.z * this.config.rig.yawAimZSign;
     const desiredYawRad = Math.atan2(aimX, aimZ);
-    instance.targetYawDeg = (desiredYawRad * 180) / Math.PI * this.config.rig.yawSign;
+    instance.targetYawDeg =
+      (desiredYawRad * 180) / Math.PI * this.config.rig.yawSign +
+      (this.config.tracking.yawOffsetDeg ?? 0);
 
     // Pitch en espace anchor (indépendant du yaw courant du turret_body) — sinon l'élévation
     // dépend de l'azimut du tank autour de la tourelle.
@@ -1266,11 +1405,146 @@ export class EnemyTurretSystem {
   }
 
   private resolveMuzzles(instance: EnemyTurretInstance): void {
-    if (!instance.muzzle1) {
-      instance.muzzle1 = findNodeOnRoot(instance.root, "turret_muzzle_1");
+    if (!instance.muzzle1 && this.nodes.muzzleNodes[0]) {
+      instance.muzzle1 = findNodeOnRoot(instance.root, this.nodes.muzzleNodes[0]);
     }
-    if (!instance.muzzle2) {
-      instance.muzzle2 = findNodeOnRoot(instance.root, "turret_muzzle_2");
+    if (!instance.muzzle2 && this.nodes.muzzleNodes[1]) {
+      instance.muzzle2 = findNodeOnRoot(instance.root, this.nodes.muzzleNodes[1]);
+    }
+  }
+
+  private resolveSpawnMuzzles(
+    root: TransformNode,
+    instanceLabel: string,
+    pitchControl: BoneControl
+  ): [TransformNode | AbstractMesh | null, TransformNode | AbstractMesh | null] {
+    const resolved: Array<TransformNode | AbstractMesh | null> = [];
+    for (const muzzleName of this.nodes.muzzleNodes) {
+      resolved.push(
+        findNodeOnRoot(root, muzzleName) ??
+          this.attachTemplateMuzzle(muzzleName, root, instanceLabel, pitchControl)
+      );
+    }
+    return [resolved[0] ?? null, resolved[1] ?? null];
+  }
+
+  private attachTemplateMuzzle(
+    muzzleName: string,
+    root: TransformNode,
+    instanceLabel: string,
+    pitchControl: BoneControl
+  ): TransformNode | null {
+    const templateMuzzle = findNodeInContainer(this.enemiesContainer, muzzleName);
+    if (!templateMuzzle) {
+      console.warn(`${this.logTag} Missing muzzle template "${muzzleName}" in enemies.glb.`);
+      return null;
+    }
+
+    const attachBoneName =
+      this.nodes.muzzleAttachBone ?? this.config.rig.pitchBone;
+    const attachParent =
+      findNodeOnRoot(root, attachBoneName) ??
+      pitchControl.transformNode ??
+      root;
+    const templateAttach =
+      findNodeInContainer(this.enemiesContainer, attachBoneName) ??
+      findNodeInContainer(this.enemiesContainer, this.nodes.armatureRoot);
+    const local = templateAttach
+      ? captureLocalTransform(templateMuzzle, templateAttach)
+      : {
+          position: templateMuzzle.position.clone(),
+          rotation: templateMuzzle.rotationQuaternion?.clone() ?? Quaternion.Identity(),
+          scaling: templateMuzzle.scaling.clone()
+        };
+
+    const cloned =
+      templateMuzzle.clone(`muzzle_${sanitizeNodeName(muzzleName)}_${instanceLabel}`, attachParent, false) ??
+      new TransformNode(`muzzle_${sanitizeNodeName(muzzleName)}_${instanceLabel}`, this.scene);
+    cloned.parent = attachParent;
+    cloned.position.copyFrom(local.position);
+    cloned.rotationQuaternion = local.rotation.clone();
+    cloned.scaling.copyFrom(local.scaling);
+    cloned.setEnabled(true);
+    return cloned;
+  }
+
+  private initMuzzleFlashFx(enemiesContainer: AssetContainer): void {
+    const meshName = this.nodes.gunMuzzleFlashMesh;
+    if (!meshName) {
+      return;
+    }
+    this.gunMuzzleFlashFx = createGunMuzzleFlashFx(
+      this.scene,
+      enemiesContainer.meshes,
+      meshName,
+      this.muzzleForwardLocal
+    );
+    if (!this.gunMuzzleFlashFx) {
+      console.warn(`${this.logTag} Missing ${meshName} muzzle flash mesh in enemies.glb.`);
+    }
+  }
+
+  private initFireSounds(): void {
+    const url = resolveEnemySoundUrl(this.config.fireSound);
+    if (!url) {
+      return;
+    }
+    const volume = this.config.fireSoundVolume ?? 0.7;
+    const poolSize = 6;
+    try {
+      const base = new Sound(
+        `enemy_gun_${sanitizeNodeName(this.config.spawnNodePrefix)}_base`,
+        url,
+        this.scene,
+        () => {
+          const buffer = base.getAudioBuffer();
+          this.fireSoundPool.length = 0;
+          this.fireSoundPool.push(base);
+          if (!buffer) {
+            return;
+          }
+          for (let i = 1; i < poolSize; i++) {
+            this.fireSoundPool.push(
+              new Sound(
+                `enemy_gun_${sanitizeNodeName(this.config.spawnNodePrefix)}_${i}`,
+                buffer,
+                this.scene,
+                null,
+                { autoplay: false, loop: false, volume }
+              )
+            );
+          }
+        },
+        { autoplay: false, loop: false, volume }
+      );
+      this.fireSoundPool.push(base);
+    } catch (err) {
+      console.warn(`${this.logTag} Fire sound load failed:`, err);
+    }
+  }
+
+  private playFireSound(): void {
+    if (this.fireSoundPool.length === 0) {
+      return;
+    }
+    let sound: Sound | null = null;
+    for (let i = 0; i < this.fireSoundPool.length; i++) {
+      const candidate = this.fireSoundPool[(this.fireSoundCursor + i) % this.fireSoundPool.length];
+      if (!candidate.isPlaying) {
+        sound = candidate;
+        this.fireSoundCursor = (this.fireSoundCursor + i + 1) % this.fireSoundPool.length;
+        break;
+      }
+    }
+    if (!sound) {
+      sound = this.fireSoundPool[this.fireSoundCursor % this.fireSoundPool.length];
+      this.fireSoundCursor++;
+      if (sound.isPlaying) {
+        sound.stop();
+      }
+    }
+    if (sound.isReady()) {
+      sound.play();
     }
   }
 
@@ -1322,7 +1596,7 @@ export class EnemyTurretSystem {
     const muzzlePos = this.resolveMuzzleWorldPosition(instance, barrelIndex);
     if (!muzzlePos) {
       console.warn(
-        `[EnemyTurretSystem] Fire skipped: could not resolve muzzle world position (spawn=${instance.spawnId}).`
+        `${this.logTag} Fire skipped: could not resolve muzzle world position (spawn=${instance.spawnId}).`
       );
       return;
     }
@@ -1337,18 +1611,23 @@ export class EnemyTurretSystem {
     const { hitPoint, hitDistance, hitsTank } = this.raycastBulletHit(origin, dir, maxDistance);
 
     const mesh = this.ammoTemplateMesh.clone(
-      `enemy_turret_bullet_${instance.spawnId}_${this.bulletCloneSerial++}`,
+      `enemy_bullet_${sanitizeNodeName(instance.spawnId)}_${this.bulletCloneSerial++}`,
       null
     );
     if (!mesh) {
       console.warn(
-        `[EnemyTurretSystem] Fire failed: bullet mesh clone returned null (spawn=${instance.spawnId}).`
+        `${this.logTag} Fire failed: bullet mesh clone returned null (spawn=${instance.spawnId}).`
       );
       return;
     }
     this.prepareTracerMesh(mesh);
     mesh.position.copyFrom(origin);
     mesh.rotationQuaternion = bulletRotation.clone();
+    this.playFireSound();
+    const muzzleNode = barrelIndex === 0 ? instance.muzzle1 : instance.muzzle2;
+    if (muzzleNode) {
+      this.gunMuzzleFlashFx?.spawnAtMuzzle(muzzleNode);
+    }
 
     const debugVisual =
       this.showBulletDebug

@@ -80,7 +80,7 @@ export const MENU_MAPS: readonly MenuMapEntry[] = [
           { id: "player_jet", type: "fighterJet", spawnNode: "SPAWN_jet" },
           { id: "player_helicopter", type: "helicopter", spawnNode: "SPAWN_helicopter" }
         ],
-        startVehicleId: "player_tank"
+        startVehicleId: "player_armoredcar"
       }
     ]
   },
