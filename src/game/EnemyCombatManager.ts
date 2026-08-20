@@ -24,33 +24,32 @@ export class EnemyCombatManager implements EnemyCombatSystem {
 
   public constructor(options: EnemyCombatManagerOptions) {
     if (options.config.turret.enabled) {
-      try {
-        this.systems.push(
-          new EnemyTurretSystem({
-            scene: options.scene,
-            terrainContainer: options.terrainContainer,
-            enemiesContainer: options.enemiesContainer,
-            config: options.config.turret
-          })
-        );
-      } catch (err) {
-        console.warn("[TankController] Enemy turret system could not be created:", err);
-      }
+      this.addSystem(options, options.config.turret, "turret");
     }
-
     if (options.config.soldierRifle?.enabled) {
-      try {
-        this.systems.push(
-          new EnemyTurretSystem({
-            scene: options.scene,
-            terrainContainer: options.terrainContainer,
-            enemiesContainer: options.enemiesContainer,
-            config: options.config.soldierRifle
-          })
-        );
-      } catch (err) {
-        console.warn("[TankController] Enemy soldier rifle system could not be created:", err);
-      }
+      this.addSystem(options, options.config.soldierRifle, "soldier rifle");
+    }
+    if (options.config.soldierRocket?.enabled) {
+      this.addSystem(options, options.config.soldierRocket, "soldier rocket");
+    }
+  }
+
+  private addSystem(
+    options: EnemyCombatManagerOptions,
+    config: EnemiesControllerConfig["turret"],
+    label: string
+  ): void {
+    try {
+      this.systems.push(
+        new EnemyTurretSystem({
+          scene: options.scene,
+          terrainContainer: options.terrainContainer,
+          enemiesContainer: options.enemiesContainer,
+          config
+        })
+      );
+    } catch (err) {
+      console.warn(`[TankController] Enemy ${label} system could not be created:`, err);
     }
   }
 

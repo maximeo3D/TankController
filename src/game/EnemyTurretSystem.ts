@@ -10,7 +10,7 @@ import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import { PhysicsBody } from "@babylonjs/core/Physics/v2/physicsBody";
 import { PhysicsMotionType } from "@babylonjs/core/Physics/v2/IPhysicsEnginePlugin";
-import { PhysicsShapeMesh, type PhysicsShape } from "@babylonjs/core/Physics/v2/physicsShape";
+import { PhysicsShapeMesh, PhysicsShapeSphere, type PhysicsShape } from "@babylonjs/core/Physics/v2/physicsShape";
 import type { Scene } from "@babylonjs/core/scene";
 import type { Node } from "@babylonjs/core/node";
 import { Sound } from "@babylonjs/core/Audio/sound";
@@ -173,6 +173,7 @@ const DEFAULT_DAMAGE_FLASH = {
 } as const;
 
 const PEAK_EMISSIVE_INTENSITY = 2.4;
+const ROCKET_ARMING_S = 0.12;
 
 function collectTurretVisualMeshes(
   root: TransformNode,
@@ -292,6 +293,19 @@ function restoreDamageFlashEmissive(states: DamageFlashMaterialState[]): void {
       mat.emissiveIntensity = state.baseEmissiveIntensity;
     }
   }
+}
+
+interface EnemyRocketProjectile {
+  mesh: Mesh;
+  body: PhysicsBody;
+  shape: PhysicsShape;
+  age: number;
+  lastPos: Vector3;
+  impactHandled: boolean;
+  damage: number;
+  explosionRadius: number;
+  shooterBody: PhysicsBody | null;
+  onHitPlayerDamage: ((amount: number) => void) | null;
 }
 
 interface EnemyBulletTracer {
@@ -605,6 +619,7 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
   private readonly colliderTemplateMesh: Mesh | null;
   private readonly instances: EnemyTurretInstance[] = [];
   private readonly activeBulletTracers: EnemyBulletTracer[] = [];
+  private readonly activeRockets: EnemyRocketProjectile[] = [];
   private readonly persistedBulletDebug: BulletDebugVisual[] = [];
   private bulletCloneSerial = 0;
   private tankBody: PhysicsBody | null = null;
@@ -795,6 +810,7 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
     }
 
     this.updateBulletTracers(dt);
+    this.updateRockets(dt);
     this.updatePersistedBulletDebug(dt);
     this.gunMuzzleFlashFx?.update(dt);
   }
@@ -808,6 +824,7 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
       tracer.mesh.dispose();
     }
     this.activeBulletTracers.length = 0;
+    this.disposeAllRockets();
     this.disposeAllBulletDebugVisuals();
 
     for (const instance of this.instances) {
@@ -1586,7 +1603,15 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
     );
   }
 
+  private isRocketWeapon(): boolean {
+    return this.config.combat.projectileKind === "rocket";
+  }
+
   private fireFromMuzzle(instance: EnemyTurretInstance, barrelIndex: number): void {
+    if (this.isRocketWeapon()) {
+      this.fireRocketFromMuzzle(instance, barrelIndex);
+      return;
+    }
     if (!this.ammoTemplateMesh) {
       return;
     }
@@ -1653,6 +1678,170 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
       onHitPlayerDamage: hitsTank && this.onPlayerDamage ? this.onPlayerDamage : null,
       debugVisual
     });
+  }
+
+  private fireRocketFromMuzzle(instance: EnemyTurretInstance, barrelIndex: number): void {
+    if (!this.ammoTemplateMesh) {
+      return;
+    }
+
+    refreshClonedRigMatrices(instance.anchor, instance.root, instance.skinnedMesh);
+
+    const muzzlePos = this.resolveMuzzleWorldPosition(instance, barrelIndex);
+    const dir = this.getBarrelAimDirection(instance);
+    if (!muzzlePos || !dir) {
+      console.warn(
+        `${this.logTag} Rocket fire skipped: could not resolve muzzle (spawn=${instance.spawnId}).`
+      );
+      return;
+    }
+
+    const spawnOffset = Math.max(this.config.combat.muzzleSpawnOffset, 0.28);
+    const origin = muzzlePos.add(dir.scale(spawnOffset)).clone();
+    const mesh = this.ammoTemplateMesh.clone(
+      `enemy_rocket_${sanitizeNodeName(instance.spawnId)}_${this.bulletCloneSerial++}`,
+      null
+    );
+    if (!mesh) {
+      console.warn(
+        `${this.logTag} Rocket fire failed: ammo clone returned null (spawn=${instance.spawnId}).`
+      );
+      return;
+    }
+
+    this.prepareTracerMesh(mesh);
+    mesh.position.copyFrom(origin);
+    mesh.rotationQuaternion = Quaternion.FromLookDirectionRH(dir, Axis.Y);
+    mesh.computeWorldMatrix(true);
+    this.playFireSound();
+
+    const body = new PhysicsBody(mesh, PhysicsMotionType.DYNAMIC, false, this.scene);
+    const radius = Math.max(0.04, this.config.combat.projectileRadius);
+    const scale = Math.max(Math.abs(mesh.absoluteScaling.x) || 1, 0.25);
+    const shape = new PhysicsShapeSphere(Vector3.Zero(), radius / scale, this.scene);
+    shape.filterMembershipMask = 4;
+    shape.filterCollideMask = 0;
+    body.shape = shape;
+    body.setMassProperties({ mass: 1 });
+    body.setGravityFactor(this.config.combat.gravityMultiplier);
+    body.setLinearVelocity(dir.scale(this.config.combat.muzzleVelocity));
+    body.setCollisionCallbackEnabled(true);
+
+    const rocket: EnemyRocketProjectile = {
+      mesh,
+      body,
+      shape,
+      age: 0,
+      lastPos: origin.clone(),
+      impactHandled: false,
+      damage: this.config.combat.bulletDamage,
+      explosionRadius: Math.max(0, this.config.combat.explosionRadius ?? 1.6),
+      shooterBody: instance.physicsBody,
+      onHitPlayerDamage: this.onPlayerDamage
+    };
+    this.activeRockets.push(rocket);
+
+    body.getCollisionObservable().add((ev: unknown) => {
+      if (rocket.impactHandled || rocket.age < ROCKET_ARMING_S) {
+        return;
+      }
+      const type = String((ev as { type?: string })?.type ?? "");
+      if (type && !type.includes("COLLISION_STARTED") && !type.includes("COLLISION_CONTINUED")) {
+        return;
+      }
+      if (this.isIgnoredPlayerBodyHit(ev) || this.isRocketShooterHit(rocket, ev)) {
+        return;
+      }
+      const point =
+        (ev as { point?: Vector3 }).point ??
+        (ev as { contactPoint?: Vector3 }).contactPoint ??
+        rocket.mesh.getAbsolutePosition();
+      this.detonateRocket(rocket, point.clone(), this.isTankRaycastHit(ev));
+    });
+  }
+
+  private updateRockets(dt: number): void {
+    if (this.activeRockets.length === 0) {
+      return;
+    }
+
+    const maxLife = Math.max(0.5, this.config.combat.projectileMaxLifeSeconds);
+    for (let i = this.activeRockets.length - 1; i >= 0; i--) {
+      const rocket = this.activeRockets[i];
+      if (rocket.impactHandled) {
+        this.disposeRocket(rocket);
+        this.activeRockets.splice(i, 1);
+        continue;
+      }
+
+      rocket.age += dt;
+      if (rocket.age < ROCKET_ARMING_S) {
+        rocket.lastPos.copyFrom(rocket.mesh.getAbsolutePosition());
+        continue;
+      }
+      if (rocket.shape.filterCollideMask === 0) {
+        rocket.shape.filterCollideMask = 1 | 2;
+      }
+
+      const curPos = rocket.mesh.getAbsolutePosition();
+      const delta = curPos.subtract(rocket.lastPos);
+      const dist = delta.length();
+      if (dist > 1e-5) {
+        const dir = delta.scale(1 / dist);
+        const { hitPoint, hitsTank } = this.raycastBulletHit(rocket.lastPos, dir, dist, true);
+        const traveled = Vector3.Distance(rocket.lastPos, hitPoint);
+        if (traveled < dist - 1e-4) {
+          this.detonateRocket(rocket, hitPoint, hitsTank);
+          this.disposeRocket(rocket);
+          this.activeRockets.splice(i, 1);
+          continue;
+        }
+      }
+      rocket.lastPos.copyFrom(curPos);
+
+      if (rocket.age > maxLife) {
+        this.disposeRocket(rocket);
+        this.activeRockets.splice(i, 1);
+      }
+    }
+  }
+
+  private detonateRocket(
+    rocket: EnemyRocketProjectile,
+    worldPos: Vector3,
+    hitsPlayerDirect: boolean
+  ): void {
+    if (rocket.impactHandled) {
+      return;
+    }
+    rocket.impactHandled = true;
+    this.onTurretDestroyed?.(worldPos);
+
+    let hitsPlayer = hitsPlayerDirect;
+    if (!hitsPlayer && rocket.explosionRadius > 0 && this.tankColliderMesh) {
+      this.tankColliderMesh.computeWorldMatrix(true);
+      hitsPlayer =
+        Vector3.DistanceSquared(worldPos, this.tankColliderMesh.getAbsolutePosition()) <=
+        rocket.explosionRadius * rocket.explosionRadius;
+    }
+    if (hitsPlayer && rocket.onHitPlayerDamage && rocket.damage > 0) {
+      rocket.onHitPlayerDamage(rocket.damage);
+    }
+  }
+
+  private disposeRocket(rocket: EnemyRocketProjectile): void {
+    rocket.impactHandled = true;
+    rocket.body.dispose();
+    rocket.shape.dispose();
+    rocket.mesh.material?.dispose();
+    rocket.mesh.dispose();
+  }
+
+  private disposeAllRockets(): void {
+    for (const rocket of this.activeRockets) {
+      this.disposeRocket(rocket);
+    }
+    this.activeRockets.length = 0;
   }
 
   private resolveMuzzleWorldPosition(instance: EnemyTurretInstance, barrelIndex: number): Vector3 | null {
@@ -1725,7 +1914,8 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
   private raycastBulletHit(
     origin: Vector3,
     dir: Vector3,
-    maxDistance: number
+    maxDistance: number,
+    passthroughOwnColliders = false
   ): { hitPoint: Vector3; hitDistance: number; hitsTank: boolean } {
     const fallbackEnd = origin.add(dir.scale(maxDistance));
     const physics = this.scene.getPhysicsEngine();
@@ -1736,7 +1926,8 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
     let segmentStart = origin.clone();
     let traveled = 0;
     const passthroughEpsilon = 0.05;
-    const maxSegments = 1 + this.ignoredPlayerBodies.length;
+    const maxSegments =
+      1 + this.ignoredPlayerBodies.length + (passthroughOwnColliders ? this.instances.length : 0);
 
     for (let segment = 0; segment < maxSegments; segment++) {
       const remaining = maxDistance - traveled;
@@ -1771,7 +1962,7 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
 
       traveled += segmentHitDistance;
 
-      if (this.isIgnoredPlayerBodyHit(hit)) {
+      if (this.isIgnoredPlayerBodyHit(hit) || (passthroughOwnColliders && this.isOwnColliderHit(hit))) {
         segmentStart = hitPoint.add(dir.scale(passthroughEpsilon));
         traveled = Math.min(traveled + passthroughEpsilon, maxDistance);
         continue;
@@ -1785,6 +1976,32 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
     }
 
     return { hitPoint: fallbackEnd.clone(), hitDistance: maxDistance, hitsTank: false };
+  }
+
+  private isRocketShooterHit(rocket: EnemyRocketProjectile, hit: unknown): boolean {
+    if (this.isOwnColliderHit(hit)) {
+      return true;
+    }
+    if (!rocket.shooterBody) {
+      return false;
+    }
+    const collidedAgainst = (hit as { collidedAgainst?: PhysicsBody }).collidedAgainst;
+    const body = (hit as { body?: PhysicsBody }).body;
+    return collidedAgainst === rocket.shooterBody || body === rocket.shooterBody;
+  }
+
+  private isOwnColliderHit(hit: unknown): boolean {
+    const collidedAgainst = (hit as { collidedAgainst?: PhysicsBody }).collidedAgainst;
+    const body = (hit as { body?: PhysicsBody }).body;
+    const mesh = (hit as { collidedAgainstMesh?: AbstractMesh }).collidedAgainstMesh;
+    if (mesh && this.turretColliderMeshIds.has(mesh.uniqueId)) {
+      return true;
+    }
+    return this.instances.some(
+      (instance) =>
+        instance.physicsBody != null &&
+        (instance.physicsBody === collidedAgainst || instance.physicsBody === body)
+    );
   }
 
   private isIgnoredPlayerBodyHit(hit: unknown): boolean {

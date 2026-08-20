@@ -42,6 +42,10 @@ export interface EnemyTurretCombatConfig {
   projectileMaxLifeSeconds: number;
   /** Angle max (deg) entre l'axe du canon et la cible pour autoriser le tir. */
   fireAlignmentMaxAngleDeg: number;
+  /** `rocket` = projectile physique (hélico / armored car). Défaut : `bullet`. */
+  projectileKind?: "bullet" | "rocket";
+  /** Rayon d'explosion pour les rockets (dégâts joueur). */
+  explosionRadius?: number;
 }
 
 export interface EnemyTurretDebugConfig {
@@ -95,6 +99,7 @@ export interface EnemyTurretConfig {
 export interface EnemiesControllerConfig {
   turret: EnemyTurretConfig;
   soldierRifle?: EnemyTurretConfig;
+  soldierRocket?: EnemyTurretConfig;
 }
 
 export const enemiesConfig = enemiesControllerConfig as EnemiesControllerConfig;

@@ -17,7 +17,8 @@ import {
   tankMoveSoundAssetUrl,
   tankTurboSoundAssetUrl,
   tankGunSoundAssetUrl,
-  soldierRifleGunSoundAssetUrl
+  soldierRifleGunSoundAssetUrl,
+  missile1SoundAssetUrl
 } from "./assetUrls";
 
 /**
@@ -66,7 +67,8 @@ export function resolveVehicleSoundUrl(key: string | null | undefined): string |
 }
 
 export const enemySoundUrls: Record<string, string> = {
-  soldier_rifle_ak_gun: soldierRifleGunSoundAssetUrl
+  soldier_rifle_ak_gun: soldierRifleGunSoundAssetUrl,
+  missile_1: missile1SoundAssetUrl
 };
 
 export function resolveEnemySoundUrl(key: string | null | undefined): string | null {

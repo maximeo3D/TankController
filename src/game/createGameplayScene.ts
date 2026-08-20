@@ -234,7 +234,9 @@ export async function createGameplayScene(
 
   let enemyTurretSystem: EnemyCombatSystem | null = null;
   const anyEnemyEnabled =
-    enemiesConfig.turret.enabled || (enemiesConfig.soldierRifle?.enabled ?? false);
+    enemiesConfig.turret.enabled ||
+    (enemiesConfig.soldierRifle?.enabled ?? false) ||
+    (enemiesConfig.soldierRocket?.enabled ?? false);
   if (anyEnemyEnabled) {
     try {
       enemyTurretSystem = new EnemyCombatManager({
