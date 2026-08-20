@@ -16,7 +16,7 @@ export const GUN_MUZZLE_FLASH_MESH_NAME = "FX_muzzle_flash";
 let flashCloneSeq = 0;
 
 export interface GunMuzzleFlashFx {
-  spawnAt(worldPosition: Vector3, worldRotation: Quaternion, worldForward: Vector3): void;
+  spawnAtMuzzle(muzzleNode: TransformNode | AbstractMesh): void;
   update(dt: number): void;
   dispose(): void;
 }
@@ -134,14 +134,17 @@ function randomQuarterTurnRollRad(): number {
   return Math.floor(Math.random() * 4) * (Math.PI / 2);
 }
 
-function buildSpawnRotation(worldRotation: Quaternion, worldForward: Vector3): Quaternion {
-  const forward = worldForward.clone();
+function localRollAroundForward(
+  movementForwardAxis: Vector3,
+  movementForwardSign: number
+): Quaternion {
+  const forward = movementForwardAxis.scale(-movementForwardSign);
   if (forward.lengthSquared() > 1e-6) {
     forward.normalize();
   } else {
     forward.set(0, 0, 1);
   }
-  return Quaternion.RotationAxis(forward, randomQuarterTurnRollRad()).multiply(worldRotation);
+  return Quaternion.RotationAxis(forward, randomQuarterTurnRollRad());
 }
 
 function setFlashEnabled(root: TransformNode, enabled: boolean): void {
@@ -156,7 +159,9 @@ function setFlashEnabled(root: TransformNode, enabled: boolean): void {
 export function createGunMuzzleFlashFx(
   scene: Scene,
   meshes: AbstractMesh[],
-  meshName: string = GUN_MUZZLE_FLASH_MESH_NAME
+  meshName: string = GUN_MUZZLE_FLASH_MESH_NAME,
+  movementForwardAxis: Vector3 = new Vector3(0, 0, 1),
+  movementForwardSign: number = 1
 ): GunMuzzleFlashFx | null {
   const sources = collectSourceMeshes(meshes, meshName);
   if (sources.length === 0) {
@@ -190,15 +195,16 @@ export function createGunMuzzleFlashFx(
   const active: ActiveFlash[] = [];
 
   return {
-    spawnAt(worldPosition: Vector3, worldRotation: Quaternion, worldForward: Vector3): void {
+    spawnAtMuzzle(muzzleNode: TransformNode | AbstractMesh): void {
       const root = pool.pop();
       if (!root) {
         return;
       }
 
-      root.setParent(null);
-      root.position.copyFrom(worldPosition);
-      root.rotationQuaternion = buildSpawnRotation(worldRotation, worldForward);
+      muzzleNode.computeWorldMatrix(true);
+      root.parent = muzzleNode;
+      root.position.setAll(0);
+      root.rotationQuaternion = localRollAroundForward(movementForwardAxis, movementForwardSign);
       root.scaling.setAll(0.75 + Math.random() * 0.25);
       setFlashEnabled(root, true);
       root.computeWorldMatrix(true);
@@ -219,6 +225,8 @@ export function createGunMuzzleFlashFx(
         flash.age += dt;
         const t = flash.age / LIFE_S;
         if (t >= 1) {
+          flash.root.parent = null;
+          flash.root.position.setAll(0);
           setFlashEnabled(flash.root, false);
           pool.push(flash.root);
           active.splice(i, 1);
@@ -232,6 +240,7 @@ export function createGunMuzzleFlashFx(
 
     dispose(): void {
       for (const flash of active) {
+        flash.root.parent = null;
         flash.root.dispose();
       }
       active.length = 0;

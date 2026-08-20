@@ -1997,7 +1997,9 @@ export class TankGameplayController {
     this.gunMuzzleFlashFx = createGunMuzzleFlashFx(
       this.scene,
       options.tankContainer.meshes,
-      meshName
+      meshName,
+      this.movementForwardAxis,
+      options.config.rig.movementForwardSign
     );
   }
 
@@ -5020,7 +5022,7 @@ export class TankGameplayController {
     );
     const baseForward = this.getMuzzleNodeWorldForward(muzzleGunNode);
     const muzzleRotation = this.getMuzzleNodeWorldRotation(muzzleGunNode);
-    this.gunMuzzleFlashFx?.spawnAt(origin, muzzleRotation, baseForward);
+    this.gunMuzzleFlashFx?.spawnAtMuzzle(muzzleGunNode);
 
     // Dynamic bloom cone: grows with sustained firing (0° -> 9°).
     const maxAngleRad = (Math.PI / 180) * this.gunSpreadDeg;
