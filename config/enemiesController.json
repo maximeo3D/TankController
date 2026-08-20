@@ -76,8 +76,8 @@
     "tracking": {
       "yawSpeedDeg": 120,
       "pitchSpeedDeg": 80,
-      "minPitchDeg": -35,
-      "maxPitchDeg": 45,
+      "minPitchDeg": -60,
+      "maxPitchDeg": 60,
       "yawOffsetDeg": 180
     },
     "rig": {
@@ -100,9 +100,9 @@
     },
     "combat": {
       "healthMax": 50,
-      "contactDamage": 0,
-      "shotsPerSecondPerBarrel": 0.5,
-      "bulletDamage": 5,
+      "contactDamage": 50,
+      "shotsPerSecondPerBarrel": 1,
+      "bulletDamage": 2,
       "muzzleVelocity": 50,
       "muzzleSpawnOffset": 0.08,
       "gravityMultiplier": 0.5,
@@ -134,8 +134,8 @@
     "tracking": {
       "yawSpeedDeg": 120,
       "pitchSpeedDeg": 80,
-      "minPitchDeg": -35,
-      "maxPitchDeg": 45,
+      "minPitchDeg": -60,
+      "maxPitchDeg": 60,
       "yawOffsetDeg": 180
     },
     "rig": {
@@ -158,7 +158,7 @@
     },
     "combat": {
       "healthMax": 50,
-      "contactDamage": 0,
+      "contactDamage": 50,
       "shotsPerSecondPerBarrel": 0.5,
       "bulletDamage": 25,
       "muzzleVelocity": 30,
