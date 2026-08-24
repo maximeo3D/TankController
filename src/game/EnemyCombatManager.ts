@@ -111,6 +111,10 @@ export class EnemyCombatManager implements EnemyCombatSystem {
     }
   }
 
+  public collectShadowCasterMeshes(): AbstractMesh[] {
+    return this.systems.flatMap((system) => system.collectShadowCasterMeshes());
+  }
+
   public dispose(): void {
     for (const system of this.systems) {
       system.dispose();

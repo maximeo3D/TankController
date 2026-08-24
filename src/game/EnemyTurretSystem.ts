@@ -85,6 +85,7 @@ export interface EnemyCombatSystem {
   isTurretColliderMesh(mesh: AbstractMesh | null | undefined): boolean;
   applyDamageToTurret(spawnId: string, amount: number): boolean;
   applyExplosionDamageAt(worldPos: Vector3, amount: number, radius: number): void;
+  collectShadowCasterMeshes(): AbstractMesh[];
   dispose(): void;
 }
 
@@ -813,6 +814,22 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
     this.updateRockets(dt);
     this.updatePersistedBulletDebug(dt);
     this.gunMuzzleFlashFx?.update(dt);
+  }
+
+  public collectShadowCasterMeshes(): AbstractMesh[] {
+    const meshes: AbstractMesh[] = [];
+    for (const instance of this.instances) {
+      meshes.push(
+        ...collectTurretVisualMeshes(
+          instance.root,
+          instance.skinnedMesh,
+          this.config.meshName,
+          this.nodes.colliderMesh,
+          this.nodes.ammoMesh
+        )
+      );
+    }
+    return meshes;
   }
 
   public dispose(): void {

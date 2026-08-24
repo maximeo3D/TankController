@@ -63,3 +63,17 @@ export function applyLevelEnvironment(scene: Scene, config: LevelEnvironmentConf
 export function resolveSunIntensity(config: LevelEnvironmentConfig | undefined, fallback: number): number {
   return config?.sunIntensity ?? fallback;
 }
+
+export function resolveSunDirectionalIntensity(
+  config: LevelEnvironmentConfig | undefined,
+  fallback: number
+): number {
+  return config?.sunDirectionalIntensity ?? fallback;
+}
+
+export function resolveSunDirection(
+  config: LevelEnvironmentConfig | undefined,
+  fallback: readonly [number, number, number]
+): [number, number, number] {
+  return config?.sunDirection ?? [fallback[0], fallback[1], fallback[2]];
+}

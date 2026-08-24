@@ -24,6 +24,10 @@ export interface LevelEnvironmentConfig {
   environmentIntensity?: number;
   /** Intensité de la HemisphericLight « sun ». */
   sunIntensity?: number;
+  /** Intensité du DirectionalLight qui projette les ombres (défaut ~0.45). */
+  sunDirectionalIntensity?: number;
+  /** Direction des rayons du soleil [x, y, z] (défaut [0.35, -1, 0.25]). */
+  sunDirection?: [number, number, number];
   fog?: LevelFogConfig;
 }
 

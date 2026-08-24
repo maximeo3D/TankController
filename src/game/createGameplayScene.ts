@@ -62,6 +62,11 @@ import {
   type MissileJetSmokeFactory
 } from "./vehicle/missileJetSmokeParticles";
 import { applyLevelEnvironment, resolveSunIntensity } from "./applyLevelEnvironment";
+import {
+  createDynamicShadows,
+  GAMEPLAY_CAMERA_MAX_Z,
+  type DynamicShadows
+} from "./createDynamicShadows";
 import { waitAnimationFrames } from "./frameTiming";
 import type { RadarWorldBounds } from "./RadarHud";
 
@@ -188,7 +193,7 @@ export async function createGameplayScene(
   const envTex = CubeTexture.CreateFromPrefilteredData(skyboxAssetUrl, scene);
   await waitForCubeTextureReady(envTex);
   scene.environmentTexture = envTex;
-  scene.environmentIntensity = level.environment?.environmentIntensity ?? 0.5;
+  scene.environmentIntensity = level.environment?.environmentIntensity ?? 0.25;
   onProgress(0.1);
 
   const skyboxReflection = envTex.clone();
@@ -205,12 +210,13 @@ export async function createGameplayScene(
     scene
   );
   fallbackCamera.minZ = 0.01;
+  fallbackCamera.maxZ = GAMEPLAY_CAMERA_MAX_Z;
   fallbackCamera.fov = toRadians(config.camera.defaultFovDeg);
   scene.activeCamera = fallbackCamera;
 
   new HemisphericLight("sun", new Vector3(0.2, 1, 0.1), scene).intensity = resolveSunIntensity(
     level.environment,
-    0.5
+    0.14
   );
 
   const havok = await HavokPhysics();
@@ -222,6 +228,7 @@ export async function createGameplayScene(
   const terrainContainer = await SceneLoader.LoadAssetContainerAsync("", level.terrainUrl, scene);
   terrainContainer.addAllToScene();
   hideColliderMeshes(terrainContainer, scene);
+  const dynamicShadows = createDynamicShadows(scene, terrainContainer, level.environment);
   const worldPhysics = createWorldPhysics(terrainContainer, scene);
   const radarWorldBounds = radarWorldBoundsOverride ?? computeRadarWorldBounds(terrainContainer);
   onProgress(0.38);
@@ -248,6 +255,9 @@ export async function createGameplayScene(
     } catch (err) {
       console.warn("[TankController] Enemy combat manager could not be created:", err);
     }
+  }
+  if (enemyTurretSystem && dynamicShadows) {
+    dynamicShadows.addCasterMeshes(enemyTurretSystem.collectShadowCasterMeshes());
   }
   onProgress(0.58);
 
@@ -336,7 +346,8 @@ export async function createGameplayScene(
         radarMapUrl,
         radarWorldBounds,
         onPlayerDeath,
-        sharedPowerUpSystem
+        sharedPowerUpSystem,
+        dynamicShadows
       });
       spawnedVehicles.push(spawned);
       levelManager.registerVehicle(
@@ -407,6 +418,8 @@ export async function createGameplayScene(
     fallbackCamera.dispose();
   }
 
+  dynamicShadows?.splitFrustum();
+
   const primarySpawn = spawnedVehicles[0];
   onProgress(1);
 
@@ -437,6 +450,7 @@ export async function createGameplayScene(
       levelManager.dispose();
       disposePhysicsGroup(worldPhysics);
       sharedPowerUpSystem?.dispose();
+      dynamicShadows?.dispose();
       for (const spawned of spawnedVehicles) {
         spawned.physics.body.dispose();
         spawned.physics.shape.dispose();
@@ -459,6 +473,7 @@ interface SpawnPlayerVehicleOptions {
   radarWorldBounds: RadarWorldBounds | null;
   onPlayerDeath: () => void;
   sharedPowerUpSystem?: PowerUpSystem | null;
+  dynamicShadows?: DynamicShadows | null;
 }
 
 /** Noms GLB d'une arme à projectile : munition, collider et rampes de tir. */
@@ -558,6 +573,7 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
     onPlayerDeath
   } = options;
   const sharedPowerUpSystem = options.sharedPowerUpSystem;
+  const dynamicShadows = options.dynamicShadows;
   const nodeNames = resolveVehicleNodeNames(vehicleConfig);
   const spawnNode = findTransformNode(terrainContainer, vehicleSpawn.spawnNode);
   if (!spawnNode) {
@@ -664,6 +680,7 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
     vehicleCamera = new UniversalCamera(`${vehicleSpawn.id}_orbit_camera`, startWorld.clone(), scene);
     vehicleCamera.fov = toRadians(vehicleConfig.camera.defaultFovDeg);
     vehicleCamera.minZ = 0.01;
+    vehicleCamera.maxZ = GAMEPLAY_CAMERA_MAX_Z;
     vehicleCamera.inputs.clear();
     vehicleCamera.attachControl(canvas, true);
     vehicleCamera.setTarget(pivotWorld);
@@ -675,6 +692,7 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
     vehicleZoomCamera = new UniversalCamera(`${vehicleSpawn.id}_zoom_camera`, Vector3.Zero(), scene);
     vehicleZoomCamera.fov = toRadians(vehicleConfig.camera.zoomViewFovDeg);
     vehicleZoomCamera.minZ = 0.01;
+    vehicleZoomCamera.maxZ = GAMEPLAY_CAMERA_MAX_Z;
     vehicleZoomCamera.inputs.clear();
     vehicleZoomCamera.rotationQuaternion = Quaternion.Identity();
 
@@ -859,6 +877,8 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
       console.warn("[TankController] Cannon muzzle particles could not be created:", err);
     }
   }
+
+  dynamicShadows?.addCastersFromRoot(vehicleVisualRoot);
 
   const controller = new TankGameplayController({
     scene,
