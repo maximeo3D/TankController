@@ -62,11 +62,7 @@ import {
   type MissileJetSmokeFactory
 } from "./vehicle/missileJetSmokeParticles";
 import { applyLevelEnvironment, resolveSunIntensity } from "./applyLevelEnvironment";
-import {
-  createDynamicShadows,
-  GAMEPLAY_CAMERA_MAX_Z,
-  type DynamicShadows
-} from "./createDynamicShadows";
+import { createDynamicShadows, type DynamicShadows } from "./createDynamicShadows";
 import { waitAnimationFrames } from "./frameTiming";
 import type { RadarWorldBounds } from "./RadarHud";
 
@@ -210,7 +206,6 @@ export async function createGameplayScene(
     scene
   );
   fallbackCamera.minZ = 0.01;
-  fallbackCamera.maxZ = GAMEPLAY_CAMERA_MAX_Z;
   fallbackCamera.fov = toRadians(config.camera.defaultFovDeg);
   scene.activeCamera = fallbackCamera;
 
@@ -680,7 +675,6 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
     vehicleCamera = new UniversalCamera(`${vehicleSpawn.id}_orbit_camera`, startWorld.clone(), scene);
     vehicleCamera.fov = toRadians(vehicleConfig.camera.defaultFovDeg);
     vehicleCamera.minZ = 0.01;
-    vehicleCamera.maxZ = GAMEPLAY_CAMERA_MAX_Z;
     vehicleCamera.inputs.clear();
     vehicleCamera.attachControl(canvas, true);
     vehicleCamera.setTarget(pivotWorld);
@@ -692,7 +686,6 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
     vehicleZoomCamera = new UniversalCamera(`${vehicleSpawn.id}_zoom_camera`, Vector3.Zero(), scene);
     vehicleZoomCamera.fov = toRadians(vehicleConfig.camera.zoomViewFovDeg);
     vehicleZoomCamera.minZ = 0.01;
-    vehicleZoomCamera.maxZ = GAMEPLAY_CAMERA_MAX_Z;
     vehicleZoomCamera.inputs.clear();
     vehicleZoomCamera.rotationQuaternion = Quaternion.Identity();
 

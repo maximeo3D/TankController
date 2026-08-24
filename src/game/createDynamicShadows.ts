@@ -15,9 +15,8 @@ const DEFAULT_SUN_DIRECTION: [number, number, number] = [0.35, -1, 0.25];
 /** Assez fort pour que l’ombre existe malgré IBL + hemi. */
 const DEFAULT_SUN_DIRECTIONAL_INTENSITY = 0.9;
 const SHADOW_MAP_SIZE = 1024;
+/** Portée des ombres, indépendante du far plane caméra. */
 const SHADOW_MAX_Z = 50;
-/** Far plane des caméras gameplay — le CSM découpe camera.maxZ, 10000 casse les ombres. */
-export const GAMEPLAY_CAMERA_MAX_Z = 80;
 
 export interface DynamicShadows {
   addCaster(mesh: AbstractMesh): void;
@@ -72,7 +71,7 @@ function prepareReceiverMaterial(mesh: AbstractMesh): void {
 }
 
 /**
- * Soleil directionnel + CSM (PCF) : le terrain reçoit, véhicules et ennemis projettent.
+ * Soleil directionnel + CSM (PCF) : terrain et DM_ reçoivent, véhicules, ennemis et DM_ projettent.
  */
 export function createDynamicShadows(
   scene: Scene,
@@ -101,20 +100,6 @@ export function createDynamicShadows(
     generator.autoCalcDepthBounds = false;
     generator.darkness = 0;
 
-    let receiverCount = 0;
-    for (const mesh of terrainContainer.meshes) {
-      if (!isTerrainShadowReceiver(mesh)) {
-        continue;
-      }
-      mesh.receiveShadows = true;
-      prepareReceiverMaterial(mesh);
-      receiverCount += 1;
-    }
-
-    if (receiverCount === 0) {
-      console.warn("[TankController] No terrain meshes marked to receive shadows.");
-    }
-
     const addCaster = (mesh: AbstractMesh): void => {
       if (!isGameplayShadowCaster(mesh)) {
         return;
@@ -122,6 +107,22 @@ export function createDynamicShadows(
       generator.addShadowCaster(mesh, false);
       mesh.receiveShadows = true;
     };
+
+    let receiverCount = 0;
+    for (const mesh of terrainContainer.meshes) {
+      if (isTerrainShadowReceiver(mesh)) {
+        mesh.receiveShadows = true;
+        prepareReceiverMaterial(mesh);
+        receiverCount += 1;
+      }
+      if (mesh.name.startsWith("DM_")) {
+        addCaster(mesh);
+      }
+    }
+
+    if (receiverCount === 0) {
+      console.warn("[TankController] No terrain meshes marked to receive shadows.");
+    }
 
     const splitFrustum = (): void => {
       generator.splitFrustum();
