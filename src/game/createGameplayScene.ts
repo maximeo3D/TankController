@@ -57,6 +57,7 @@ import { StackPanel } from "@babylonjs/gui";
 import { createTankDamageParticleBundle } from "./tankDamageParticles";
 import { createPostCombustionParticleBundle } from "./vehicle/postCombustionParticles";
 import { createCannonMuzzleParticleBundle } from "./vehicle/cannonMuzzleParticles";
+import { createGunShellEjectParticleBundle } from "./vehicle/gunShellEjectParticles";
 import {
   createMissileJetSmokeFactory,
   type MissileJetSmokeFactory
@@ -539,6 +540,7 @@ function resolveVehicleNodeNames(config: TankControllerConfig) {
     /** Rampes solidaires du bone de pitch ; par défaut obus + mitrailleuse. */
     pitchBoneMuzzles: nodes.pitchBoneMuzzles ?? [muzzleShell, ...gunMuzzles],
     gunMuzzleFlashMesh: nodes.gunMuzzleFlashMesh ?? "FX_muzzle_flash",
+    gunShells: nodes.gunShells ?? "FX_shells",
     playerTarget: nodes.playerTarget ?? "TARGET_player_tank",
     postCombustion: nodes.postCombustion ?? null,
     missileSmoke: primaryKind === "missile" ? nodes.missileSmoke ?? null : null,
@@ -871,6 +873,16 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
     }
   }
 
+  const shellsNode = findTransformNode(vehicleContainer, nodeNames.gunShells);
+  let gunShellEjectParticles = null;
+  if (shellsNode) {
+    gunShellEjectParticles = createGunShellEjectParticleBundle(scene, shellsNode);
+  } else if (vehicleSpawn.type === "armoredCar") {
+    console.warn(
+      `[TankController] Empty "${nodeNames.gunShells}" not found in armoredcar GLB; shell eject FX skipped.`
+    );
+  }
+
   dynamicShadows?.addCastersFromRoot(vehicleVisualRoot);
 
   const controller = new TankGameplayController({
@@ -905,6 +917,7 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
     trackTreadParticlesReverse,
     tankDamageParticles,
     cannonMuzzleParticles,
+    gunShellEjectParticles,
     postCombustionParticles,
     missileJetSmokeFactory,
     missileSmokeNodeName: nodeNames.missileSmoke,

@@ -305,6 +305,8 @@ export interface TankControllerConfig {
       gunMuzzles?: string[];
       /** Mesh flash mitrailleuse (ex. `FX_muzzle_flash`). */
       gunMuzzleFlashMesh?: string;
+      /** Empty d'éjection de douilles (ex. `FX_shells`). */
+      gunShells?: string;
       ammoShellMesh?: string;
       ammoShellColliderMesh?: string;
       ammoMissileMesh?: string;

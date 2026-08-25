@@ -96,6 +96,7 @@ import { HighlightLayer } from "@babylonjs/core/Layers/highlightLayer";
 import type { TrackTreadParticleBundle } from "./trackTreadParticles";
 import type { TankDamageParticleBundle } from "./tankDamageParticles";
 import type { CannonMuzzleParticleBundle } from "./vehicle/cannonMuzzleParticles";
+import type { GunShellEjectParticleBundle } from "./vehicle/gunShellEjectParticles";
 import type { PostCombustionParticleBundle } from "./vehicle/postCombustionParticles";
 import type {
   MissileJetSmokeFactory,
@@ -400,6 +401,8 @@ export interface TankGameplayControllerOptions {
   tankDamageParticles?: TankDamageParticleBundle | null;
   /** Flash + fumée de bouche de canon (tank, `MUZZLE_canon_tank`). */
   cannonMuzzleParticles?: CannonMuzzleParticleBundle | null;
+  /** Éjection de douilles depuis `FX_shells` (armored car, arme secondaire). */
+  gunShellEjectParticles?: GunShellEjectParticleBundle | null;
   /** Flamme de tuyère sur l'empty `jet_post_combustion` (mode `plane`). */
   postCombustionParticles?: PostCombustionParticleBundle | null;
   /** Factory fumée / turbine sur les missiles en vol (jet). */
@@ -586,6 +589,7 @@ export class TankGameplayController {
   private readonly trackTreadParticlesReverse: TrackTreadParticleBundle | null;
   private readonly tankDamageParticles: TankDamageParticleBundle | null;
   private readonly cannonMuzzleParticles: CannonMuzzleParticleBundle | null;
+  private readonly gunShellEjectParticles: GunShellEjectParticleBundle | null;
   private readonly postCombustionParticles: PostCombustionParticleBundle | null;
   private readonly missileJetSmokeFactory: MissileJetSmokeFactory | null;
   private readonly missileSmokeNodeName: string | null;
@@ -912,6 +916,7 @@ export class TankGameplayController {
     this.trackTreadParticlesReverse = options.trackTreadParticlesReverse ?? null;
     this.tankDamageParticles = options.tankDamageParticles ?? null;
     this.cannonMuzzleParticles = options.cannonMuzzleParticles ?? null;
+    this.gunShellEjectParticles = options.gunShellEjectParticles ?? null;
     this.postCombustionParticles = options.postCombustionParticles ?? null;
     this.missileJetSmokeFactory = options.missileJetSmokeFactory ?? null;
     this.missileSmokeNodeName = options.missileSmokeNodeName ?? null;
@@ -3947,6 +3952,7 @@ export class TankGameplayController {
     this.trackTreadParticlesReverse?.dispose();
     this.tankDamageParticles?.dispose();
     this.cannonMuzzleParticles?.dispose();
+    this.gunShellEjectParticles?.dispose();
     this.postCombustionParticles?.dispose();
     this.deathBlackMaterial?.dispose();
     this.deathBlackMaterial = null;
@@ -5087,6 +5093,7 @@ export class TankGameplayController {
     const baseForward = this.getMuzzleNodeWorldForward(muzzleGunNode);
     const muzzleRotation = this.getMuzzleNodeWorldRotation(muzzleGunNode);
     this.gunMuzzleFlashFx?.spawnAtMuzzle(muzzleGunNode);
+    this.gunShellEjectParticles?.playEject();
 
     // Dynamic bloom cone: grows with sustained firing (0° -> 9°).
     const maxAngleRad = (Math.PI / 180) * this.gunSpreadDeg;

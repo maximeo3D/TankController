@@ -39,6 +39,7 @@
       "muzzleRocket": "MUZZLE_rocket_armoredcar",
       "muzzleGun": "MUZZLE_mg_armoredcar",
       "gunMuzzleFlashMesh": "FX_muzzle_flash",
+      "gunShells": "FX_shells",
       "ammoRocketMesh": "AMMO_rocket",
       "ammoRocketColliderMesh": "COL_rocket",
       "playerTarget": "TARGET_player_armoredcar",

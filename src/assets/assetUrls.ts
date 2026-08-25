@@ -44,6 +44,7 @@ export const reticleMissileJetLockedAssetUrl = new URL(
   import.meta.url
 ).href;
 export const sparkImpactAssetUrl = new URL("../../assets/effects/spark.png", import.meta.url).href;
+export const shellCasingParticleUrl = new URL("../../assets/effects/shell.png", import.meta.url).href;
 export const explosionFlashJsonUrl = new URL("../../assets/effects/explosion_flash.json", import.meta.url).href;
 export const explosionShockwaveJsonUrl = new URL("../../assets/effects/explosion_shockwave.json", import.meta.url).href;
 export const explosionFlareTextureUrl = new URL("../../assets/effects/Flare.png", import.meta.url).href;
