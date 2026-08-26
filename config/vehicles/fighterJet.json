@@ -343,7 +343,7 @@
     },
     "bullet": {
       "shotsPerSecond": 15.0,
-      "damage": 8,
+      "damage": 15,
       "muzzleVelocity": 140.0,
       "gravityMultiplier": 0.5
     }
