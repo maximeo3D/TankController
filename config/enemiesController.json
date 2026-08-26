@@ -56,16 +56,16 @@
     "enabled": true,
     "meshName": "mesh_enemy_soldier_rifle",
     "spawnNodePrefix": "SPAWN_enemy_soldier_rifle_",
-    "armatureRoot": "armature_soldier_rifle",
+    "armatureRoot": "armature_enemy_soldier_rifle",
     "colliderMesh": "COL_enemy_soldier_rifle",
-    "ammoMesh": "AMMO_soldier_rifle",
-    "muzzleNodes": ["soldier_rifle_muzzle"],
+    "ammoMesh": "AMMO_enemy_soldier_rifle",
+    "muzzleNodes": ["enemy_soldier_rifle_muzzle"],
     "muzzleAttachBone": "buste",
     "damageSmokeNode": null,
     "lockTargetNode": null,
     "missileLockable": false,
     "playDeathExplosion": false,
-    "gunMuzzleFlashMesh": "FX_muzzle_flash",
+    "gunMuzzleFlashMesh": "FX_enemy_soldier_rifle_muzzle_flash",
     "fireSound": "soldier_rifle_ak_gun",
     "fireSoundVolume": 0.7,
     "detectionRange": 12,
@@ -169,6 +169,68 @@
       "fireAlignmentMaxAngleDeg": 10,
       "projectileKind": "rocket",
       "explosionRadius": 1.6
+    }
+  },
+  "allySoldierRifle": {
+    "enabled": true,
+    "faction": "ally",
+    "meshName": "mesh_ally_soldier_rifle",
+    "spawnNodePrefix": "SPAWN_ally_soldier_rifle_",
+    "armatureRoot": "armature_ally_soldier_rifle",
+    "colliderMesh": "COL_ally_soldier_rifle",
+    "ammoMesh": "AMMO_ally_soldier_rifle",
+    "muzzleNodes": ["ally_soldier_rifle_muzzle"],
+    "muzzleAttachBone": "buste",
+    "damageSmokeNode": null,
+    "lockTargetNode": null,
+    "missileLockable": false,
+    "playDeathExplosion": false,
+    "gunMuzzleFlashMesh": "FX_ally_soldier_rifle_muzzle_flash",
+    "fireSound": "soldier_rifle_famas_gun",
+    "fireSoundVolume": 0.7,
+    "detectionRange": 12,
+    "debug": {
+      "showAimVectors": false,
+      "showBulletVectors": false
+    },
+    "tracking": {
+      "yawSpeedDeg": 120,
+      "pitchSpeedDeg": 80,
+      "minPitchDeg": -60,
+      "maxPitchDeg": 60,
+      "yawOffsetDeg": 180
+    },
+    "rig": {
+      "yawBone": "base",
+      "pitchBone": "buste",
+      "yawAxis": "y",
+      "yawSign": -1,
+      "pitchAxis": "x",
+      "pitchSign": 1,
+      "pitchAimSign": 1,
+      "yawAimXSign": 1,
+      "yawAimZSign": 1,
+      "muzzleForwardAxis": "z",
+      "muzzleForwardSign": -1
+    },
+    "damageFlash": {
+      "durationSeconds": 0.12,
+      "maxAlpha": 0.35,
+      "color": [0.2, 0.55, 1]
+    },
+    "combat": {
+      "healthMax": 50,
+      "contactDamage": 0,
+      "shotsPerSecondPerBarrel": 12,
+      "burstCount": 3,
+      "burstPauseSeconds": 1,
+      "bulletDamage": 2,
+      "muzzleVelocity": 50,
+      "muzzleSpawnOffset": 0.08,
+      "gravityMultiplier": 0.5,
+      "projectileRadius": 0.08,
+      "projectileMaxLifeSeconds": 1,
+      "fireAlignmentMaxAngleDeg": 10
     }
   }
 }

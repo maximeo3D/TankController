@@ -5,6 +5,7 @@ export const fighterJetAssetUrl = new URL("../../assets/jet.glb", import.meta.ur
 export const helicopterAssetUrl = new URL("../../assets/helicopter.glb", import.meta.url).href;
 export const powerUpsAssetUrl = new URL("../../assets/power-ups.glb", import.meta.url).href;
 export const enemiesAssetUrl = new URL("../../assets/enemies.glb", import.meta.url).href;
+export const alliesAssetUrl = new URL("../../assets/allies.glb", import.meta.url).href;
 export const skyboxAssetUrl = new URL("../../assets/textures/skybox.env", import.meta.url).href;
 export const hudLayoutJsonUrl = new URL("../../assets/ui/UI_hud.json", import.meta.url).href;
 export const shellWeaponIconUrl = new URL("../../assets/ui/shell.png", import.meta.url).href;
@@ -100,6 +101,10 @@ export const helicopterGunSoundAssetUrl = new URL(
 ).href;
 export const soldierRifleGunSoundAssetUrl = new URL(
   "../../assets/sounds/soldier_rifle_ak_gun.wav",
+  import.meta.url
+).href;
+export const soldierRifleFamasGunSoundAssetUrl = new URL(
+  "../../assets/sounds/soldier_rifle_famas_gun.wav",
   import.meta.url
 ).href;
 export const suspensionImpactSoundAssetUrl = new URL(

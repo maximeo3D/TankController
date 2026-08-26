@@ -33,6 +33,13 @@ export interface EnemyTurretCombatConfig {
   healthMax: number;
   contactDamage: number;
   shotsPerSecondPerBarrel: number;
+  /** Nombre de tirs d'une rafale. Défaut : 1 (coup par coup). */
+  burstCount?: number;
+  /**
+   * Intervalle (s) entre le début de deux rafales.
+   * Ex. `1` = une rafale par seconde.
+   */
+  burstPauseSeconds?: number;
   bulletDamage: number;
   muzzleVelocity: number;
   /** Décalage le long de l'axe du canon pour éviter un impact immédiat avec la tourelle. */
@@ -61,12 +68,16 @@ export interface EnemyTurretDamageFlashConfig {
   color: [number, number, number];
 }
 
+export type CombatFaction = "enemy" | "ally";
+
 export interface EnemyTurretConfig {
   enabled: boolean;
+  /** Défaut : `enemy`. Les alliés visent les ennemis, jamais le joueur. */
+  faction?: CombatFaction;
   meshName: string;
   /** Préfixe des empties terrain, ex. `SPAWN_enemy_turret_` → `_1`, `_2`, … */
   spawnNodePrefix: string;
-  /** Nom du nœud armature à cloner dans `enemies.glb`. Défaut : `turret_armature`. */
+  /** Nom du nœud armature à cloner dans `enemies.glb` / `allies.glb`. Défaut : `turret_armature`. */
   armatureRoot?: string;
   colliderMesh?: string;
   ammoMesh?: string;
@@ -100,6 +111,7 @@ export interface EnemiesControllerConfig {
   turret: EnemyTurretConfig;
   soldierRifle?: EnemyTurretConfig;
   soldierRocket?: EnemyTurretConfig;
+  allySoldierRifle?: EnemyTurretConfig;
 }
 
 export const enemiesConfig = enemiesControllerConfig as EnemiesControllerConfig;

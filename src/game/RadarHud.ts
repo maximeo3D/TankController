@@ -16,6 +16,7 @@ export interface RadarWorldBounds {
 export interface RadarTarget {
   id: string;
   position: Vector3;
+  faction?: "enemy" | "ally";
 }
 
 interface RadarPingState {
@@ -129,7 +130,7 @@ export class RadarHud {
       }
       const targetAngle = Math.atan2(point.y - RADAR_SIZE_PX / 2, point.x - RADAR_SIZE_PX / 2);
       if (Math.abs(shortestAngleDelta(this.sweepAngle, targetAngle)) <= SWEEP_HIT_ANGLE_RAD) {
-        this.triggerPing(target.id, target.position, point.x, point.y);
+        this.triggerPing(target.id, target.position, point.x, point.y, target.faction);
       }
     }
 
@@ -159,7 +160,13 @@ export class RadarHud {
     this.root.dispose();
   }
 
-  private triggerPing(id: string, position: Vector3, x: number, y: number): void {
+  private triggerPing(
+    id: string,
+    position: Vector3,
+    x: number,
+    y: number,
+    faction: RadarTarget["faction"] = "enemy"
+  ): void {
     let ping = this.pings.get(id);
     const wasNew = !ping;
     if (!ping) {
@@ -167,8 +174,9 @@ export class RadarHud {
       marker.widthInPixels = 10;
       marker.heightInPixels = 10;
       marker.thickness = 2;
-      marker.color = "#ff3030";
-      marker.background = "rgba(255, 0, 0, 0.28)";
+      const style = radarPingStyle(faction);
+      marker.color = style.color;
+      marker.background = style.background;
       marker.isPointerBlocker = false;
       marker.zIndex = 3;
       this.root.addControl(marker);
@@ -254,6 +262,13 @@ export class RadarHud {
 
 function isPointVisible(x: number, y: number): boolean {
   return x >= 0 && x <= RADAR_SIZE_PX && y >= 0 && y <= RADAR_SIZE_PX;
+}
+
+function radarPingStyle(faction: RadarTarget["faction"]): { color: string; background: string } {
+  if (faction === "ally") {
+    return { color: "#3d9fff", background: "rgba(50, 140, 255, 0.32)" };
+  }
+  return { color: "#ff3030", background: "rgba(255, 0, 0, 0.28)" };
 }
 
 function normalizeRad(angle: number): number {

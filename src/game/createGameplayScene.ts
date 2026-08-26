@@ -35,7 +35,7 @@ import {
   getSuspensionContactOffset
 } from "../config/tankController";
 import { getVehicleConfig } from "../config/vehicleRegistry";
-import { tankAssetUrl, armoredCarAssetUrl, fighterJetAssetUrl, helicopterAssetUrl, skyboxAssetUrl, powerUpsAssetUrl, enemiesAssetUrl, vehicleTankIconUrl, vehicleArmoredCarIconUrl, vehicleFighterJetIconUrl, vehicleHelicopterIconUrl } from "../assets/assetUrls";
+import { tankAssetUrl, armoredCarAssetUrl, fighterJetAssetUrl, helicopterAssetUrl, skyboxAssetUrl, powerUpsAssetUrl, enemiesAssetUrl, alliesAssetUrl, vehicleTankIconUrl, vehicleArmoredCarIconUrl, vehicleFighterJetIconUrl, vehicleHelicopterIconUrl } from "../assets/assetUrls";
 import { enemiesConfig } from "../config/enemiesController";
 import { EnemyCombatManager } from "./EnemyCombatManager";
 import type { EnemyCombatSystem } from "./EnemyTurretSystem";
@@ -235,17 +235,28 @@ export async function createGameplayScene(
   const enemiesContainer = await SceneLoader.LoadAssetContainerAsync("", enemiesAssetUrl, scene);
   onProgress(0.52);
 
+  let alliesContainer: AssetContainer | null = null;
+  if (enemiesConfig.allySoldierRifle?.enabled) {
+    try {
+      alliesContainer = await SceneLoader.LoadAssetContainerAsync("", alliesAssetUrl, scene);
+    } catch (err) {
+      console.warn("[TankController] allies.glb could not be loaded:", err);
+    }
+  }
+
   let enemyTurretSystem: EnemyCombatSystem | null = null;
   const anyEnemyEnabled =
     enemiesConfig.turret.enabled ||
     (enemiesConfig.soldierRifle?.enabled ?? false) ||
-    (enemiesConfig.soldierRocket?.enabled ?? false);
+    (enemiesConfig.soldierRocket?.enabled ?? false) ||
+    (enemiesConfig.allySoldierRifle?.enabled ?? false);
   if (anyEnemyEnabled) {
     try {
       enemyTurretSystem = new EnemyCombatManager({
         scene,
         terrainContainer,
         enemiesContainer,
+        alliesContainer,
         config: enemiesConfig
       });
     } catch (err) {

@@ -14,7 +14,7 @@ import { PhysicsShapeMesh, PhysicsShapeSphere, type PhysicsShape } from "@babylo
 import type { Scene } from "@babylonjs/core/scene";
 import type { Node } from "@babylonjs/core/node";
 import { Sound } from "@babylonjs/core/Audio/sound";
-import type { EnemyTurretConfig } from "../config/enemiesController";
+import type { CombatFaction, EnemyTurretConfig } from "../config/enemiesController";
 import { resolveEnemySoundUrl } from "../assets/soundLibrary";
 import {
   createSingleDamageParticleBundle,
@@ -47,6 +47,8 @@ export interface EnemyTurretSystemOptions {
   scene: Scene;
   terrainContainer: AssetContainer;
   enemiesContainer: AssetContainer;
+  /** Nom du GLB templates, pour les logs. Défaut : `enemies.glb`. */
+  templatesGlbName?: string;
   config: EnemyTurretConfig;
 }
 
@@ -65,6 +67,7 @@ export interface EnemyTurretPlayerTarget {
 export interface EnemyTurretRadarTarget {
   id: string;
   position: Vector3;
+  faction: CombatFaction;
 }
 
 /** Cible verrouillable par le système de missiles du jet. */
@@ -86,7 +89,47 @@ export interface EnemyCombatSystem {
   applyDamageToTurret(spawnId: string, amount: number): boolean;
   applyExplosionDamageAt(worldPos: Vector3, amount: number, radius: number): void;
   collectShadowCasterMeshes(): AbstractMesh[];
+  getFaction(): CombatFaction;
+  collectCombatants(): CombatantSnapshot[];
+  matchCombatantFromHit(hit: unknown): CombatantSnapshot | null;
+  setCombatWorld(world: CombatWorld | null): void;
   dispose(): void;
+}
+
+export interface CombatantSnapshot {
+  id: string;
+  faction: CombatFaction | "player";
+  position: Vector3;
+  colliderMesh: AbstractMesh | null;
+  body: PhysicsBody | null;
+  applyDamage: ((amount: number) => void) | null;
+}
+
+export interface CombatWorld {
+  getNearestHostile(
+    from: Vector3,
+    faction: CombatFaction,
+    range: number
+  ): CombatantSnapshot | null;
+  isFriendlyHit(hit: unknown, shooterFaction: CombatFaction, shooterSpawnId: string): boolean;
+  resolveHostileHit(
+    hit: unknown,
+    shooterFaction: CombatFaction,
+    shooterSpawnId: string
+  ): CombatantSnapshot | null;
+}
+
+export function areFactionsHostile(
+  a: CombatFaction | "player",
+  b: CombatFaction | "player"
+): boolean {
+  if (a === b) {
+    return false;
+  }
+  if ((a === "ally" && b === "player") || (a === "player" && b === "ally")) {
+    return false;
+  }
+  return true;
 }
 
 interface ResolvedEnemyNodes {
@@ -150,6 +193,8 @@ interface EnemyTurretInstance {
   debugPivotMarker: AbstractMesh | null;
   nextBarrelIndex: number;
   fireCooldown: number;
+  burstShotsLeft: number;
+  currentTarget: CombatantSnapshot | null;
   /** Empty `target_*` du modèle ennemi (ex. `target_turret`). */
   lockTargetNode: TransformNode | AbstractMesh | null;
   colliderMesh: Mesh | null;
@@ -306,6 +351,7 @@ interface EnemyRocketProjectile {
   damage: number;
   explosionRadius: number;
   shooterBody: PhysicsBody | null;
+  shooterSpawnId: string;
   onHitPlayerDamage: ((amount: number) => void) | null;
 }
 
@@ -322,6 +368,7 @@ interface EnemyBulletTracer {
   hitsTank: boolean;
   /** Callback figé au tir — évite qu'un switch de véhicule redirige les dégâts en vol. */
   onHitPlayerDamage: ((amount: number) => void) | null;
+  onHitNpcDamage: ((amount: number) => void) | null;
   debugVisual: BulletDebugVisual | null;
 }
 
@@ -610,6 +657,7 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
   private readonly config: EnemyTurretConfig;
   private readonly nodes: ResolvedEnemyNodes;
   private readonly enemiesContainer: AssetContainer;
+  private readonly templatesGlbName: string;
   private readonly logTag: string;
   private readonly showAimDebug: boolean;
   private readonly showBulletDebug: boolean;
@@ -630,6 +678,7 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
   private onPlayerDamage: ((amount: number) => void) | null = null;
   private onBulletImpact: ((worldPos: Vector3) => void) | null = null;
   private onTurretDestroyed: ((worldPos: Vector3) => void) | null = null;
+  private combatWorld: CombatWorld | null = null;
   private readonly turretColliderMeshIds = new Set<number>();
   private readonly damageFlashColor: Color3;
   private readonly damageFlashDuration: number;
@@ -651,7 +700,8 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
     this.config = options.config;
     this.nodes = resolveEnemyNodes(options.config);
     this.enemiesContainer = options.enemiesContainer;
-    this.logTag = `[${options.config.spawnNodePrefix.replace(/^SPAWN_/i, "Enemy").replace(/_+$/, "")}]`;
+    this.templatesGlbName = options.templatesGlbName ?? "enemies.glb";
+    this.logTag = `[${options.config.spawnNodePrefix.replace(/^SPAWN_/i, "").replace(/_+$/, "")}]`;
     this.showAimDebug = options.config.debug?.showAimVectors ?? false;
     this.showBulletDebug = options.config.debug?.showBulletVectors ?? false;
     this.yawAxis = axisFromConfig(options.config.rig.yawAxis, options.config.rig.yawSign);
@@ -661,6 +711,11 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
       options.config.rig.muzzleForwardSign ?? 1
     );
     this.ammoTemplateMesh = findMeshInContainer(options.enemiesContainer, this.nodes.ammoMesh);
+    if (!this.ammoTemplateMesh && this.config.faction !== "ally") {
+      this.ammoTemplateMesh =
+        findMeshInContainer(options.enemiesContainer, "AMMO_enemy_soldier_rifle") ??
+        findMeshInContainer(options.enemiesContainer, "AMMO_soldier_rifle");
+    }
     this.colliderTemplateMesh = findMeshInContainer(options.enemiesContainer, this.nodes.colliderMesh);
     const flashConfig = options.config.damageFlash;
     const flashRgb = flashConfig?.color ?? [
@@ -672,12 +727,12 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
     this.damageFlashDuration = Math.max(0.01, flashConfig?.durationSeconds ?? DEFAULT_DAMAGE_FLASH.durationSeconds);
     this.damageFlashMaxAlpha = clamp(flashConfig?.maxAlpha ?? DEFAULT_DAMAGE_FLASH.maxAlpha, 0, 1);
     if (!this.ammoTemplateMesh) {
-      console.warn(`${this.logTag} Missing ${this.nodes.ammoMesh} template mesh in enemies.glb.`);
+      console.warn(`${this.logTag} Missing ${this.nodes.ammoMesh} template mesh in ${this.templatesGlbName}.`);
     } else {
       this.prepareAmmoTemplateMesh(this.ammoTemplateMesh);
     }
     if (!this.colliderTemplateMesh) {
-      console.warn(`${this.logTag} Missing ${this.nodes.colliderMesh} template mesh in enemies.glb.`);
+      console.warn(`${this.logTag} Missing ${this.nodes.colliderMesh} template mesh in ${this.templatesGlbName}.`);
     }
 
     this.hideTemplateAssets(options.enemiesContainer);
@@ -732,16 +787,60 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
     this.onTurretDestroyed = target.onTurretDestroyed ?? null;
   }
 
+  public getFaction(): CombatFaction {
+    return this.config.faction === "ally" ? "ally" : "enemy";
+  }
+
+  public setCombatWorld(world: CombatWorld | null): void {
+    this.combatWorld = world;
+  }
+
+  public collectCombatants(): CombatantSnapshot[] {
+    const faction = this.getFaction();
+    const combatants: CombatantSnapshot[] = [];
+    for (const instance of this.instances) {
+      if (!instance.alive) {
+        continue;
+      }
+      combatants.push({
+        id: instance.spawnId,
+        faction,
+        position: instance.anchor.getAbsolutePosition().clone(),
+        colliderMesh: instance.colliderMesh,
+        body: instance.physicsBody,
+        applyDamage: (amount) => this.applyDamageToInstance(instance, amount)
+      });
+    }
+    return combatants;
+  }
+
+  public matchCombatantFromHit(hit: unknown): CombatantSnapshot | null {
+    const instance = this.resolveInstanceFromWeaponHit(hit);
+    if (!instance) {
+      return null;
+    }
+    return {
+      id: instance.spawnId,
+      faction: this.getFaction(),
+      position: instance.anchor.getAbsolutePosition().clone(),
+      colliderMesh: instance.colliderMesh,
+      body: instance.physicsBody,
+      applyDamage: (amount) => this.applyDamageToInstance(instance, amount)
+    };
+  }
+
   public get instanceCount(): number {
     return this.instances.length;
   }
 
   public getRadarTargets(): EnemyTurretRadarTarget[] {
+    const faction = this.getFaction();
     return this.instances
       .filter((instance) => instance.alive)
       .map((instance) => ({
         id: instance.spawnId,
-        position: instance.anchor.getAbsolutePosition().clone()
+        position: instance.anchor.getAbsolutePosition().clone(),
+        faction
       }));
   }
 
@@ -785,29 +884,45 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
     }
 
     aimTarget.computeWorldMatrix(true);
-    const targetWorldPos = aimTarget.getAbsolutePosition();
-    this.playerAimWorldPos = targetWorldPos.clone();
+    const playerWorldPos = aimTarget.getAbsolutePosition();
+    this.playerAimWorldPos = playerWorldPos.clone();
     const detectionRangeSq = this.config.detectionRange * this.config.detectionRange;
+    const faction = this.getFaction();
 
     for (const instance of this.instances) {
       if (!instance.alive) {
         continue;
       }
 
-      const inRange =
-        Vector3.DistanceSquared(targetWorldPos, instance.anchor.getAbsolutePosition()) <= detectionRangeSq;
+      const from = instance.anchor.getAbsolutePosition();
+      const hostile =
+        this.combatWorld?.getNearestHostile(from, faction, this.config.detectionRange) ??
+        (faction === "enemy" &&
+        Vector3.DistanceSquared(playerWorldPos, from) <= detectionRangeSq
+          ? {
+              id: "player",
+              faction: "player" as const,
+              position: playerWorldPos.clone(),
+              colliderMesh: this.tankColliderMesh,
+              body: this.tankBody,
+              applyDamage: this.onPlayerDamage
+            }
+          : null);
 
-      if (inRange) {
+      if (hostile) {
         instance.tracking = true;
-        this.updateAimTargets(instance, targetWorldPos);
+        instance.currentTarget = hostile;
+        this.updateAimTargets(instance, hostile.position);
       } else {
         instance.tracking = false;
+        instance.currentTarget = null;
+        instance.burstShotsLeft = 0;
       }
 
       this.applyTracking(instance, dt);
       this.updateFiring(instance, dt);
       this.updateDamageFlash(instance, dt);
-      this.updateAimDebug(instance, targetWorldPos);
+      this.updateAimDebug(instance, instance.currentTarget?.position ?? playerWorldPos);
     }
 
     this.updateBulletTracers(dt);
@@ -918,7 +1033,7 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
 
     const armatureRoot = findArmatureRoot(enemiesContainer, this.nodes.armatureRoot);
     if (!armatureRoot) {
-      console.warn(`${this.logTag} Missing ${this.nodes.armatureRoot} template in enemies.glb.`);
+      console.warn(`${this.logTag} Missing ${this.nodes.armatureRoot} template in ${this.templatesGlbName}.`);
       return;
     }
 
@@ -1116,6 +1231,8 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
         tracking: false,
         nextBarrelIndex: 0,
         fireCooldown: 0,
+        burstShotsLeft: 0,
+        currentTarget: null,
         lockTargetNode,
         colliderMesh,
         physicsBody,
@@ -1415,6 +1532,7 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
 
     const barrelIndex = instance.nextBarrelIndex % muzzles.length;
     const aimPoint =
+      instance.currentTarget?.position.clone() ??
       this.playerAimWorldPos?.clone() ??
       this.getAimPointWorldPos(instance.anchor.getAbsolutePosition());
     if (!this.isReadyToFire(instance, aimPoint, barrelIndex)) {
@@ -1423,7 +1541,7 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
 
     this.fireFromMuzzle(instance, barrelIndex);
     instance.nextBarrelIndex = (barrelIndex + 1) % muzzles.length;
-    instance.fireCooldown = this.getFireIntervalSeconds(muzzles.length);
+    instance.fireCooldown = this.getPostShotCooldownSeconds(muzzles.length, instance);
   }
 
   private getActiveMuzzles(instance: EnemyTurretInstance): Array<TransformNode | AbstractMesh> {
@@ -1470,7 +1588,7 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
   ): TransformNode | null {
     const templateMuzzle = findNodeInContainer(this.enemiesContainer, muzzleName);
     if (!templateMuzzle) {
-      console.warn(`${this.logTag} Missing muzzle template "${muzzleName}" in enemies.glb.`);
+      console.warn(`${this.logTag} Missing muzzle template "${muzzleName}" in ${this.templatesGlbName}.`);
       return null;
     }
 
@@ -1513,8 +1631,16 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
       meshName,
       this.muzzleForwardLocal
     );
+    if (!this.gunMuzzleFlashFx && meshName !== "FX_muzzle_flash") {
+      this.gunMuzzleFlashFx = createGunMuzzleFlashFx(
+        this.scene,
+        enemiesContainer.meshes,
+        "FX_muzzle_flash",
+        this.muzzleForwardLocal
+      );
+    }
     if (!this.gunMuzzleFlashFx) {
-      console.warn(`${this.logTag} Missing ${meshName} muzzle flash mesh in enemies.glb.`);
+      console.warn(`${this.logTag} Missing ${meshName} muzzle flash mesh in ${this.templatesGlbName}.`);
     }
   }
 
@@ -1555,6 +1681,15 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
     } catch (err) {
       console.warn(`${this.logTag} Fire sound load failed:`, err);
     }
+  }
+
+  private shouldPlayFireSound(instance: EnemyTurretInstance): boolean {
+    const burstCount = Math.max(1, Math.floor(this.config.combat.burstCount ?? 1));
+    if (burstCount <= 1) {
+      return true;
+    }
+    // Le clip FAMAS est déjà une rafale : un seul play au premier coup.
+    return instance.burstShotsLeft <= 0;
   }
 
   private playFireSound(): void {
@@ -1605,6 +1740,29 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
     }
   }
 
+  private getPostShotCooldownSeconds(barrelCount: number, instance: EnemyTurretInstance): number {
+    const burstCount = Math.max(1, Math.floor(this.config.combat.burstCount ?? 1));
+    const interval = this.getFireIntervalSeconds(barrelCount);
+    if (burstCount <= 1) {
+      return interval;
+    }
+
+    if (instance.burstShotsLeft <= 0) {
+      instance.burstShotsLeft = burstCount;
+    }
+    instance.burstShotsLeft -= 1;
+    if (instance.burstShotsLeft > 0) {
+      return interval;
+    }
+
+    const pause = this.config.combat.burstPauseSeconds;
+    if (pause == null || pause <= 0) {
+      return interval;
+    }
+    const burstSpan = (burstCount - 1) * interval;
+    return Math.max(interval, pause - burstSpan);
+  }
+
   private getFireIntervalSeconds(barrelCount: number): number {
     const rate = this.config.combat.shotsPerSecondPerBarrel;
     if (rate <= 0) {
@@ -1650,7 +1808,13 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
     const origin = muzzlePos.add(dir.scale(spawnOffset)).clone();
     const bulletRotation = Quaternion.FromLookDirectionRH(dir, Axis.Y);
     const maxDistance = this.getBulletMaxDistance();
-    const { hitPoint, hitDistance, hitsTank } = this.raycastBulletHit(origin, dir, maxDistance);
+    const { hitPoint, hitDistance, hitsTank, hitNpc } = this.raycastBulletHit(
+      origin,
+      dir,
+      maxDistance,
+      false,
+      instance.spawnId
+    );
 
     const mesh = this.ammoTemplateMesh.clone(
       `enemy_bullet_${sanitizeNodeName(instance.spawnId)}_${this.bulletCloneSerial++}`,
@@ -1665,7 +1829,9 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
     this.prepareTracerMesh(mesh);
     mesh.position.copyFrom(origin);
     mesh.rotationQuaternion = bulletRotation.clone();
-    this.playFireSound();
+    if (this.shouldPlayFireSound(instance)) {
+      this.playFireSound();
+    }
     const muzzleNode = barrelIndex === 0 ? instance.muzzle1 : instance.muzzle2;
     if (muzzleNode) {
       this.gunMuzzleFlashFx?.spawnAtMuzzle(muzzleNode);
@@ -1692,7 +1858,9 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
       speed: this.config.combat.muzzleVelocity,
       rotation: bulletRotation,
       hitsTank,
-      onHitPlayerDamage: hitsTank && this.onPlayerDamage ? this.onPlayerDamage : null,
+      onHitPlayerDamage:
+        hitsTank && this.getFaction() === "enemy" && this.onPlayerDamage ? this.onPlayerDamage : null,
+      onHitNpcDamage: hitNpc?.applyDamage ?? null,
       debugVisual
     });
   }
@@ -1754,6 +1922,7 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
       damage: this.config.combat.bulletDamage,
       explosionRadius: Math.max(0, this.config.combat.explosionRadius ?? 1.6),
       shooterBody: instance.physicsBody,
+      shooterSpawnId: instance.spawnId,
       onHitPlayerDamage: this.onPlayerDamage
     };
     this.activeRockets.push(rocket);
@@ -1805,7 +1974,13 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
       const dist = delta.length();
       if (dist > 1e-5) {
         const dir = delta.scale(1 / dist);
-        const { hitPoint, hitsTank } = this.raycastBulletHit(rocket.lastPos, dir, dist, true);
+        const { hitPoint, hitsTank } = this.raycastBulletHit(
+          rocket.lastPos,
+          dir,
+          dist,
+          true,
+          rocket.shooterSpawnId
+        );
         const traveled = Vector3.Distance(rocket.lastPos, hitPoint);
         if (traveled < dist - 1e-4) {
           this.detonateRocket(rocket, hitPoint, hitsTank);
@@ -1932,19 +2107,32 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
     origin: Vector3,
     dir: Vector3,
     maxDistance: number,
-    passthroughOwnColliders = false
-  ): { hitPoint: Vector3; hitDistance: number; hitsTank: boolean } {
+    passthroughOwnColliders = false,
+    shooterSpawnId = ""
+  ): {
+    hitPoint: Vector3;
+    hitDistance: number;
+    hitsTank: boolean;
+    hitNpc: CombatantSnapshot | null;
+  } {
     const fallbackEnd = origin.add(dir.scale(maxDistance));
+    const empty = {
+      hitPoint: fallbackEnd.clone(),
+      hitDistance: maxDistance,
+      hitsTank: false,
+      hitNpc: null as CombatantSnapshot | null
+    };
     const physics = this.scene.getPhysicsEngine();
     if (!physics) {
-      return { hitPoint: fallbackEnd.clone(), hitDistance: maxDistance, hitsTank: false };
+      return empty;
     }
 
     let segmentStart = origin.clone();
     let traveled = 0;
     const passthroughEpsilon = 0.05;
     const maxSegments =
-      1 + this.ignoredPlayerBodies.length + (passthroughOwnColliders ? this.instances.length : 0);
+      1 + this.ignoredPlayerBodies.length + (passthroughOwnColliders ? this.instances.length : 0) + 8;
+    const faction = this.getFaction();
 
     for (let segment = 0; segment < maxSegments; segment++) {
       const remaining = maxDistance - traveled;
@@ -1962,7 +2150,8 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
         return {
           hitPoint: segmentEnd.clone(),
           hitDistance: maxDistance,
-          hitsTank: false
+          hitsTank: false,
+          hitNpc: null
         };
       }
 
@@ -1979,20 +2168,29 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
 
       traveled += segmentHitDistance;
 
-      if (this.isIgnoredPlayerBodyHit(hit) || (passthroughOwnColliders && this.isOwnColliderHit(hit))) {
+      const friendly =
+        this.isIgnoredPlayerBodyHit(hit) ||
+        (passthroughOwnColliders && this.isOwnColliderHit(hit)) ||
+        this.combatWorld?.isFriendlyHit(hit, faction, shooterSpawnId) === true ||
+        (faction === "ally" && this.isTankRaycastHit(hit));
+      if (friendly) {
         segmentStart = hitPoint.add(dir.scale(passthroughEpsilon));
         traveled = Math.min(traveled + passthroughEpsilon, maxDistance);
         continue;
       }
 
+      const hitsTank = faction === "enemy" && this.isTankRaycastHit(hit);
+      const hitNpc =
+        this.combatWorld?.resolveHostileHit(hit, faction, shooterSpawnId) ?? null;
       return {
         hitPoint,
         hitDistance: Math.min(traveled, maxDistance),
-        hitsTank: this.isTankRaycastHit(hit)
+        hitsTank,
+        hitNpc
       };
     }
 
-    return { hitPoint: fallbackEnd.clone(), hitDistance: maxDistance, hitsTank: false };
+    return empty;
   }
 
   private isRocketShooterHit(rocket: EnemyRocketProjectile, hit: unknown): boolean {
@@ -2067,6 +2265,12 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
           const damage = this.config.combat.bulletDamage;
           if (damage > 0) {
             tracer.onHitPlayerDamage(damage);
+          }
+        }
+        if (tracer.onHitNpcDamage) {
+          const damage = this.config.combat.bulletDamage;
+          if (damage > 0) {
+            tracer.onHitNpcDamage(damage);
           }
         }
         if (tracer.debugVisual) {
