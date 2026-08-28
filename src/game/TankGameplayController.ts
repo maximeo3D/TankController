@@ -35,6 +35,8 @@ import type {
 } from "../config/tankController";
 import { getProjectileWeaponKinds, getSuspensionContactOffset } from "../config/tankController";
 import { TankInput, type WeaponType } from "./TankInput";
+import { CargoHud } from "./CargoHud";
+import { TruckCargoSystem } from "./vehicle/TruckCargoSystem";
 import {
   AdvancedDynamicTexture,
   Rectangle,
@@ -547,6 +549,13 @@ export class TankGameplayController {
   private boostActive = false;
   private zoomActive = false;
   private fireHeld = false;
+  private cargoFireWasHeld = false;
+  private readonly cargoEnabled: boolean;
+  private cargoSystem: TruckCargoSystem | null = null;
+  private cargoHud: CargoHud | null = null;
+  private cargoPickSound: Sound | null = null;
+  private cargoDropSound: Sound | null = null;
+  private hudPanelBottom: Rectangle | null = null;
   private boostInputHeld = false;
   /** Turbo en cours : autorise de vider la jauge sous 20 % jusqu'à 0. */
   private boostEngaged = false;
@@ -848,15 +857,16 @@ export class TankGameplayController {
     // Babylon `Sound.play()` is gated by `scene.audioEnabled`.
     this.scene.audioEnabled = true;
     this.config = options.config;
+    this.cargoEnabled = options.config.cargo?.enabled === true;
     const bulletConfig = options.config.weapons.bullet;
-    this.bulletMagazineSize = Math.max(0, Math.floor(bulletConfig.magazineSize ?? 0));
-    this.bulletReloadSeconds = bulletConfig.reloadSeconds ?? 3;
-    this.bulletUnlimitedReserve = bulletConfig.unlimitedReserve === true;
+    this.bulletMagazineSize = Math.max(0, Math.floor(bulletConfig?.magazineSize ?? 0));
+    this.bulletReloadSeconds = bulletConfig?.reloadSeconds ?? 3;
+    this.bulletUnlimitedReserve = bulletConfig?.unlimitedReserve === true;
     this.bulletLoadedAmmo = this.bulletMagazineSize;
     this.projectileKinds = getProjectileWeaponKinds(options.config);
     this.projectileSlots = createProjectileWeaponSlots(options.config, options.projectileWeapons);
-    this.activeProjectileKind = this.projectileKinds[0];
-    this.activeWeapon = this.activeProjectileKind;
+    this.activeProjectileKind = this.projectileKinds[0] ?? "shell";
+    this.activeWeapon = this.projectileKinds[0] ?? "bullet";
     this.weaponHudDisplayedWeapon = this.activeWeapon;
     this.weaponHudAnimTargetWeapon = this.activeWeapon;
     this.onPlayerDeath = options.onPlayerDeath ?? null;
@@ -929,9 +939,12 @@ export class TankGameplayController {
     this.input = new TankInput(
       options.canvas,
       () => !this.paused,
-      options.config.weapons.zoomGunOnly === true
-        ? this.projectileKinds
-        : [...this.projectileKinds, "bullet"]
+      this.cargoEnabled
+        ? []
+        : options.config.weapons.zoomGunOnly === true
+          ? this.projectileKinds
+          : [...this.projectileKinds, "bullet"],
+      this.cargoEnabled ? options.config.cargo?.slotCount ?? 6 : 0
     );
     this.turretControl = resolveBoneControl(options.tankContainer, "tourelle");
     const pitchBoneName = options.config.rig.pitchBone ?? "canon";
@@ -992,6 +1005,23 @@ export class TankGameplayController {
       options.config.rig.movementForwardSign
     );
     this.movementInputSign = options.config.rig.movementInputSign;
+    if (this.cargoEnabled && options.config.cargo) {
+      try {
+        this.cargoSystem = new TruckCargoSystem({
+          scene: options.scene,
+          config: options.config.cargo,
+          vehicleContainer: options.tankContainer,
+          tankAnchor: this.tankAnchor,
+          tankBody: this.tankBody,
+          movementForwardAxis: options.config.rig.movementForwardAxis,
+          movementForwardSign: options.config.rig.movementForwardSign,
+          enemyCombat: this.enemyTurretSystem
+        });
+      } catch (err) {
+        console.error("[TankController] Truck cargo system init failed:", err);
+        this.cargoSystem = null;
+      }
+    }
     if ((options.config.movement.steeringMode ?? "tank") === "plane" && options.config.flight) {
       // Même combinaison de signes que la traction au sol : c'est le référentiel
       // dans lequel les rigs sont calibrés, donc le nez y est garanti correct.
@@ -1178,7 +1208,7 @@ export class TankGameplayController {
   }
 
   private addShellReserveAmmo(amount: number): void {
-    if (amount <= 0) {
+    if (amount <= 0 || this.projectileSlots.size === 0) {
       return;
     }
     this.shellReserveAmmo += amount;
@@ -1464,6 +1494,14 @@ export class TankGameplayController {
     this.hornSound = this.createConfigSound("horn", audio?.horn, {
       loop: false,
       volume: audio?.hornVolume ?? 0.8
+    });
+    this.cargoPickSound = this.createConfigSound("cargo_pick", audio?.cargoPick, {
+      loop: false,
+      volume: audio?.cargoPickVolume ?? 0.85
+    });
+    this.cargoDropSound = this.createConfigSound("cargo_drop", audio?.cargoDrop, {
+      loop: false,
+      volume: audio?.cargoDropVolume ?? 0.85
     });
     this.suspensionImpactSound = this.createConfigSound("suspension_impact", impactKey, {
       loop: false,
@@ -2119,6 +2157,70 @@ export class TankGameplayController {
     }
   }
 
+  private ensureCargoHud(): void {
+    if (!this.cargoEnabled || this.cargoHud || !this.hudTexture) {
+      return;
+    }
+    this.cargoHud = new CargoHud(this.hudTexture, this.config.cargo?.slotCount ?? 6);
+    this.syncCargoWeaponHudVisibility();
+    this.updateCargoHud();
+  }
+
+  private syncCargoWeaponHudVisibility(): void {
+    const showCargo = this.cargoEnabled && this.playerActive;
+    if (this.hudPanelBottom) {
+      this.hudPanelBottom.isVisible = !showCargo;
+    }
+    if (this.hudWeaponPrimary) {
+      this.hudWeaponPrimary.isVisible = !showCargo;
+    }
+    if (this.hudWeaponSecondary) {
+      this.hudWeaponSecondary.isVisible = !showCargo;
+    }
+    this.cargoHud?.setVisible(showCargo);
+  }
+
+  private updateCargoHud(): void {
+    if (!this.cargoHud || !this.cargoSystem) {
+      return;
+    }
+    this.cargoHud.setSelectedSlot(this.cargoSystem.getSelectedIndex());
+    this.cargoHud.setSlots(
+      this.cargoSystem.getSlots().map((slot) => ({
+        kind: slot?.kind ?? null,
+        iconUrl: slot?.iconUrl ?? null
+      }))
+    );
+  }
+
+  private updateCargoActions(fireHeld: boolean, dropRequested: boolean, selectedCargoSlot: number): void {
+    if (!this.cargoEnabled || !this.cargoSystem) {
+      this.cargoFireWasHeld = fireHeld;
+      return;
+    }
+    this.cargoSystem.setSelectedIndex(selectedCargoSlot);
+    const pickupPressed = fireHeld && !this.cargoFireWasHeld;
+    this.cargoFireWasHeld = fireHeld;
+    if (pickupPressed && this.cargoSystem.tryPickup()) {
+      this.playOneShot(this.cargoPickSound);
+      this.updateCargoHud();
+    }
+    if (dropRequested && this.cargoSystem.tryDrop(selectedCargoSlot)) {
+      this.playOneShot(this.cargoDropSound);
+      this.updateCargoHud();
+    }
+  }
+
+  private playOneShot(sound: Sound | null): void {
+    if (!this.audioUnlocked || !sound) {
+      return;
+    }
+    if (sound.isPlaying) {
+      sound.stop();
+    }
+    sound.play();
+  }
+
   private initRadarHud(): void {
     const sharedUi = getSceneGameplayUi(this.scene);
     if (sharedUi?.radarHud) {
@@ -2179,6 +2281,8 @@ export class TankGameplayController {
     this.hudWeaponSecondaryIcon = t.getControlByName("hud_weapon_secondary_icon") as Image | null;
     this.hudWeaponPrimaryAmmo = t.getControlByName("hud_weapon_primary_ammo") as TextBlock | null;
     this.hudWeaponSecondaryAmmo = t.getControlByName("hud_weapon_secondary_ammo") as TextBlock | null;
+    this.hudPanelBottom = t.getControlByName("hud_panel_bottom") as Rectangle | null;
+    this.ensureCargoHud();
     if (!skipLayoutSetup) {
       this.setupWeaponHudImages();
       this.setupWeaponHudLayout();
@@ -2381,6 +2485,7 @@ export class TankGameplayController {
     this.updateHelicopterTurretAimHud();
     this.updateHelicopterGunnerOverlay();
     this.updateWeaponHud(dt);
+    this.updateCargoHud();
     this.sessionElapsedSeconds += dt;
     if (this.hudTimerLabel) {
       this.hudTimerLabel.text = formatSessionTimer(this.sessionElapsedSeconds);
@@ -2772,6 +2877,7 @@ export class TankGameplayController {
     for (const name of [
       "hud_panel_status",
       "hud_panel_bottom",
+      "hud_cargo_root",
       "hud_panel_timer",
       "hud_panel_vehicles"
     ]) {
@@ -3164,6 +3270,10 @@ export class TankGameplayController {
   }
 
   private updateWeaponHud(dt: number): void {
+    if (this.cargoEnabled) {
+      this.syncCargoWeaponHudVisibility();
+      return;
+    }
     if (
       this.weaponHudAnimPhase === "idle" &&
       this.activeWeapon !== this.weaponHudDisplayedWeapon
@@ -3315,6 +3425,12 @@ export class TankGameplayController {
   }
 
   private refreshWeaponHudContent(): void {
+    if (this.cargoEnabled) {
+      this.syncCargoWeaponHudVisibility();
+      this.updateCargoHud();
+      return;
+    }
+    this.syncCargoWeaponHudVisibility();
     const slot = this.resolveHudProjectileSlot();
     const shellAmmoText = `${slot.loadedAmmo}/${slot.reserveAmmo}`;
     const bulletAmmoText = this.getBulletAmmoHudText();
@@ -3763,6 +3879,7 @@ export class TankGameplayController {
   }
 
   public getDebugState(): TankGameplayDebugState {
+    const slot = this.projectileSlots.get(this.activeProjectileKind);
     return {
       health: this.health,
       healthMax: this.healthMax,
@@ -3773,8 +3890,8 @@ export class TankGameplayController {
       boostActive: this.boostActive,
       zoomActive: this.zoomActive,
       activeWeapon: this.activeWeapon,
-      shellReserveAmmo: this.shellReserveAmmo,
-      shellChambered: this.shellChambered,
+      shellReserveAmmo: slot?.reserveAmmo ?? 0,
+      shellChambered: slot?.chambered ?? false,
       fireHeld: this.fireHeld,
       position: this.tankBody.getObjectCenterWorld()
     };
@@ -3796,6 +3913,10 @@ export class TankGameplayController {
     this.scene.onAfterPhysicsObservable.removeCallback(this.finishUprightResetPrestep);
     this.scene.onAfterPhysicsObservable.removeCallback(this.syncHelicopterAfterPhysics);
     this.input.dispose();
+    this.cargoSystem?.dispose();
+    this.cargoSystem = null;
+    this.cargoHud?.dispose();
+    this.cargoHud = null;
 
     this.debugCameraRayLine?.dispose();
     this.debugBarrelForwardLine?.dispose();
@@ -3928,6 +4049,12 @@ export class TankGameplayController {
     this.hornSound?.stop();
     this.hornSound?.dispose();
     this.hornSound = null;
+    this.cargoPickSound?.stop();
+    this.cargoPickSound?.dispose();
+    this.cargoPickSound = null;
+    this.cargoDropSound?.stop();
+    this.cargoDropSound?.dispose();
+    this.cargoDropSound = null;
     this.suspensionImpactSound?.stop();
     this.suspensionImpactSound?.dispose();
     this.suspensionImpactSound = null;
@@ -4182,6 +4309,7 @@ export class TankGameplayController {
       this.syncVehicleHudReticles();
       this.refreshWeaponHudContent();
       this.refreshStatusHudContent();
+      this.syncCargoWeaponHudVisibility();
       this.syncShieldHighlight();
       this.focusCamera();
       if (this.audioUnlocked) {
@@ -4191,6 +4319,8 @@ export class TankGameplayController {
     }
 
     this.releaseJetMissileLockUi();
+    this.cargoSystem?.clearHighlight();
+    this.cargoHud?.setVisible(false);
     this.hideSharedHud();
     this.syncShieldHighlight();
     this.applyPauseSideEffects();
@@ -4332,6 +4462,7 @@ export class TankGameplayController {
     this.resolveActiveWeapon(frame.selectedWeapon, frame.zoomHeld);
     this.fireHeld = frame.fireHeld;
     this.boostInputHeld = frame.boostHeld;
+    this.updateCargoActions(frame.fireHeld, frame.dropRequested, frame.selectedCargoSlot);
 
     if (this.uprightResetCooldown > 0) {
       this.uprightResetCooldown = Math.max(0, this.uprightResetCooldown - dt);
@@ -4403,6 +4534,7 @@ export class TankGameplayController {
     this.applyTurretAndCannon(frame.pointerX, frame.pointerY, dt);
     this.applyMinigunSpin(dt);
     this.updateWeapons(dt);
+    this.cargoSystem?.update(dt);
     this.applyMovement(frame.moveAxis, frame.turnAxis, frame.boostHeld, dt);
     if (this.flightModel || (this.helicopterModel && !frame.zoomHeld)) {
       this.applyChaseCamera(dt);
@@ -4467,7 +4599,9 @@ export class TankGameplayController {
   }
 
   private updateWeapons(dt: number): void {
-    // Bullet cooldown
+    if (this.cargoEnabled) {
+      return;
+    }
     if (this.bulletCooldownTimer > 0) {
       this.bulletCooldownTimer -= dt;
     }
@@ -4715,7 +4849,11 @@ export class TankGameplayController {
   }
 
   private usesJetMissileReticle(): boolean {
-    return this.activeProjectileKind === "missile" && Boolean(this.activeSlot.config.missileLock);
+    if (this.cargoEnabled) {
+      return false;
+    }
+    const slot = this.projectileSlots.get(this.activeProjectileKind);
+    return this.activeProjectileKind === "missile" && Boolean(slot?.config.missileLock);
   }
 
   private ensureJetMissileLockController(): void {
@@ -4798,7 +4936,10 @@ export class TankGameplayController {
 
   /** Rampes de tir de l'arme projectile sélectionnée (salve L/R, emports jet, canon…). */
   private collectActiveWeaponAimMuzzles(): (TransformNode | AbstractMesh)[] {
-    const slot = this.activeSlot;
+    const slot = this.projectileSlots.get(this.activeProjectileKind);
+    if (!slot) {
+      return this.muzzleCannonNode ? [this.muzzleCannonNode] : [];
+    }
 
     // Emports jumelles (jet) : moyenne L/R pour le réticule, pas seulement muzzleMissile.
     if (slot.hardpoints.length > 0) {
@@ -4908,6 +5049,9 @@ export class TankGameplayController {
   }
 
   private updateJetMissileLock(dt: number): void {
+    if (this.cargoEnabled) {
+      return;
+    }
     const missileSelected = this.usesJetMissileReticle() && this.isPrimaryWeapon(this.activeWeapon);
     if (!missileSelected && !this.jetMissileLock) {
       return;
@@ -4928,6 +5072,9 @@ export class TankGameplayController {
    * projectiles à la vue normale, sans changement de munition possible en zoom.
    */
   private resolveActiveWeapon(selected: WeaponType, zoomHeld: boolean): void {
+    if (this.cargoEnabled) {
+      return;
+    }
     if (selected !== "bullet" && this.projectileSlots.has(selected)) {
       this.activeProjectileKind = selected;
     }
@@ -4967,9 +5114,10 @@ export class TankGameplayController {
   private initMuzzleFlashLights(): void {
     const flashColor = new Color3(1, 0.94, 0.72);
     const flashSpecular = new Color3(1, 0.88, 0.55);
+    const prefix = this.tankAnchor.name;
 
     for (let i = 0; i < TankGameplayController.GUN_MUZZLE_FLASH_POOL_SIZE; i++) {
-      const light = new PointLight(`gun_muzzle_flash_${i}`, Vector3.Zero(), this.scene);
+      const light = new PointLight(`${prefix}_gun_muzzle_flash_${i}`, Vector3.Zero(), this.scene);
       light.diffuse = flashColor;
       light.specular = flashSpecular;
       light.intensity = 0;
@@ -4979,7 +5127,7 @@ export class TankGameplayController {
     }
 
     for (let i = 0; i < TankGameplayController.CANNON_MUZZLE_FLASH_POOL_SIZE; i++) {
-      const light = new PointLight(`cannon_muzzle_flash_${i}`, Vector3.Zero(), this.scene);
+      const light = new PointLight(`${prefix}_cannon_muzzle_flash_${i}`, Vector3.Zero(), this.scene);
       light.diffuse = flashColor;
       light.specular = flashSpecular;
       light.intensity = 0;
@@ -5045,7 +5193,7 @@ export class TankGameplayController {
   }
 
   private fireBullet(): void {
-    this.bulletCooldownTimer = 1.0 / this.config.weapons.bullet.shotsPerSecond;
+    this.bulletCooldownTimer = 1.0 / (this.config.weapons.bullet?.shotsPerSecond ?? 10);
     if (this.bulletMagazineSize > 0) {
       this.bulletLoadedAmmo = Math.max(0, this.bulletLoadedAmmo - 1);
       if (this.bulletLoadedAmmo <= 0) {
@@ -5142,7 +5290,7 @@ export class TankGameplayController {
       hitPoint: hitPoint.clone(),
       hitDistance,
       traveled: 0,
-      speed: this.config.weapons.bullet.muzzleVelocity,
+      speed: this.config.weapons.bullet?.muzzleVelocity ?? 80,
       rotation: muzzleRotation,
       turretSpawnId
     });
@@ -5548,7 +5696,7 @@ export class TankGameplayController {
         if (tracer.turretSpawnId) {
           this.enemyTurretSystem?.applyDamageToTurret(
             tracer.turretSpawnId,
-            this.config.weapons.bullet.damage
+            this.config.weapons.bullet?.damage ?? 0
           );
         }
         tracer.mesh.dispose();
@@ -5917,6 +6065,16 @@ export class TankGameplayController {
   }
 
   private updateBarrelReticles(camera: Camera): void {
+    if (this.cargoEnabled) {
+      if (this.barrelShellReticle2D) {
+        this.barrelShellReticle2D.isVisible = false;
+      }
+      if (this.barrelGunReticle2D) {
+        this.barrelGunReticle2D.isVisible = false;
+      }
+      this.syncCameraReticleVisibility();
+      return;
+    }
     if (!this.muzzleCannonNode || !this.peekGunMuzzleNode()) {
       return;
     }

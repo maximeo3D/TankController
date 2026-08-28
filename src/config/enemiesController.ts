@@ -77,6 +77,8 @@ export interface EnemyTurretConfig {
   meshName: string;
   /** Préfixe des empties terrain, ex. `SPAWN_enemy_turret_` → `_1`, `_2`, … */
   spawnNodePrefix: string;
+  /** Type d'emport camion (icône HUD). Défaut dérivé du préfixe de spawn. */
+  cargoKind?: string;
   /** Nom du nœud armature à cloner dans `enemies.glb` / `allies.glb`. Défaut : `turret_armature`. */
   armatureRoot?: string;
   colliderMesh?: string;

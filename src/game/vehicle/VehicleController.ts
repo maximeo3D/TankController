@@ -7,7 +7,7 @@ import type { EnemyTurretPlayerTarget } from "../EnemyTurretSystem";
 export type VehicleInstanceId = string;
 
 /** Type de véhicule (définition gameplay / asset). */
-export type VehicleTypeId = "tank" | "armoredCar" | "fighterJet" | "helicopter";
+export type VehicleTypeId = "tank" | "armoredCar" | "fighterJet" | "helicopter" | "truck";
 
 export interface VehicleDebugState {
   health: number;

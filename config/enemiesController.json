@@ -174,6 +174,7 @@
   "allySoldierRifle": {
     "enabled": true,
     "faction": "ally",
+    "cargoKind": "ally_soldier_rifle",
     "meshName": "mesh_ally_soldier_rifle",
     "spawnNodePrefix": "SPAWN_ally_soldier_rifle_",
     "armatureRoot": "armature_ally_soldier_rifle",

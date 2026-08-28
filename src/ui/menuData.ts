@@ -1,7 +1,7 @@
 import { terrainAssetUrl } from "../assets/assetUrls";
 import type { LevelDefinition } from "../app/levels";
 
-export type VehicleTypeId = "tank" | "armoredCar" | "fighterJet" | "helicopter";
+export type VehicleTypeId = "tank" | "armoredCar" | "fighterJet" | "helicopter" | "truck";
 
 export interface MissionVehicleSpawn {
   id: string;
@@ -77,8 +77,9 @@ export const MENU_MAPS: readonly MenuMapEntry[] = [
         vehicles: [
           { id: "player_tank", type: "tank", spawnNode: "SPAWN_tank" },
           { id: "player_armoredcar", type: "armoredCar", spawnNode: "SPAWN_armoredcar" },
-          { id: "player_jet", type: "fighterJet", spawnNode: "SPAWN_jet" },
-          { id: "player_helicopter", type: "helicopter", spawnNode: "SPAWN_helicopter" }
+          // { id: "player_jet", type: "fighterJet", spawnNode: "SPAWN_jet" },
+          // { id: "player_helicopter", type: "helicopter", spawnNode: "SPAWN_helicopter" },
+          { id: "player_truck", type: "truck", spawnNode: "SPAWN_truck" }
         ],
         startVehicleId: "player_armoredcar"
       }

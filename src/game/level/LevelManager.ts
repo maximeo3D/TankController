@@ -55,7 +55,18 @@ export class LevelManager {
     previous?.deactivate();
 
     this.activeVehicleId = id;
-    next.activate();
+    try {
+      next.activate();
+    } catch (err) {
+      console.error(`[LevelManager] Failed to activate vehicle "${id}".`, err);
+      this.activeVehicleId = previous?.id ?? null;
+      try {
+        previous?.activate();
+      } catch (restoreErr) {
+        console.error(`[LevelManager] Failed to restore vehicle "${previous?.id}".`, restoreErr);
+      }
+      return false;
+    }
     this.syncPauseState();
     this.onActiveVehicleChanged?.(next);
     return true;

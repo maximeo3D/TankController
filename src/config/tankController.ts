@@ -547,6 +547,10 @@ export interface TankControllerConfig {
     engineTurbo?: string | null;
     /** Klaxon (touche H). */
     horn?: string | null;
+    /** Ramassage d'entité (camion). */
+    cargoPick?: string | null;
+    /** Dépose d'entité (camion). */
+    cargoDrop?: string | null;
     /** Son de mitrailleuse. */
     gun?: string | null;
     /**
@@ -573,6 +577,8 @@ export interface TankControllerConfig {
     /** Volume de la boucle `helicopter_blades` en turbo. */
     helicopterBladesVolumeTurbo?: number;
     hornVolume?: number;
+    cargoPickVolume?: number;
+    cargoDropVolume?: number;
     /** Délai min. entre deux coups de klaxon (s). */
     hornCooldownSeconds?: number;
     /** Volume de `suspensionImpact` à `suspensionImpactMinSpeed`. */
@@ -599,6 +605,22 @@ export interface TankControllerConfig {
     overchargeRechargePerSecond: number;
     /** Seuil min. (0–1) pour activer le turbo ; en dessous, reactivation bloquée jusqu'à recharge. */
     overchargeMinActivateRatio?: number;
+  };
+  /**
+   * Transport d'entités (camion). Remplace le HUD d'armes par des emplacements
+   * d'emport. Clic gauche = ramasser, F = déposer, molette = slot.
+   */
+  cargo?: {
+    enabled: boolean;
+    slotCount: number;
+    /** Angle total du cône de ramassage (deg). 90 = ±45°. */
+    pickupConeDeg: number;
+    pickupRange: number;
+    pickupOrigin: string;
+    dropNode: string;
+    dropBackwardOffset?: number;
+    dropSideSpacing?: number;
+    dropRowSpacing?: number;
   };
   powerUps?: {
     enabled: boolean;
@@ -638,7 +660,7 @@ export interface TankControllerConfig {
     rocket?: ProjectileWeaponConfig;
     /** Missiles guidés (jet, hélicoptère). */
     missile?: ProjectileWeaponConfig;
-    bullet: {
+    bullet?: {
       shotsPerSecond: number;
       damage: number;
       muzzleVelocity: number;
@@ -694,19 +716,21 @@ export const PROJECTILE_WEAPON_KINDS: readonly PrimaryWeaponKind[] = ["shell", "
 
 /** Toutes les armes à projectile du véhicule, dans l'ordre de cycle joueur. */
 export function getProjectileWeaponKinds(config: TankControllerConfig): PrimaryWeaponKind[] {
-  const kinds = PROJECTILE_WEAPON_KINDS.filter((kind) => Boolean(config.weapons[kind]));
-  if (kinds.length === 0) {
-    throw new Error("Vehicle config must define weapons.shell, weapons.rocket, or weapons.missile");
+  if (config.cargo?.enabled) {
+    return [];
   }
-  return kinds;
+  return PROJECTILE_WEAPON_KINDS.filter((kind) => Boolean(config.weapons[kind]));
 }
 
-export function getPrimaryWeaponKind(config: TankControllerConfig): PrimaryWeaponKind {
-  return getProjectileWeaponKinds(config)[0];
+export function getPrimaryWeaponKind(config: TankControllerConfig): PrimaryWeaponKind | null {
+  return getProjectileWeaponKinds(config)[0] ?? null;
 }
 
 export function getPrimaryWeaponConfig(config: TankControllerConfig): ProjectileWeaponConfig {
   const kind = getPrimaryWeaponKind(config);
+  if (!kind) {
+    throw new Error("Vehicle has no primary projectile weapon");
+  }
   const weapon = config.weapons[kind];
   if (!weapon) {
     throw new Error(`Missing weapons.${kind} in vehicle config`);

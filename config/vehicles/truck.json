@@ -1,0 +1,256 @@
+{
+  "debug": {
+    "showSuspensionSpheres": false,
+    "showPowerUpBounds": false,
+    "showMuzzleEmpties": false
+  },
+  "rig": {
+    "spawnYawOffsetDeg": 0.0,
+    "movementForwardAxis": "z",
+    "movementForwardSign": 1,
+    "movementInputSign": -1,
+    "turretYawAxis": "z",
+    "turretYawSign": -1,
+    "cannonPitchAxis": "x",
+    "cannonPitchSign": 1,
+    "wheelBones": ["wheel_FL", "wheel_FR", "wheel_ML", "wheel_MR", "wheel_RL", "wheel_RR"],
+    "frontWheelBones": ["wheel_FL", "wheel_FR"],
+    "wheelSpinAxis": "x",
+    "wheelSpinSign": 1,
+    "wheelSteerAxis": "y",
+    "wheelSteerSign": 1,
+    "wheelSteerMaxDeg": 34.0,
+    "wheelSteerSharpness": 12.0,
+    "wheelRadius": 0.11,
+    "wheelTravelEnabled": true,
+    "wheelTravelAxis": "y",
+    "wheelTravelSign": 1,
+    "wheelTravelSharpness": 25.0,
+    "suspensionProbeNames": ["SUS_FL", "SUS_FR", "SUS_ML", "SUS_MR", "SUS_RL", "SUS_RR"],
+    "nodes": {
+      "colliderMesh": "COL_truck",
+      "cameraPivot": "CAM_pivot",
+      "cameraStart": "CAM_truck",
+      "cameraZoom": "CAM_truck_zoom",
+      "playerTarget": "TARGET_player_truck",
+      "damageSmoke": ["truck_damage_smoke_1"]
+    }
+  },
+  "movement": {
+    "steeringMode": "car",
+    "moveSpeed": 0.22,
+    "boostMultiplier": 1.25,
+    "hullTurnSpeedDeg": 95.0,
+    "carMinSteerSpeed": 0.3,
+    "carSteerReferenceSpeed": 1.8,
+    "carSteerMinSpeedFactor": 0.8,
+    "carSteerGripMultiplier": 2.6,
+    "requireGroundContactForControl": true,
+    "acceleration": 4.5,
+    "brakeDeceleration": 5.5,
+    "inputRiseRate": 1.8,
+    "inputFallRate": 2.4,
+    "lateralGrip": 1.2
+  },
+  "physics": {
+    "tankMass": 18.0,
+    "tankLinearDamping": 2.6,
+    "tankAngularDamping": 1.5,
+    "airborneLinearDamping": 0.06,
+    "airborneAngularDamping": 0.22,
+    "tankCenterOfMassYOffset": -0.06,
+    "tankFriction": 0.95,
+    "tankRestitution": 0.02
+  },
+  "grounding": {
+    "probeStartHeight": 0.013,
+    "maxHitAboveProbeBaseY": 0.1,
+    "probeLength": 3.0,
+    "groundClearance": 0.0,
+    "groundSnapSpeed": 16.0,
+    "maxGroundSlopeDeg": 50.0,
+    "visualTiltSharpness": 9.0,
+    "positionSharpness": 12.0,
+    "drivePitchMaxDeg": 2.0,
+    "drivePitchInputRateScale": 0.3,
+    "drivePitchAccelScale": 0.08,
+    "drivePitchAccelSharpness": 8.0,
+    "drivePitchSharpness": 5.0
+  },
+  "suspension": {
+    "rayStartHeight": 0.85,
+    "rayLength": 3.0,
+    "restLength": 0.02,
+    "springForcesEnabled": true,
+    "groundContactTolerance": 0.12,
+    "springStrength": 2200.0,
+    "damperStrength": 58.0,
+    "reboundDampingScale": 0.5,
+    "compressionDampingScale": 0.7,
+    "extensionSpringScale": 0.0,
+    "landingBounceRestitution": 0.16,
+    "landingBounceMinSpeed": 1.2,
+    "landingBounceMaxSpeed": 9.0,
+    "landingBounceMinAirSeconds": 0.12,
+    "maxForce": 5200.0,
+    "tractionForce": 380.0,
+    "lateralFriction": 11.0
+  },
+  "turret": {
+    "yawSpeedDeg": 90.0,
+    "mouseSensitivityDegPerPixel": 0.35
+  },
+  "cannon": {
+    "pitchSpeedDeg": 30.0,
+    "mouseSensitivityDegPerPixel": 0.2,
+    "minPitchDeg": -8.0,
+    "maxPitchDeg": 25.0,
+    "recoilKickY": 0.0,
+    "recoilReturnSpeed": 0.35,
+    "hullRecoilReturnSpeed": 0.12,
+    "hullRecoilKickDeg": 0.0,
+    "hullRecoilSign": 1
+  },
+  "camera": {
+    "defaultFovDeg": 60.0,
+    "zoomFovMultiplier": 0.5,
+    "zoomViewFovDeg": 45.0,
+    "boostFovMultiplier": 1.06,
+    "orbitCollisionEnabled": true,
+    "orbitCollisionPadding": 0.25,
+    "orbitYawDegPerPixel": 0.18,
+    "orbitPitchDegPerPixel": 0.14,
+    "orbitYawSign": -1,
+    "orbitPitchSign": 1,
+    "orbitClampRadius": true,
+    "orbitMinPitchDeg": -16.0,
+    "orbitMaxPitchDeg": 24.0,
+    "orbitMinRadius": 0.1,
+    "orbitMaxRadius": 18.0,
+    "orbitDefaultRadius": 9.0,
+    "shellShotShakeDurationSeconds": 0.0,
+    "shellShotShakeAmplitude": 0.0
+  },
+  "aim": {
+    "cameraMaxTargetDistance": 200.0,
+    "barrelRayMaxDistance": 200.0
+  },
+  "vehicle": {
+    "healthMax": 220,
+    "startingHealth": 220
+  },
+  "audio": {
+    "engineIdle": "truck_idle",
+    "engineMove": "truck_move",
+    "engineTurbo": "truck_turbo",
+    "horn": "truck_horn",
+    "cargoPick": "truck_pick",
+    "cargoDrop": "truck_spawn",
+    "suspensionImpact": "suspension",
+    "engineIdleVolume": 0.22,
+    "engineMoveVolumeMin": 0.14,
+    "engineMoveVolumeMax": 0.38,
+    "engineTurboVolume": 0.42,
+    "hornVolume": 0.8,
+    "cargoPickVolume": 0.85,
+    "cargoDropVolume": 0.85,
+    "suspensionImpactVolumeMin": 0.5,
+    "suspensionImpactVolumeMax": 1,
+    "suspensionImpactMinSpeed": 1.2,
+    "suspensionImpactMaxSpeed": 9.0
+  },
+  "energy": {
+    "batteryMax": 100.0,
+    "overchargeMax": 100.0,
+    "startingBattery": 100.0,
+    "startingOvercharge": 100.0,
+    "batteryDrainMovingPerSecond": 1.0,
+    "overchargeDrainBoostPerSecond": 10.0,
+    "overchargeRechargePerSecond": 5.0
+  },
+  "cargo": {
+    "enabled": true,
+    "slotCount": 6,
+    "pickupConeDeg": 90,
+    "pickupRange": 2.4,
+    "pickupOrigin": "TARGET_player_truck",
+    "dropNode": "truck_spawner",
+    "dropBackwardOffset": 0.22,
+    "dropSideSpacing": 0.22,
+    "dropRowSpacing": 0.28
+  },
+  "powerUps": {
+    "enabled": true,
+    "pickupRadius": 0.35,
+    "highlight": {
+      "blurHorizontalSize": 0.15,
+      "blurVerticalSize": 0.15
+    },
+    "animation": {
+      "bobAmplitude": 0.12,
+      "bobPeriodSeconds": 2.5,
+      "rotationPeriodSeconds": 10.0
+    },
+    "types": {
+      "ammo_shell": {
+        "enabled": false,
+        "respawnSeconds": 30.0,
+        "pickedAlpha": 0.25,
+        "singleUse": false,
+        "highlightAvailable": [0.15, 1.0, 0.35],
+        "highlightCooldown": [1.0, 0.2, 0.15],
+        "shellAmmoAmount": 8
+      },
+      "fuel": {
+        "enabled": true,
+        "respawnSeconds": 30.0,
+        "pickedAlpha": 0.25,
+        "singleUse": false,
+        "highlightAvailable": [1, 0.85, 0],
+        "highlightCooldown": [1.0, 0.2, 0.15],
+        "batteryAmount": 100
+      },
+      "boost": {
+        "enabled": false,
+        "respawnSeconds": 20.0,
+        "pickedAlpha": 0.25,
+        "singleUse": false,
+        "highlightAvailable": [1.0, 0.85, 0.2],
+        "highlightCooldown": [1.0, 0.2, 0.15],
+        "boostDurationSeconds": 5.0
+      },
+      "repair": {
+        "enabled": true,
+        "respawnSeconds": 5.0,
+        "pickedAlpha": 0.25,
+        "singleUse": false,
+        "highlightAvailable": [1, 1, 1],
+        "highlightCooldown": [1.0, 0.2, 0.15],
+        "repairAmount": 80
+      },
+      "shield": {
+        "enabled": true,
+        "respawnSeconds": 40.0,
+        "pickedAlpha": 0.25,
+        "singleUse": true,
+        "highlightAvailable": [0.2, 0.65, 1.0],
+        "highlightCooldown": [1.0, 0.2, 0.15],
+        "shieldDurationSeconds": 8.0,
+        "damageReduction": 1.0
+      },
+      "weapon_boost": {
+        "enabled": false,
+        "respawnSeconds": 25.0,
+        "pickedAlpha": 0.25,
+        "singleUse": false,
+        "highlightAvailable": [1.0, 0.45, 0.2],
+        "highlightCooldown": [1.0, 0.2, 0.15],
+        "damageMultiplier": 1.5
+      }
+    }
+  },
+  "weapons": {
+    "powerUpBonusPerStack": 0.25,
+    "maxStacks": 2
+  }
+}

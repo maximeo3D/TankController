@@ -1,7 +1,7 @@
 import type { AssetContainer } from "@babylonjs/core/assetContainer";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import type { TransformNode } from "@babylonjs/core/Meshes/transformNode";
-import { Vector3 } from "@babylonjs/core/Maths/math.vector";
+import { Quaternion, Vector3 } from "@babylonjs/core/Maths/math.vector";
 import type { Scene } from "@babylonjs/core/scene";
 import type { CombatFaction, EnemiesControllerConfig } from "../config/enemiesController";
 import {
@@ -12,7 +12,8 @@ import {
   type EnemyCombatSystem,
   type EnemyLockTarget,
   type EnemyTurretPlayerTarget,
-  type EnemyTurretRadarTarget
+  type EnemyTurretRadarTarget,
+  type CargoPickable
 } from "./EnemyTurretSystem";
 
 export interface EnemyCombatManagerOptions {
@@ -235,6 +236,30 @@ export class EnemyCombatManager implements EnemyCombatSystem, CombatWorld {
 
   public collectShadowCasterMeshes(): AbstractMesh[] {
     return this.systems.flatMap((system) => system.collectShadowCasterMeshes());
+  }
+
+  public getCargoPickables(): CargoPickable[] {
+    return this.systems.flatMap((system) => system.getCargoPickables());
+  }
+
+  public setCargoPickupHighlight(id: string | null): void {
+    for (const system of this.systems) {
+      system.setCargoPickupHighlight(id);
+    }
+  }
+
+  public stowCargoPassenger(id: string): CargoPickable | null {
+    for (const system of this.systems) {
+      const stowed = system.stowCargoPassenger(id);
+      if (stowed) {
+        return stowed;
+      }
+    }
+    return null;
+  }
+
+  public restoreCargoPassenger(id: string, position: Vector3, rotation: Quaternion): boolean {
+    return this.systems.some((system) => system.restoreCargoPassenger(id, position, rotation));
   }
 
   public dispose(): void {

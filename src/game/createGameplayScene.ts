@@ -30,12 +30,11 @@ import type { AssetContainer } from "@babylonjs/core/assetContainer";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import type { TankControllerConfig, PrimaryWeaponKind } from "../config/tankController";
 import {
-  getPrimaryWeaponKind,
   getProjectileWeaponKinds,
   getSuspensionContactOffset
 } from "../config/tankController";
 import { getVehicleConfig } from "../config/vehicleRegistry";
-import { tankAssetUrl, armoredCarAssetUrl, fighterJetAssetUrl, helicopterAssetUrl, skyboxAssetUrl, powerUpsAssetUrl, enemiesAssetUrl, alliesAssetUrl, vehicleTankIconUrl, vehicleArmoredCarIconUrl, vehicleFighterJetIconUrl, vehicleHelicopterIconUrl } from "../assets/assetUrls";
+import { tankAssetUrl, armoredCarAssetUrl, fighterJetAssetUrl, helicopterAssetUrl, truckAssetUrl, skyboxAssetUrl, powerUpsAssetUrl, enemiesAssetUrl, alliesAssetUrl, vehicleTankIconUrl, vehicleArmoredCarIconUrl, vehicleFighterJetIconUrl, vehicleHelicopterIconUrl, vehicleTruckIconUrl } from "../assets/assetUrls";
 import { enemiesConfig } from "../config/enemiesController";
 import { EnemyCombatManager } from "./EnemyCombatManager";
 import type { EnemyCombatSystem } from "./EnemyTurretSystem";
@@ -107,6 +106,9 @@ function vehicleAssetUrl(type: VehicleTypeId): string {
   if (type === "helicopter") {
     return helicopterAssetUrl;
   }
+  if (type === "truck") {
+    return truckAssetUrl;
+  }
   return tankAssetUrl;
 }
 
@@ -122,6 +124,9 @@ function resolveVehicleSelectorIconUrl(type: VehicleTypeId): string | null {
   }
   if (type === "helicopter") {
     return vehicleHelicopterIconUrl;
+  }
+  if (type === "truck") {
+    return vehicleTruckIconUrl;
   }
   return null;
 }
@@ -531,12 +536,11 @@ function resolveProjectileWeaponNodeNames(
 
 function resolveVehicleNodeNames(config: TankControllerConfig) {
   const nodes = config.rig.nodes ?? {};
-  const primaryKind = getPrimaryWeaponKind(config);
   const projectileWeapons = resolveProjectileWeaponNodeNames(config);
   const muzzleGun = nodes.muzzleGun ?? "MUZZLE_gun_tank";
   const gunMuzzles = nodes.gunMuzzles ?? [muzzleGun];
-  // Rampe principale : celle de l'arme sélectionnée par défaut.
   const muzzleShell = projectileWeapons[0]?.muzzles[0] ?? muzzleGun;
+  const primaryKind = projectileWeapons[0]?.kind ?? null;
 
   return {
     colliderMesh: nodes.colliderMesh ?? "COL_tank",
@@ -593,7 +597,11 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
   const vehicleContainer = await SceneLoader.LoadAssetContainerAsync("", assetUrl, scene);
   vehicleContainer.addAllToScene();
   hideColliderMeshes(vehicleContainer, scene);
-  await waitAnimationFrames(1);
+  try {
+    await waitAnimationFrames(1);
+  } catch (err) {
+    console.warn(`[TankController] Post-load frame failed for "${vehicleSpawn.id}":`, err);
+  }
 
   const vehicleAnchor = new TransformNode(`${vehicleSpawn.id}_anchor`, scene);
   const vehicleVisualRoot = new TransformNode(`${vehicleSpawn.id}_visual_root`, scene);
@@ -611,22 +619,26 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
   vehicleAnchor.rotate(Axis.Y, toRadians(vehicleConfig.rig.spawnYawOffsetDeg));
 
   parentVehicleNodes(vehicleContainer, vehicleAnchor, vehicleVisualRoot, nodeNames.colliderMesh);
-  const colliderMesh = findMeshByName(vehicleContainer, nodeNames.colliderMesh);
-  refreshTankRigWorldMatrices(vehicleAnchor, vehicleContainer);
+  const colliderMesh = prepareVehicleColliderMesh(
+    findMeshByName(vehicleContainer, nodeNames.colliderMesh)
+  );
+  const visualHullMesh = colliderMesh ?? findRigidVisualHullMesh(vehicleContainer);
   const groundingInfo = createTankGroundingInfo(
     vehicleContainer,
     vehicleAnchor,
     colliderMesh,
     vehicleConfig.rig.movementForwardAxis
   );
-  const suspensionInfo = createTankSuspensionInfo(vehicleContainer, vehicleAnchor, vehicleConfig);
   const vehiclePhysics = createTankPhysics(
     vehicleAnchor,
     colliderMesh,
     groundingInfo,
     scene,
-    vehicleConfig
+    vehicleConfig,
+    visualHullMesh
   );
+  refreshTankRigWorldMatrices(vehicleAnchor, vehicleContainer);
+  const suspensionInfo = createTankSuspensionInfo(vehicleContainer, vehicleAnchor, vehicleConfig);
   snapTankAnchorYToTerrain(
     scene,
     vehicleAnchor,
@@ -822,11 +834,13 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
     }
   }
 
-  const [smoke1Name, smoke2Name, smoke3Name, smoke4Name] = nodeNames.damageSmokes;
-  const damageSmoke1 = findTransformNode(vehicleContainer, smoke1Name);
-  const damageSmoke2 = findTransformNode(vehicleContainer, smoke2Name);
-  const damageSmoke3 = findTransformNode(vehicleContainer, smoke3Name);
-  const damageSmoke4 = findTransformNode(vehicleContainer, smoke4Name);
+  const damageSmokeNames = nodeNames.damageSmokes.filter(
+    (name): name is string => typeof name === "string" && name.trim().length > 0
+  );
+  const damageSmoke1 = findTransformNode(vehicleContainer, damageSmokeNames[0] ?? "");
+  const damageSmoke2 = findTransformNode(vehicleContainer, damageSmokeNames[1] ?? "");
+  const damageSmoke3 = findTransformNode(vehicleContainer, damageSmokeNames[2] ?? "");
+  const damageSmoke4 = findTransformNode(vehicleContainer, damageSmokeNames[3] ?? "");
   const playerTargetNode = findTransformNode(vehicleContainer, nodeNames.playerTarget);
   if (!playerTargetNode) {
     console.warn(
@@ -894,7 +908,11 @@ async function spawnPlayerVehicle(options: SpawnPlayerVehicleOptions): Promise<S
     );
   }
 
-  dynamicShadows?.addCastersFromRoot(vehicleVisualRoot);
+  try {
+    dynamicShadows?.addCastersFromRoot(vehicleVisualRoot);
+  } catch (err) {
+    console.warn(`[TankController] Shadow casters failed for "${vehicleSpawn.id}":`, err);
+  }
 
   const controller = new TankGameplayController({
     scene,
@@ -971,6 +989,12 @@ function attachEnvironmentSkybox(scene: Scene, reflectionTexture: CubeTexture): 
   skybox.ignoreCameraMaxZ = true;
 }
 
+function nodeNamesMatch(actual: string, wanted: string): boolean {
+  const left = normalizeNodeName(actual);
+  const right = normalizeNodeName(wanted);
+  return left === right || left.startsWith(`${right}.`) || right.startsWith(`${left}.`);
+}
+
 function parentVehicleNodes(
   container: AssetContainer,
   physicsAnchor: TransformNode,
@@ -978,7 +1002,7 @@ function parentVehicleNodes(
   colliderMeshName: string
 ): void {
   for (const mesh of container.meshes.filter((candidate) => !candidate.parent)) {
-    mesh.parent = mesh.name === colliderMeshName ? physicsAnchor : visualRoot;
+    mesh.parent = nodeNamesMatch(mesh.name, colliderMeshName) ? physicsAnchor : visualRoot;
   }
 
   for (const node of container.transformNodes.filter((candidate) => !candidate.parent)) {
@@ -994,14 +1018,17 @@ function parentVehicleNodes(
   }
 }
 
-function normalizeNodeName(name: string): string {
-  return name.trim().toLowerCase().replace(/\.\d+$/, "");
+function normalizeNodeName(name: string | null | undefined): string {
+  return (name ?? "").trim().toLowerCase().replace(/\.\d+$/, "");
 }
 
 function findTransformNode(
   container: AssetContainer,
-  name: string
+  name: string | null | undefined
 ): TransformNode | AbstractMesh | null {
+  if (!name || !name.trim()) {
+    return null;
+  }
   const candidates = [...container.transformNodes, ...container.meshes];
   const wanted = normalizeNodeName(name);
   return (
@@ -1275,7 +1302,7 @@ function hideColliderMeshes(container: AssetContainer, scene: Scene): void {
   }
 
   for (const mesh of container.meshes) {
-    const isCollider = mesh.name.startsWith("COL_") || mesh.name === "COL_tank";
+    const isCollider = normalizeNodeName(mesh.name).startsWith("col_");
     const isTerrainStatic = mesh.name.startsWith("SM_");
     const isTerrainDynamic = mesh.name.startsWith("DM_");
 
@@ -1425,32 +1452,109 @@ function createTankPhysics(
   tankColliderMesh: Mesh | null,
   grounding: TankGroundingInfo,
   scene: Scene,
-  config: TankControllerConfig
+  config: TankControllerConfig,
+  visualHullMesh: Mesh | null = null
 ): TankPhysicsResource {
   const body = new PhysicsBody(tankAnchor, PhysicsMotionType.DYNAMIC, false, scene);
-  const shape = tankColliderMesh
-    ? new PhysicsShapeConvexHull(tankColliderMesh, scene)
-    : new PhysicsShapeBox(Vector3.Zero(), Quaternion.Identity(), new Vector3(1, 0.5, 1.6), scene);
+  const defaultSize = new Vector3(1.1, 0.7, 2.2);
+  let shape: PhysicsShape = new PhysicsShapeBox(Vector3.Zero(), Quaternion.Identity(), defaultSize, scene);
+  try {
+    shape = tankColliderMesh
+      ? new PhysicsShapeConvexHull(tankColliderMesh, scene)
+      : createFallbackVehicleBoxShape(visualHullMesh, scene);
+  } catch (err) {
+    console.warn("[TankController] Vehicle collider shape failed; using fallback box.", err);
+    shape = new PhysicsShapeBox(Vector3.Zero(), Quaternion.Identity(), defaultSize, scene);
+  }
 
   // Assign the tank to collision group 2 so projectiles can ignore it
   shape.filterMembershipMask = 2;
   shape.filterCollideMask = 0xffffffff;
 
-  body.shape = shape;
-  shape.material = {
-    friction: config.physics.tankFriction,
-    staticFriction: config.physics.tankFriction,
-    restitution: config.physics.tankRestitution
-  };
-  body.setMassProperties({
-    mass: config.physics.tankMass,
-    centerOfMass: new Vector3(0, config.physics.tankCenterOfMassYOffset, 0)
-  });
+  try {
+    body.shape = shape;
+    shape.material = {
+      friction: config.physics.tankFriction,
+      staticFriction: config.physics.tankFriction,
+      restitution: config.physics.tankRestitution
+    };
+    body.setMassProperties({
+      mass: config.physics.tankMass,
+      centerOfMass: new Vector3(0, config.physics.tankCenterOfMassYOffset, 0)
+    });
+  } catch (err) {
+    console.warn("[TankController] Vehicle physics body setup failed; using origin box.", err);
+    shape = new PhysicsShapeBox(Vector3.Zero(), Quaternion.Identity(), defaultSize, scene);
+    shape.filterMembershipMask = 2;
+    shape.filterCollideMask = 0xffffffff;
+    body.shape = shape;
+    body.setMassProperties({
+      mass: config.physics.tankMass,
+      centerOfMass: new Vector3(0, config.physics.tankCenterOfMassYOffset, 0)
+    });
+  }
   body.setLinearDamping(config.physics.tankLinearDamping);
   body.setAngularDamping(config.physics.tankAngularDamping);
   body.setGravityFactor(1);
 
   return { body, shape, grounding };
+}
+
+function prepareVehicleColliderMesh(mesh: Mesh | null): Mesh | null {
+  if (!mesh) {
+    return null;
+  }
+  // COL_* must be a static hull on the physics body. A skinned collider (same armature
+  // as the render mesh) makes ConvexHull fail or explode the AABB.
+  if (mesh.skeleton) {
+    mesh.skeleton = null;
+  }
+  mesh.computeWorldMatrix(true);
+  try {
+    mesh.refreshBoundingInfo(true, true);
+  } catch {
+    // Bind-pose bounds are enough for Havok.
+  }
+  return mesh;
+}
+
+function findRigidVisualHullMesh(container: AssetContainer): Mesh | null {
+  return (
+    findMeshByName(container, "truck") ??
+    container.meshes.find((mesh): mesh is Mesh => mesh instanceof Mesh && mesh.getTotalVertices() > 0) ??
+    null
+  );
+}
+
+function createFallbackVehicleBoxShape(visualMesh: Mesh | null, scene: Scene): PhysicsShape {
+  const defaultSize = new Vector3(1.1, 0.7, 2.2);
+  if (!visualMesh) {
+    return new PhysicsShapeBox(Vector3.Zero(), Quaternion.Identity(), defaultSize, scene);
+  }
+  try {
+    visualMesh.refreshBoundingInfo(true, true);
+  } catch {
+    return new PhysicsShapeBox(Vector3.Zero(), Quaternion.Identity(), defaultSize, scene);
+  }
+  // Local bind-pose AABB: world bounds on a skinned mesh can be huge/NaN before the
+  // skeleton evaluates, which makes Havok reject the shape and abort the spawn.
+  const bb = visualMesh.getBoundingInfo().boundingBox;
+  const size = bb.maximum.subtract(bb.minimum);
+  const center = bb.minimum.add(bb.maximum).scale(0.5);
+  size.x = Math.min(Math.max(Math.abs(size.x) || 1.1, 0.4), 4);
+  size.y = Math.min(Math.max(Math.abs(size.y) || 0.7, 0.35), 2.5);
+  size.z = Math.min(Math.max(Math.abs(size.z) || 2.2, 0.6), 5);
+  center.x = Number.isFinite(center.x) ? clampNumber(center.x, -2, 2) : 0;
+  center.y = Number.isFinite(center.y) ? clampNumber(center.y, -1.5, 1.5) : 0;
+  center.z = Number.isFinite(center.z) ? clampNumber(center.z, -3, 3) : 0;
+  if (![center.x, center.y, center.z, size.x, size.y, size.z].every(Number.isFinite)) {
+    return new PhysicsShapeBox(Vector3.Zero(), Quaternion.Identity(), defaultSize, scene);
+  }
+  return new PhysicsShapeBox(center, Quaternion.Identity(), size, scene);
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 function createTankSuspensionInfo(
@@ -1495,13 +1599,17 @@ function disposePhysicsGroup(group: PhysicsResourceGroup): void {
   }
 }
 
-function findAbstractMeshByName(container: AssetContainer, name: string): AbstractMesh | null {
-  const wanted = name.trim().toLowerCase();
+function findAbstractMeshByName(container: AssetContainer, name: string | null | undefined): AbstractMesh | null {
+  if (!name || !name.trim()) {
+    return null;
+  }
+  const wanted = normalizeNodeName(name);
   return (
-    container.meshes.find((candidate) => {
-      const n = candidate.name.trim().toLowerCase();
-      return n === wanted || n.startsWith(`${wanted}.`);
-    }) ?? null
+    container.meshes.find((candidate) => nodeNamesMatch(candidate.name, wanted)) ??
+    container.meshes.find((candidate) =>
+      candidate.parent ? nodeNamesMatch(candidate.parent.name, wanted) : false
+    ) ??
+    null
   );
 }
 

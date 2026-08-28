@@ -3,6 +3,7 @@ export const tankAssetUrl = new URL("../../assets/tank.glb", import.meta.url).hr
 export const armoredCarAssetUrl = new URL("../../assets/armoredcar.glb", import.meta.url).href;
 export const fighterJetAssetUrl = new URL("../../assets/jet.glb", import.meta.url).href;
 export const helicopterAssetUrl = new URL("../../assets/helicopter.glb", import.meta.url).href;
+export const truckAssetUrl = new URL("../../assets/truck.glb", import.meta.url).href;
 export const powerUpsAssetUrl = new URL("../../assets/power-ups.glb", import.meta.url).href;
 export const enemiesAssetUrl = new URL("../../assets/enemies.glb", import.meta.url).href;
 export const alliesAssetUrl = new URL("../../assets/allies.glb", import.meta.url).href;
@@ -27,6 +28,8 @@ export const vehicleHelicopterIconUrl = new URL(
   "../../assets/ui/vehicle_helicopter.png",
   import.meta.url
 ).href;
+export const vehicleTruckIconUrl = new URL("../../assets/ui/vehicle_truck.png", import.meta.url).href;
+export const soldierRifleIconUrl = new URL("../../assets/ui/soldier_rifle.png", import.meta.url).href;
 export const helicopterGunnerOverlayUrl = new URL(
   "../../assets/ui/helicopter_gunner_overlay.png",
   import.meta.url
@@ -107,6 +110,12 @@ export const soldierRifleFamasGunSoundAssetUrl = new URL(
   "../../assets/sounds/soldier_rifle_famas_gun.wav",
   import.meta.url
 ).href;
+export const truckIdleSoundAssetUrl = new URL("../../assets/sounds/truck_idle.wav", import.meta.url).href;
+export const truckMoveSoundAssetUrl = new URL("../../assets/sounds/truck_move.wav", import.meta.url).href;
+export const truckTurboSoundAssetUrl = new URL("../../assets/sounds/truck_turbo.wav", import.meta.url).href;
+export const truckHornSoundAssetUrl = new URL("../../assets/sounds/truck_horn.wav", import.meta.url).href;
+export const truckPickSoundAssetUrl = new URL("../../assets/sounds/truck_pick.wav", import.meta.url).href;
+export const truckSpawnSoundAssetUrl = new URL("../../assets/sounds/truck_spawn.wav", import.meta.url).href;
 export const suspensionImpactSoundAssetUrl = new URL(
   "../../assets/sounds/suspension.wav",
   import.meta.url

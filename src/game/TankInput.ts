@@ -15,6 +15,8 @@ export interface TankInputFrame {
   zoomHeld: boolean;
   fireHeld: boolean;
   selectedWeapon: WeaponType;
+  selectedCargoSlot: number;
+  dropRequested: boolean;
   /** Remise à plat / respawn sur place (touche Y, front montant). */
   uprightResetRequested: boolean;
   /** Klaxon (touche H, front montant). */
@@ -38,6 +40,9 @@ export class TankInput {
   private selectedWeapon: WeaponType;
   /** Verrouille le changement d'arme (hélicoptère en vue zoom). */
   private weaponSelectionLocked = false;
+  private readonly cargoSlotCount: number;
+  private selectedCargoSlot = 0;
+  private dropRequested = false;
   private pointerLocked = false;
   private uprightResetRequested = false;
   private hornRequested = false;
@@ -45,12 +50,15 @@ export class TankInput {
   public constructor(
     canvas: HTMLCanvasElement,
     shouldRequestPointerLock: () => boolean = () => true,
-    weaponSlots: readonly WeaponType[] = ["shell", "bullet"]
+    weaponSlots: readonly WeaponType[] = ["shell", "bullet"],
+    cargoSlotCount = 0
   ) {
     this.canvas = canvas;
     this.shouldRequestPointerLock = shouldRequestPointerLock;
-    this.weaponSlots = weaponSlots.length > 0 ? [...weaponSlots] : ["shell", "bullet"];
-    this.selectedWeapon = this.weaponSlots[0];
+    this.cargoSlotCount = Math.max(0, Math.floor(cargoSlotCount));
+    this.weaponSlots =
+      this.cargoSlotCount > 0 ? [] : weaponSlots.length > 0 ? [...weaponSlots] : ["shell", "bullet"];
+    this.selectedWeapon = this.weaponSlots[0] ?? "bullet";
     this.pointerLocked = document.pointerLockElement === this.canvas;
     this.canvas.tabIndex = 0;
 
@@ -78,6 +86,8 @@ export class TankInput {
       zoomHeld: this.zoomToggled,
       fireHeld: this.isPrimaryFireHeld,
       selectedWeapon: this.selectedWeapon,
+      selectedCargoSlot: this.selectedCargoSlot,
+      dropRequested: this.dropRequested,
       uprightResetRequested: this.uprightResetRequested,
       hornRequested: this.hornRequested
     };
@@ -86,6 +96,7 @@ export class TankInput {
     this.lookDeltaY = 0;
     this.uprightResetRequested = false;
     this.hornRequested = false;
+    this.dropRequested = false;
 
     return frame;
   }
@@ -133,10 +144,15 @@ export class TankInput {
     this.trackShiftCode(event.code, true);
 
     const slotIndex = WEAPON_SLOT_KEYS.indexOf(key);
-    if (slotIndex >= 0) {
+    if (slotIndex >= 0 && this.cargoSlotCount <= 0) {
       if (!this.weaponSelectionLocked && slotIndex < this.weaponSlots.length) {
         this.selectedWeapon = this.weaponSlots[slotIndex];
       }
+      event.preventDefault();
+    }
+
+    if (key === "f" && this.cargoSlotCount > 0 && !event.repeat) {
+      this.dropRequested = true;
       event.preventDefault();
     }
 
@@ -157,7 +173,19 @@ export class TankInput {
   };
 
   private readonly handleWheel = (event: WheelEvent): void => {
-    if (event.deltaY === 0 || this.weaponSlots.length < 2) {
+    if (event.deltaY === 0) {
+      return;
+    }
+
+    if (this.cargoSlotCount > 0) {
+      event.preventDefault();
+      const step = event.deltaY > 0 ? 1 : -1;
+      this.selectedCargoSlot =
+        (this.selectedCargoSlot + step + this.cargoSlotCount) % this.cargoSlotCount;
+      return;
+    }
+
+    if (this.weaponSlots.length < 2) {
       return;
     }
     event.preventDefault();
@@ -274,5 +302,5 @@ function normalizeKey(key: string): string {
 }
 
 function isTrackedKey(key: string): boolean {
-  return ["z", "q", "s", "d", "y", "h", "shift", ...WEAPON_SLOT_KEYS].includes(key);
+  return ["z", "q", "s", "d", "y", "h", "f", "shift", ...WEAPON_SLOT_KEYS].includes(key);
 }

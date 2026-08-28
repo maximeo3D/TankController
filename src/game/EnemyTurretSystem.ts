@@ -76,6 +76,12 @@ export interface EnemyLockTarget {
   aimPoint: Vector3;
 }
 
+export interface CargoPickable {
+  id: string;
+  kind: string;
+  position: Vector3;
+}
+
 /** Contrat commun tourelle / soldat / futurs ennemis, consommé par le gameplay joueur. */
 export interface EnemyCombatSystem {
   readonly instanceCount: number;
@@ -93,6 +99,10 @@ export interface EnemyCombatSystem {
   collectCombatants(): CombatantSnapshot[];
   matchCombatantFromHit(hit: unknown): CombatantSnapshot | null;
   setCombatWorld(world: CombatWorld | null): void;
+  getCargoPickables(): CargoPickable[];
+  setCargoPickupHighlight(id: string | null): void;
+  stowCargoPassenger(id: string): CargoPickable | null;
+  restoreCargoPassenger(id: string, position: Vector3, rotation: Quaternion): boolean;
   dispose(): void;
 }
 
@@ -161,6 +171,13 @@ function resolveEnemyNodes(config: EnemyTurretConfig): ResolvedEnemyNodes {
   };
 }
 
+function resolveCargoKind(config: EnemyTurretConfig): string {
+  if (config.cargoKind && config.cargoKind.trim().length > 0) {
+    return config.cargoKind.trim();
+  }
+  return config.spawnNodePrefix.replace(/^SPAWN_/i, "").replace(/_+$/, "");
+}
+
 interface EnemyTurretInstance {
   spawnId: string;
   anchor: TransformNode;
@@ -202,6 +219,9 @@ interface EnemyTurretInstance {
   physicsShape: PhysicsShape | null;
   health: number;
   alive: boolean;
+  stowed: boolean;
+  pickupHighlighted: boolean;
+  pickupHighlightTime: number;
   flashMaterials: DamageFlashMaterialState[];
   damageFlashRemaining: number;
 }
@@ -689,7 +709,7 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
   private disposed = false;
   private readonly syncColliderMatricesBeforePhysics = (): void => {
     for (const instance of this.instances) {
-      if (instance.alive && instance.colliderMesh) {
+      if (instance.alive && !instance.stowed && instance.colliderMesh) {
         instance.colliderMesh.computeWorldMatrix(true);
       }
     }
@@ -767,7 +787,7 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
     }
     const radiusSq = radius * radius;
     for (const instance of this.instances) {
-      if (!instance.alive) {
+      if (!instance.alive || instance.stowed) {
         continue;
       }
       const center =
@@ -799,7 +819,7 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
     const faction = this.getFaction();
     const combatants: CombatantSnapshot[] = [];
     for (const instance of this.instances) {
-      if (!instance.alive) {
+      if (!instance.alive || instance.stowed) {
         continue;
       }
       combatants.push({
@@ -812,6 +832,94 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
       });
     }
     return combatants;
+  }
+
+  public getCargoPickables(): CargoPickable[] {
+    if (this.getFaction() !== "ally") {
+      return [];
+    }
+    const kind = resolveCargoKind(this.config);
+    const pickables: CargoPickable[] = [];
+    for (const instance of this.instances) {
+      if (!instance.alive || instance.stowed) {
+        continue;
+      }
+      pickables.push({
+        id: instance.spawnId,
+        kind,
+        position: instance.anchor.getAbsolutePosition().clone()
+      });
+    }
+    return pickables;
+  }
+
+  public setCargoPickupHighlight(id: string | null): void {
+    for (const instance of this.instances) {
+      const highlight = instance.spawnId === id && instance.alive && !instance.stowed;
+      if (instance.pickupHighlighted === highlight) {
+        continue;
+      }
+      instance.pickupHighlighted = highlight;
+      instance.pickupHighlightTime = 0;
+      if (!highlight && instance.damageFlashRemaining <= 0) {
+        restoreDamageFlashEmissive(instance.flashMaterials);
+      }
+    }
+  }
+
+  public stowCargoPassenger(id: string): CargoPickable | null {
+    const instance = this.instances.find((candidate) => candidate.spawnId === id);
+    if (!instance || !instance.alive || instance.stowed) {
+      return null;
+    }
+
+    instance.stowed = true;
+    instance.tracking = false;
+    instance.currentTarget = null;
+    instance.pickupHighlighted = false;
+    instance.pickupHighlightTime = 0;
+    instance.damageFlashRemaining = 0;
+    restoreDamageFlashEmissive(instance.flashMaterials);
+
+    instance.anchor.setEnabled(false);
+    if (instance.colliderMesh) {
+      instance.colliderMesh.setEnabled(false);
+      instance.colliderMesh.isPickable = false;
+    }
+
+    return {
+      id: instance.spawnId,
+      kind: resolveCargoKind(this.config),
+      position: instance.anchor.getAbsolutePosition().clone()
+    };
+  }
+
+  public restoreCargoPassenger(id: string, position: Vector3, rotation: Quaternion): boolean {
+    const instance = this.instances.find((candidate) => candidate.spawnId === id);
+    if (!instance || !instance.alive || !instance.stowed) {
+      return false;
+    }
+
+    instance.anchor.position.copyFrom(position);
+    instance.anchor.rotationQuaternion = rotation.clone();
+    instance.anchor.setEnabled(true);
+    instance.anchor.computeWorldMatrix(true);
+    instance.root.setEnabled(true);
+    for (const mesh of instance.root.getChildMeshes(true)) {
+      mesh.setEnabled(true);
+      mesh.isVisible = true;
+    }
+    if (instance.colliderMesh) {
+      instance.colliderMesh.setEnabled(true);
+      instance.colliderMesh.isPickable = true;
+      instance.colliderMesh.computeWorldMatrix(true);
+    }
+    instance.stowed = false;
+    instance.tracking = false;
+    instance.currentTarget = null;
+    instance.burstShotsLeft = 0;
+    refreshClonedRigMatrices(instance.anchor, instance.root, instance.skinnedMesh);
+    return true;
   }
 
   public matchCombatantFromHit(hit: unknown): CombatantSnapshot | null {
@@ -836,7 +944,7 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
   public getRadarTargets(): EnemyTurretRadarTarget[] {
     const faction = this.getFaction();
     return this.instances
-      .filter((instance) => instance.alive)
+      .filter((instance) => instance.alive && !instance.stowed)
       .map((instance) => ({
         id: instance.spawnId,
         position: instance.anchor.getAbsolutePosition().clone(),
@@ -850,7 +958,7 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
       return [];
     }
     return this.instances
-      .filter((instance) => instance.alive)
+      .filter((instance) => instance.alive && !instance.stowed)
       .map((instance) => ({
         id: instance.spawnId,
         aimPoint: this.resolveLockAimPoint(instance)
@@ -861,7 +969,9 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
     if (!this.nodes.missileLockable) {
       return null;
     }
-    const instance = this.instances.find((candidate) => candidate.alive && candidate.spawnId === spawnId);
+    const instance = this.instances.find(
+      (candidate) => candidate.alive && !candidate.stowed && candidate.spawnId === spawnId
+    );
     if (!instance) {
       return null;
     }
@@ -890,7 +1000,7 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
     const faction = this.getFaction();
 
     for (const instance of this.instances) {
-      if (!instance.alive) {
+      if (!instance.alive || instance.stowed) {
         continue;
       }
 
@@ -922,6 +1032,7 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
       this.applyTracking(instance, dt);
       this.updateFiring(instance, dt);
       this.updateDamageFlash(instance, dt);
+      this.updatePickupHighlight(instance, dt);
       this.updateAimDebug(instance, instance.currentTarget?.position ?? playerWorldPos);
     }
 
@@ -934,6 +1045,9 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
   public collectShadowCasterMeshes(): AbstractMesh[] {
     const meshes: AbstractMesh[] = [];
     for (const instance of this.instances) {
+      if (!instance.alive || instance.stowed) {
+        continue;
+      }
       meshes.push(
         ...collectTurretVisualMeshes(
           instance.root,
@@ -1239,6 +1353,9 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
         physicsShape,
         health: Math.max(1, this.config.combat.healthMax),
         alive: true,
+        stowed: false,
+        pickupHighlighted: false,
+        pickupHighlightTime: 0,
         flashMaterials: setupTurretFlashMaterials(
           root,
           skinnedMesh,
@@ -1394,6 +1511,22 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
       instance.flashMaterials,
       this.damageFlashColor,
       this.damageFlashMaxAlpha * t
+    );
+  }
+
+  private updatePickupHighlight(instance: EnemyTurretInstance, dt: number): void {
+    if (!instance.pickupHighlighted || instance.flashMaterials.length === 0) {
+      return;
+    }
+    if (instance.damageFlashRemaining > 0) {
+      return;
+    }
+    instance.pickupHighlightTime += dt;
+    const wave = 0.5 + 0.5 * Math.sin(instance.pickupHighlightTime * Math.PI * 2 / 1.35);
+    applyDamageFlashEmissive(
+      instance.flashMaterials,
+      this.damageFlashColor,
+      this.damageFlashMaxAlpha * 0.55 * wave
     );
   }
 
