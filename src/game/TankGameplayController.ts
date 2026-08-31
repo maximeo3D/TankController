@@ -844,14 +844,6 @@ export class TankGameplayController {
     this.activeSlot.reserveAmmo = value;
   }
 
-  private get shellChambered(): boolean {
-    return this.activeSlot.chambered;
-  }
-
-  private set shellChambered(value: boolean) {
-    this.activeSlot.chambered = value;
-  }
-
   public constructor(options: TankGameplayControllerOptions) {
     this.scene = options.scene;
     // Babylon `Sound.play()` is gated by `scene.audioEnabled`.
