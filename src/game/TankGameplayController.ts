@@ -1007,6 +1007,7 @@ export class TankGameplayController {
           tankBody: this.tankBody,
           movementForwardAxis: options.config.rig.movementForwardAxis,
           movementForwardSign: options.config.rig.movementForwardSign,
+          movementInputSign: options.config.rig.movementInputSign,
           enemyCombat: this.enemyTurretSystem
         });
       } catch (err) {

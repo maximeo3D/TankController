@@ -32,6 +32,7 @@ export interface TruckCargoSystemOptions {
   tankBody: PhysicsBody;
   movementForwardAxis: "x" | "y" | "z";
   movementForwardSign: 1 | -1;
+  movementInputSign: 1 | -1;
   enemyCombat: EnemyCombatSystem | null;
 }
 
@@ -56,7 +57,10 @@ export class TruckCargoSystem {
     this.tankAnchor = options.tankAnchor;
     this.tankBody = options.tankBody;
     this.enemyCombat = options.enemyCombat;
-    this.forwardLocal = axisFromConfig(options.movementForwardAxis, options.movementForwardSign);
+    this.forwardLocal = axisFromConfig(
+      options.movementForwardAxis,
+      options.movementForwardSign
+    ).scale(options.movementInputSign);
     this.pickupOrigin = findNamedNode(options.vehicleContainer, options.config.pickupOrigin);
     this.dropNode = findNamedNode(options.vehicleContainer, options.config.dropNode);
     this.slots = Array.from({ length: Math.max(1, options.config.slotCount) }, () => null);

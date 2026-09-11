@@ -238,6 +238,8 @@ const DEFAULT_DAMAGE_FLASH = {
   color: new Color3(1, 0.12, 0.08)
 } as const;
 
+const COMBATANT_COLLIDER_MASK = 8;
+
 const PEAK_EMISSIVE_INTENSITY = 2.4;
 const ROCKET_ARMING_S = 0.12;
 
@@ -882,10 +884,12 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
     restoreDamageFlashEmissive(instance.flashMaterials);
 
     instance.anchor.setEnabled(false);
-    if (instance.colliderMesh) {
-      instance.colliderMesh.setEnabled(false);
-      instance.colliderMesh.isPickable = false;
+    instance.root.setEnabled(false);
+    for (const mesh of instance.root.getChildMeshes(true)) {
+      mesh.setEnabled(false);
+      mesh.isVisible = false;
     }
+    this.setCargoPassengerPhysicsEnabled(instance, false);
 
     return {
       id: instance.spawnId,
@@ -909,11 +913,7 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
       mesh.setEnabled(true);
       mesh.isVisible = true;
     }
-    if (instance.colliderMesh) {
-      instance.colliderMesh.setEnabled(true);
-      instance.colliderMesh.isPickable = true;
-      instance.colliderMesh.computeWorldMatrix(true);
-    }
+    this.setCargoPassengerPhysicsEnabled(instance, true);
     instance.stowed = false;
     instance.tracking = false;
     instance.currentTarget = null;
@@ -1390,11 +1390,38 @@ export class EnemyTurretSystem implements EnemyCombatSystem {
     const body = new PhysicsBody(colliderMesh, PhysicsMotionType.ANIMATED, false, this.scene);
     body.disablePreStep = false;
     const shape = new PhysicsShapeMesh(colliderMesh, this.scene);
-    shape.filterMembershipMask = 8;
+    shape.filterMembershipMask = COMBATANT_COLLIDER_MASK;
     shape.filterCollideMask = 0xffffffff;
     body.shape = shape;
 
     return { body, shape };
+  }
+
+  /** Désactive la collision Havok quand un allié est rangé dans le camion. */
+  private setCargoPassengerPhysicsEnabled(instance: EnemyTurretInstance, enabled: boolean): void {
+    if (!instance.physicsBody || !instance.physicsShape) {
+      return;
+    }
+
+    if (enabled) {
+      instance.physicsShape.filterMembershipMask = COMBATANT_COLLIDER_MASK;
+      instance.physicsBody.disablePreStep = false;
+      if (instance.colliderMesh) {
+        instance.colliderMesh.setEnabled(true);
+        instance.colliderMesh.isPickable = true;
+        instance.colliderMesh.computeWorldMatrix(true);
+      }
+      return;
+    }
+
+    instance.physicsShape.filterMembershipMask = 0;
+    instance.physicsBody.setLinearVelocity(Vector3.Zero());
+    instance.physicsBody.setAngularVelocity(Vector3.Zero());
+    instance.physicsBody.disablePreStep = true;
+    if (instance.colliderMesh) {
+      instance.colliderMesh.setEnabled(false);
+      instance.colliderMesh.isPickable = false;
+    }
   }
 
   private resolveInstanceColliderMesh(
