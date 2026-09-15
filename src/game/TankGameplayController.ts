@@ -458,6 +458,8 @@ export class TankGameplayController {
   private readonly wheelProbeIndices: number[] = [];
   private readonly wheelTravelSmoothed: number[] = [];
   private readonly frontWheelIndices = new Set<number>();
+  /** Probes `SUS_*` des roues avant (pour le grip latéral différencié en mode `car`). */
+  private readonly frontProbeIndices = new Set<number>();
   private wheelSpinRad = 0;
   private wheelSteerRad = 0;
   /** Compression courante de chaque probe `SUS_*` (m), alignée sur `suspensionPointsLocal`. */
@@ -969,6 +971,10 @@ export class TankGameplayController {
       );
       if (frontWheelNames.has(wheelBoneName)) {
         this.frontWheelIndices.add(wheelIndex);
+        const probeIndex = this.wheelProbeIndices[wheelIndex];
+        if (probeIndex >= 0) {
+          this.frontProbeIndices.add(probeIndex);
+        }
       }
     }
     this.wheelSpinRad = 0;
@@ -6836,20 +6842,24 @@ export class TankGameplayController {
     }
 
     const center = this.tankBody.getObjectCenterWorld();
-    const v = this.tankBody.getLinearVelocity();
-    const lateralSpeed = Vector3.Dot(v, rightWorld);
     const steeringMode = this.config.movement.steeringMode ?? "tank";
-    let lateralGrip = this.config.suspension.lateralFriction;
-    if (steeringMode === "car") {
-      const steerGripMultiplier = this.config.movement.carSteerGripMultiplier ?? 1;
-      if (steerGripMultiplier > 1 && Math.abs(this.smoothedTurnAxis) > 0.05) {
-        const steerAmount = clamp(Math.abs(this.smoothedTurnAxis), 0, 1);
-        lateralGrip *= 1 + (steerGripMultiplier - 1) * steerAmount;
-      }
-    }
     if (hasGroundControl) {
-      const lateralForce = rightWorld.scale(-lateralSpeed * lateralGrip);
-      this.tankBody.applyForce(lateralForce, center);
+      if (steeringMode === "car" && this.config.movement.carWheelLateralGrip !== false) {
+        this.applyCarWheelLateralGrip(rightWorld);
+      } else {
+        const v = this.tankBody.getLinearVelocity();
+        const lateralSpeed = Vector3.Dot(v, rightWorld);
+        let lateralGrip = this.config.suspension.lateralFriction;
+        if (steeringMode === "car") {
+          const steerGripMultiplier = this.config.movement.carSteerGripMultiplier ?? 1;
+          if (steerGripMultiplier > 1 && Math.abs(this.smoothedTurnAxis) > 0.05) {
+            const steerAmount = clamp(Math.abs(this.smoothedTurnAxis), 0, 1);
+            lateralGrip *= 1 + (steerGripMultiplier - 1) * steerAmount;
+          }
+        }
+        const lateralForce = rightWorld.scale(-lateralSpeed * lateralGrip);
+        this.tankBody.applyForce(lateralForce, center);
+      }
     }
 
     if (isMoving && hasGroundControl) {
@@ -7019,13 +7029,76 @@ export class TankGameplayController {
     if (steeringMode !== "car") {
       return objectCenterWorld;
     }
+    let point = objectCenterWorld;
     const offsetY =
       this.config.physics.tankCenterOfMassYOffset +
       (this.config.movement.carTractionApplyOffsetY ?? 0);
-    if (Math.abs(offsetY) < 1e-6) {
-      return objectCenterWorld;
+    if (Math.abs(offsetY) >= 1e-6) {
+      point = point.add(this.tankAnchor.up.scale(offsetY));
     }
-    return objectCenterWorld.add(this.tankAnchor.up.scale(offsetY));
+    const offsetForward =
+      (this.config.movement.carTractionApplyOffsetForward ?? 0) *
+      this.resolveCarTractionForwardOffsetScale();
+    if (Math.abs(offsetForward) >= 1e-6) {
+      const forwardLocal = this.movementForwardAxis.clone();
+      point = point.add(
+        this.tankAnchor
+          .getDirection(forwardLocal)
+          .normalize()
+          .scale(offsetForward)
+      );
+    }
+    return point;
+  }
+
+  /**
+   * Atténuer le décalage arrière de traction quand le châssis bascule (rampe, wheelie).
+   * Une force horizontale loin du centre de masse sur un véhicule incliné soulève l'avant.
+   */
+  private resolveCarTractionForwardOffsetScale(): number {
+    const upY = this.tankAnchor.up.y;
+    return clamp((upY - 0.86) / 0.12, 0, 1);
+  }
+
+  /**
+   * Grip latéral par point de contact : l’arrière reste accroché pendant le braquage,
+   * l’avant peut décrire l’arc — le camion ne pivote plus comme sur un plateau tournant.
+   */
+  private applyCarWheelLateralGrip(rightWorld: Vector3): void {
+    const center = this.tankBody.getObjectCenterWorld();
+    const linearVel = this.tankBody.getLinearVelocity();
+    const angularVel = this.tankBody.getAngularVelocity();
+    const baseGrip = this.config.suspension.lateralFriction;
+    const frontScale = this.config.movement.carFrontLateralGripScale ?? 0.45;
+    const rearScale = this.config.movement.carRearLateralGripScale ?? 1.2;
+    let rearSteerGripBoost = 1;
+    const steerGripMultiplier = this.config.movement.carSteerGripMultiplier ?? 1;
+    if (steerGripMultiplier > 1 && Math.abs(this.smoothedTurnAxis) > 0.05) {
+      const steerAmount = clamp(Math.abs(this.smoothedTurnAxis), 0, 1);
+      rearSteerGripBoost = 1 + (steerGripMultiplier - 1) * steerAmount;
+    }
+
+    const anchorRotation =
+      this.tankAnchor.absoluteRotationQuaternion ??
+      this.tankAnchor.rotationQuaternion ??
+      Quaternion.Identity();
+    const anchorPosition = this.tankAnchor.getAbsolutePosition();
+
+    for (let probeIndex = 0; probeIndex < this.suspensionPointsLocal.length; probeIndex++) {
+      if (this.suspensionCompressions[probeIndex] <= 0) {
+        continue;
+      }
+
+      const localPoint = this.suspensionPointsLocal[probeIndex];
+      const worldPoint = anchorPosition.add(localPoint.clone().applyRotationQuaternion(anchorRotation));
+      const isFront = this.frontProbeIndices.has(probeIndex);
+      const gripScale = (isFront ? frontScale : rearScale) * (isFront ? 1 : rearSteerGripBoost);
+      const r = worldPoint.subtract(center);
+      const pointVel = linearVel.add(Vector3.Cross(angularVel, r));
+      const lateralSpeed = Vector3.Dot(pointVel, rightWorld);
+      const lateralForce = rightWorld.scale(-lateralSpeed * baseGrip * gripScale);
+      this.tankBody.applyForce(lateralForce, worldPoint);
+    }
   }
 
   private applySuspension(): void {

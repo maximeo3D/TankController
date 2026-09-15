@@ -362,6 +362,20 @@ export interface TankControllerConfig {
      * relatif au centre de masse. Négatif = couple de cabrage à l’accélération.
      */
     carTractionApplyOffsetY?: number;
+    /**
+     * Décalage (m) le long de `movementForwardAxis` du point de traction en mode `car`,
+     * relatif au centre de masse. Positif = vers l’arrière du modèle (essieu motriciel).
+     */
+    carTractionApplyOffsetForward?: number;
+    /**
+     * Friction latérale par roue en mode `car` (défaut activé). L’avant glisse un peu,
+     * l’arrière reste accroché — le virage se fait depuis les essieux arrière.
+     */
+    carWheelLateralGrip?: boolean;
+    /** Multiplicateur de grip latéral sur les roues avant (`SUS_FL` / `SUS_FR`). */
+    carFrontLateralGripScale?: number;
+    /** Multiplicateur de grip latéral sur les roues arrière. */
+    carRearLateralGripScale?: number;
     /** Coupe braquage / traction / grip quand aucune roue (`SUS_*`) ne touche le sol. */
     requireGroundContactForControl?: boolean;
   };
